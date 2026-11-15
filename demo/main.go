@@ -790,6 +790,6 @@ func main() {
 		*animTool = defaultAnimTool(*generator)
 	}
 	registerStudio(mux, studioConfig{sampleRigs: *sampleRigs, sampleMotions: *sampleMotions, output: *output, anim: *animTool,
-		animations: func() []studioMotion { return g.studioMotions() }})
+		animations: func() []studioMotion { return g.studioMotions() }, deleteAnimation: g.deleteAnimation})
 	log.Fatal(http.ListenAndServe(*addr, mux))
 }

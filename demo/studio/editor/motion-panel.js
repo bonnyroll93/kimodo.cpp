@@ -341,6 +341,7 @@ export class MotionPanel {
   async loadSources() {
     const r = await fetch('motions', { cache: 'no-store' });
     const list = r.ok ? await r.json() : [];
+    list.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
     const select = this.$('motion-source');
     const current = select.value;
     select.replaceChildren(new Option(list.length ? 'Choose a motion…' : 'No motions available', ''));

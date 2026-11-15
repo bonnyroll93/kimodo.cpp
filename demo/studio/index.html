@@ -50,6 +50,20 @@
       <p class="muted">or use <em>Open GLB</em> / <em>Sample rigs</em>. Orbit: left-drag · Pan: right-drag · Zoom: wheel · Select: click a joint</p>
     </div>
     <div id="drop" class="drop" hidden>Drop to load</div>
+    <div id="library" class="library" hidden>
+      <div class="library-toolbar">
+        <strong>Motion library</strong>
+        <span id="library-count" class="muted small"></span>
+        <input id="library-search" type="search" placeholder="Search" autocomplete="off">
+        <select id="library-sort" title="Sort"><option value="name">Name (A–Z)</option><option value="newest">Newest first</option></select>
+        <span class="segmented-mini">
+          <button id="library-grid" type="button" class="icon-button" title="Grid with animated previews">▦ Grid</button>
+          <button id="library-list" type="button" class="icon-button" title="List">☰ List</button>
+        </span>
+        <button id="library-close" type="button" class="icon-button" title="Close (Esc)">✕</button>
+      </div>
+      <div id="library-items" class="library-items grid"></div>
+    </div>
     <div id="graph-editor" class="graph-editor" hidden>
       <div class="graph-toolbar">
         <strong>Graph editor</strong> <span class="graph-joint muted"></span>
@@ -127,6 +141,7 @@
       <div class="row source-row">
         <label class="field">Source <select id="motion-source"><option value="">Loading…</option></select></label>
         <button id="refresh-sources" class="button small-button" type="button" title="Reload the list (new generations appear here)">↻</button>
+        <button id="open-library" class="button small-button" type="button" title="Motion library: animated previews or a list, search, sort, delete">▦ Library</button>
       </div>
       <div class="segmented" role="radiogroup" aria-label="Root motion mode">
         <label><input type="radio" name="root-mode" value="full" checked><span>Full</span></label>

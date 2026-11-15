@@ -23,6 +23,8 @@ type studioConfig struct {
 	output        string                // demo output directory (root-motion results go below it)
 	anim          string                // kmd-anim executable
 	animations    func() []studioMotion // ready gallery animations, may be nil
+	// deleteAnimation removes a generated animation (gallery entry and files), may be nil.
+	deleteAnimation func(id string) error
 }
 
 // registerStudio serves the viewer under /studio/, the sample rigs (read-only, *.glb only)

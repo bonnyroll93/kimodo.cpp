@@ -29,6 +29,8 @@ type studioMotion struct {
 	Kind        string `json:"kind"`
 	SkeletonKey string `json:"skeleton_key"`
 	Frames      int    `json:"frames"`
+	Created     string `json:"created,omitempty"` // RFC 3339
+	Deletable   bool   `json:"deletable"`         // generated animations can be deleted
 	dir         string
 }
 
@@ -95,7 +97,11 @@ func (c studioConfig) motions() []studioMotion {
 		if prompt, err := os.ReadFile(filepath.Join(dir, "prompt.txt")); err == nil {
 			label = strings.TrimSpace(string(prompt)) + " (" + e.Name() + ")"
 		}
-		list = append(list, studioMotion{ID: "sample:" + e.Name(), Label: label, Kind: "sample", SkeletonKey: skeletonKeyForJoints(joints), Frames: frames, dir: dir})
+		created := ""
+		if info, err := e.Info(); err == nil {
+			created = info.ModTime().UTC().Format(time.RFC3339)
+		}
+		list = append(list, studioMotion{ID: "sample:" + e.Name(), Label: label, Kind: "sample", SkeletonKey: skeletonKeyForJoints(joints), Frames: frames, Created: created, dir: dir})
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].ID < list[j].ID })
 	if c.animations != nil {
@@ -229,6 +235,24 @@ func registerRootMotion(mux *http.ServeMux, c studioConfig) {
 	// /studio/motions/<id>/<file>; ids contain ':' so they are path-escaped by the client.
 	mux.HandleFunc("/studio/motions/", func(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/studio/motions/"), "/")
+		// DELETE /studio/motions/animation:<id> removes a generated animation.
+		if r.Method == http.MethodDelete && len(parts) == 1 {
+			id, ok := strings.CutPrefix(parts[0], "animation:")
+			if !ok || c.deleteAnimation == nil {
+				writeError(w, http.StatusForbidden, "only generated animations can be deleted")
+				return
+			}
+			if err := c.deleteAnimation(id); err != nil {
+				status := http.StatusConflict
+				if errors.Is(err, os.ErrNotExist) {
+					status = http.StatusNotFound
+				}
+				writeError(w, status, err.Error())
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		if len(parts) != 2 {
 			http.NotFound(w, r)
 			return
@@ -383,8 +407,28 @@ func (g *gallery) studioMotions() []studioMotion {
 		if err != nil {
 			continue
 		}
-		list = append(list, studioMotion{ID: "animation:" + id, Label: a.Prompt, Kind: "animation", SkeletonKey: skeletonKeyForJoints(joints), Frames: frames, dir: dir})
+		list = append(list, studioMotion{ID: "animation:" + id, Label: a.Prompt, Kind: "animation", SkeletonKey: skeletonKeyForJoints(joints),
+			Frames: frames, Created: a.CreatedAt, Deletable: true, dir: dir})
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].ID < list[j].ID })
 	return list
+}
+
+// deleteAnimation removes a finished generation from the gallery and from disk.
+func (g *gallery) deleteAnimation(id string) error {
+	if !safePathPart(id) {
+		return errors.New("invalid id")
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	a, ok := g.items[id]
+	if !ok {
+		return os.ErrNotExist
+	}
+	if a.Status == "queued" || a.Status == "running" {
+		return errors.New("the animation is still being generated")
+	}
+	delete(g.items, id)
+	_ = os.Remove(filepath.Join(g.output, id+".json"))
+	return os.RemoveAll(filepath.Join(g.output, id))
 }

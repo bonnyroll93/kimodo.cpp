@@ -14,6 +14,7 @@ import { ExportPanel } from './editor/export-panel.js';
 import { PathEditor } from './viewer/path-editor.js';
 import { SceneFile } from './editor/scene-file.js';
 import { KeyPanel } from './editor/key-panel.js';
+import { MotionLibrary } from './editor/motion-library.js';
 
 const $ = (id) => document.getElementById(id);
 const status = (text, error = false) => {
@@ -216,6 +217,15 @@ const syncKeys = () => keyPanel.sync();
 const previousShown = motionPanel.onShown;
 motionPanel.onShown = () => { previousShown?.(); syncKeys(); };
 
+// Motion library (grid previews / list, delete): picking sets the active layer's source.
+const motionLibrary = new MotionLibrary({
+  $, status, motionPanel,
+  onPick: (id) => {
+    $('motion-source').value = id;
+    motionPanel.formChanged();
+  },
+});
+
 const sceneFile = new SceneFile({
   $, status, viewport, player, motionPanel, retargetPanel, exportPanel, applyVisibility, clearCharacter,
   getCharacter: () => character,
@@ -334,6 +344,7 @@ if (new URLSearchParams(location.search).get('scene')) {
 //             (with load=...: the motion is retargeted onto the character; align=1 aligns rest poses;
 //              mapping=open shows the mapping editor)
 const params = new URLSearchParams(location.search);
+if (['grid', 'list'].includes(params.get('library'))) { motionLibrary.view = params.get('library'); motionLibrary.open(); }
 motionPanel.loadSources().then(() => {
   const motion = params.get('motion');
   if (!motion) return;

@@ -136,3 +136,50 @@ func TestRootMotionEndpoint(t *testing.T) {
 		t.Fatalf("traversal: got %d", rec.Code)
 	}
 }
+
+func TestDeleteGeneratedMotion(t *testing.T) {
+	out := t.TempDir()
+	dir := filepath.Join(out, "abc123")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	root := make([]byte, 90*12)
+	rot := make([]byte, 90*30*16)
+	_ = os.WriteFile(filepath.Join(dir, "root_positions.f32"), root, 0644)
+	_ = os.WriteFile(filepath.Join(dir, "local_rotations_xyzw.f32"), rot, 0644)
+	_ = os.WriteFile(filepath.Join(out, "abc123.json"), []byte("{}"), 0644)
+	g := &gallery{items: map[string]*animation{
+		"abc123":  {ID: "abc123", Prompt: "wave", Status: "ready", CreatedAt: "2026-11-15T10:00:00Z"},
+		"running": {ID: "running", Prompt: "busy", Status: "running"},
+	}, output: out}
+	mux := http.NewServeMux()
+	registerStudio(mux, studioConfig{sampleMotions: t.TempDir(), output: out, animations: g.studioMotions, deleteAnimation: g.deleteAnimation})
+	do := func(method, path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+		return rec
+	}
+	var list []studioMotion
+	if err := json.Unmarshal(do(http.MethodGet, "/studio/motions").Body.Bytes(), &list); err != nil || len(list) != 1 ||
+		!list[0].Deletable || list[0].Created == "" || list[0].SkeletonKey != "soma30" {
+		t.Fatalf("listing: %+v %v", list, err)
+	}
+	if rec := do(http.MethodDelete, "/studio/motions/sample:soma30-walk-s42"); rec.Code != http.StatusForbidden {
+		t.Fatalf("sample delete: %d", rec.Code)
+	}
+	if rec := do(http.MethodDelete, "/studio/motions/animation:running"); rec.Code != http.StatusConflict {
+		t.Fatalf("running delete: %d", rec.Code)
+	}
+	if rec := do(http.MethodDelete, "/studio/motions/animation:abc123"); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatal("animation files were not removed")
+	}
+	if _, ok := g.items["abc123"]; ok {
+		t.Fatal("gallery entry was not removed")
+	}
+	if rec := do(http.MethodDelete, "/studio/motions/animation:abc123"); rec.Code != http.StatusNotFound {
+		t.Fatalf("second delete: %d", rec.Code)
+	}
+}

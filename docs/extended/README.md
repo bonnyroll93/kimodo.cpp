@@ -433,6 +433,14 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     `<output>/characters/` and serves them back at `/api/characters/<hash>.glb`.
   - Motions are referenced by their sample or gallery id. Anything missing on the server
     is reported when the scene opens.
+- **Motion library** (*▦ Library* next to *Source*) shows every motion source.
+  - Two views: a grid with an animated stick-figure preview of each motion, or a list
+    with kind, skeleton, length and date.
+  - Search, sort by name or newest first; the chosen view and sort are remembered.
+  - Click an item to use it as the active layer's source.
+  - Generated animations can be deleted. This removes them from the gallery and from
+    `demo-output`; samples cannot be deleted, nor can a generation that is still running.
+  - The *Source* menu is sorted alphabetically.
 - **Text to motion** opens the generator in a new tab, so the scene in the studio is
   untouched. New generations appear in *Source* when you come back to the studio tab,
   or when you press ↻.
@@ -480,6 +488,7 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
 | `POST /api/layers` | `{character?, mapping?, align_rest?, foot_lock?:{enabled, height?, speed?, blend?, adjust_hips?}, layers:[{name, root_motion, mode, weight, mask, enabled, muted, reference, wrap}]}` (1–16 layers) |
 | `GET /api/layers/<id>/{clip.json,rotations.f32,translations.f32,root.f32}` | baked stack, cached by request hash |
 | `GET /api/masks?character=…` or `?skeleton=…` | preset masks (full / upper / lower) from `kmd-anim masks` |
+| `DELETE /studio/motions/animation:<id>` | delete a generated animation (gallery entry and files) |
 | `GET /api/characters/<hash>.glb` | an uploaded character (used to reopen saved scenes) |
 | `POST /api/export` | `{name?, character, mapping?, align_rest?, layers:[…]}` → `{url, download, bytes, meta}` |
 | `GET /api/export/<id>/<name>.glb[?download=1]` | the exported GLB (inline for the viewer, or as an attachment) |

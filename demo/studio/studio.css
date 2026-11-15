@@ -233,6 +233,29 @@ body {
 .tl-fade.in { left: 0; background: linear-gradient(90deg, #0b1015cc, transparent); }
 .tl-fade.out { right: 0; background: linear-gradient(270deg, #0b1015cc, transparent); }
 .tl-tag { position: absolute; right: 4px; top: 1px; font-size: .66rem; color: #051013; font-weight: 700; pointer-events: none; }
+.library {
+  position: absolute; inset: 12px 12px 12px 12px; z-index: 5; display: grid; grid-template-rows: auto 1fr;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--panel); overflow: hidden;
+}
+.library-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.library-toolbar input, .library-toolbar select { border: 1px solid var(--line); border-radius: 6px; background: #0b1015; color: var(--text); font: inherit; font-size: .8rem; padding: 4px 8px; }
+.library-toolbar input { flex: 1; min-width: 120px; }
+.segmented-mini { display: inline-flex; gap: 2px; }
+.library-items { overflow: auto; padding: 12px; }
+.library-items.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; align-content: start; }
+.library-items.list { display: grid; gap: 2px; align-content: start; }
+.library-card { border: 1px solid var(--line); border-radius: 10px; padding: 6px; background: #0b101588; cursor: pointer; display: grid; gap: 4px; }
+.library-card:hover, .library-row:hover { border-color: var(--accent); }
+.library-card.current, .library-row.current { border-color: #ffb547; }
+.library-card canvas { width: 100%; height: auto; border-radius: 6px; display: block; }
+.library-name { font-size: .84rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.library-sub { font-size: .72rem; }
+.library-foot { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+.library-row { display: grid; grid-template-columns: minmax(0, 1fr) 80px 150px 150px 60px; gap: 8px; align-items: center;
+  padding: 6px 8px; border: 1px solid transparent; border-radius: 6px; cursor: pointer; }
+.library-row:nth-child(odd) { background: #0b101566; }
+.icon-button.danger:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
+@media (max-width: 900px) { .library-row { grid-template-columns: minmax(0, 1fr) 60px; } .library-row > :nth-child(3), .library-row > :nth-child(4) { display: none; } }
 .status {
   padding: 6px 16px; border-top: 1px solid var(--line); background: var(--panel);
   color: var(--muted); font-size: .8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
