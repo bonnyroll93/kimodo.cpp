@@ -170,6 +170,9 @@ export class MotionPanel {
       split: () => this.splitActive(),
       duplicate: () => this.duplicateActive(),
       remove: (i) => this.remove(i),
+      moveKeys: (i, frames, delta) => this.moveKeys(i, frames, delta),
+      deleteKeys: (i, frames) => this.moveKeys(i, frames, null),
+      graphOpen: () => this.graphOpen?.() ?? false,
     });
     this.installTimingForm();
     // Root motion (Full / In place / Path) per clip, or once for the whole scene (the clips
@@ -449,7 +452,7 @@ export class MotionPanel {
     const items = this.layers.map((l, i) => ({
       name: l.name, kind: l.kind ?? 'clip', track: l.track ?? 0, duration: this.durationOf(i), enabled: l.enabled, muted: l.muted,
       timing: isKeys(l) ? eff.get(i) : timingOf(l), eff: eff.get(i), bound: isKeys(l) && this.boundClip(l) >= 0,
-      keyTimes: isKeys(l) && joint ? keyFrames(l.keys, joint).map((f) => f / fps) : [],
+      keyFrames: isKeys(l) ? (joint ? keyFrames(l.keys, joint) : this.allKeyFrames(l)) : [],
     }));
     let end = this.player.duration;
     for (const i of this.layers.keys()) if (this.layers[i].enabled) end = Math.max(end, this.extent(i)[1]);
@@ -571,6 +574,44 @@ export class MotionPanel {
       height: Math.max(0, Number($('foot-height').value) || 0), speed: Math.max(0, Number($('foot-speed').value) || 0),
       blend: Math.max(0, Math.round(Number($('foot-blend').value) || 0)),
     };
+  }
+
+  // Frames keyed on any joint of anim layer l.
+  allKeyFrames(l) {
+    const set = new Set();
+    for (const name of Object.keys(l.keys?.tracks ?? {})) for (const f of keyFrames(l.keys, name)) set.add(f);
+    return [...set].sort((a, b) => a - b);
+  }
+
+  // Timeline key edits on anim layer i: the keys at `frames` of the selected joint (every
+  // joint when none is selected) move by delta frames (delta null: deleted). A moved key
+  // replaces a key already at its destination.
+  moveKeys(i, frames, delta) {
+    const l = this.layers[i];
+    if (!isKeys(l)) return;
+    const joint = this.keyJoint?.();
+    const sel = new Set(frames.map((f) => Math.round(f)));
+    const tracks = l.keys.tracks ?? {};
+    for (const [name, ch] of Object.entries(tracks)) {
+      if (joint && name !== joint) continue;
+      for (const [c, keys] of Object.entries(ch)) {
+        const moving = keys.filter((k) => sel.has(Math.round(k.f)));
+        if (!moving.length) continue;
+        let rest = keys.filter((k) => !sel.has(Math.round(k.f)));
+        if (delta !== null) {
+          for (const k of moving) k.f = Math.max(0, Math.round(k.f) + delta);
+          const dest = new Set(moving.map((k) => k.f));
+          rest = rest.filter((k) => !dest.has(Math.round(k.f))).concat(moving);
+        }
+        rest.sort((a, b) => a.f - b.f);
+        if (rest.length) ch[c] = rest; else delete ch[c];
+      }
+      if (!Object.keys(ch).length) delete tracks[name];
+    }
+    this.status(`${delta === null ? 'Deleted' : `Moved ${delta > 0 ? '+' : ''}${delta} frame(s):`} ${sel.size} key frame(s)${joint ? ` of ${joint}` : ' (all joints)'}`);
+    this.onKeysEdited?.();
+    this.renderTimeline();
+    this.schedule();
   }
 
   // Recompute the key ticks shown on anim-layer rows (selected joint changed / keys edited).

@@ -5,12 +5,15 @@
 //   row: select it (the attribute editor shows its settings) · click empty space: seek.
 // Overlapping clips on the same track cross-fade over the overlap (shown as a gradient).
 // Times snap to frames (Shift: free).
+// Keyframes (◆ on anim-layer rows; the selected joint's keys, or every keyed frame when no
+// joint is selected): click selects (Shift: add / remove) and seeks, drag moves the
+// selected keys in time, Delete removes them.
 
 const EDGE = 6; // px grab zone for trimming
 
 export class Timeline {
   // cb: select(i), seek(seconds), timing(i, patch, final), addClip(), addTrack(), split(),
-  //     duplicate(), remove(i)
+  //     duplicate(), remove(i), moveKeys(i, frames, delta), deleteKeys(i, frames)
   constructor(container, cb) {
     this.container = container;
     this.cb = cb;
@@ -28,6 +31,16 @@ export class Timeline {
     window.addEventListener('keydown', mod);
     window.addEventListener('keyup', mod);
     window.addEventListener('blur', () => this.container.classList.remove('stretching'));
+    this.keySel = { i: -1, frames: new Set() };
+    window.addEventListener('keydown', (e) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+      if (!this.keySel.frames.size || this.cb.graphOpen?.()) return;
+      e.preventDefault();
+      const { i, frames } = this.keySel;
+      this.keySel = { i: -1, frames: new Set() };
+      this.cb.deleteKeys?.(i, [...frames]);
+    });
   }
 
   // layers: per MotionPanel.layers index {name, kind, track, duration (clip s), enabled, muted,
@@ -59,6 +72,8 @@ export class Timeline {
     return [t.start, t.start + (this.segment(i) / t.speed) * t.repeat];
   }
   pct(seconds) { return `${(seconds / this.duration) * 100}%`; }
+  // Stack time of key frame f of anim layer i (its timing: start, speed).
+  keyTime(i, f) { const t = this.timingOf(i); return t.start + f / this.fps / t.speed; }
 
   render() {
     const c = this.container;
@@ -84,10 +99,14 @@ export class Timeline {
       const track = document.createElement('div');
       track.className = `tl-track keys-row${i === this.active ? ' active' : ''}`;
       track.append(this.bar(i));
-      for (const k of l.keyTimes ?? []) {
+      const sel = this.keySel.i === i ? this.keySel.frames : new Set();
+      for (const f of l.keyFrames ?? []) {
         const tick = document.createElement('div');
-        tick.className = 'tl-key';
-        tick.style.left = this.pct(this.timingOf(i).start + k / this.timingOf(i).speed);
+        tick.className = `tl-key${sel.has(f) ? ' selected' : ''}`;
+        tick.dataset.layer = i;
+        tick.dataset.frame = f;
+        tick.style.left = this.pct(this.keyTime(i, f));
+        tick.title = `key at frame ${f}${l.bound ? ' of the clip' : ''} · click: select (Shift: add) · drag: move · Delete: remove`;
         track.append(tick);
       }
       labels.append(label);
@@ -216,7 +235,22 @@ export class Timeline {
 
   down(e) {
     if (!this.tracksEl || !e.target.closest('.tl-track')) return;
+    const tick = e.target.closest('.tl-key');
+    if (tick) {
+      this.container.setPointerCapture(e.pointerId);
+      const i = Number(tick.dataset.layer), f = Number(tick.dataset.frame);
+      if (this.keySel.i !== i) this.keySel = { i, frames: new Set() };
+      const frames = this.keySel.frames;
+      if (e.shiftKey) { if (frames.has(f)) frames.delete(f); else frames.add(f); }
+      else if (!frames.has(f)) { frames.clear(); frames.add(f); }
+      if (i !== this.active) this.cb.select(i);
+      this.cb.seek(this.keyTime(i, f));
+      this.drag = { keys: true, i, f, t0: this.timeAt(e), delta: 0 };
+      this.render();
+      return;
+    }
     const bar = e.target.closest('.tl-bar');
+    if (!e.shiftKey && this.keySel.frames.size) { this.keySel = { i: -1, frames: new Set() }; this.render(); }
     this.container.setPointerCapture(e.pointerId);
     if (!bar) {
       this.drag = { seek: true };
@@ -258,6 +292,12 @@ export class Timeline {
     }
     const d = this.drag;
     if (d.seek) { this.cb.seek(this.timeAt(e)); return; }
+    if (d.keys) { // live preview: shift the selected ticks by whole frames of the layer's time
+      d.delta = Math.round((this.timeAt(e) - d.t0) * this.fps * this.timingOf(d.i).speed);
+      for (const tick of this.tracksEl.querySelectorAll('.tl-key.selected'))
+        tick.style.left = this.pct(this.keyTime(d.i, Number(tick.dataset.frame) + d.delta));
+      return;
+    }
     const dt = this.timeAt(e) - d.t0;
     const t = d.timing, len = (d.segment / t.speed) * t.repeat;
     const speedFor = (newLen) => Math.min(20, Math.max(0.05, (d.segment * t.repeat) / Math.max(1 / this.fps, newLen)));
@@ -288,6 +328,15 @@ export class Timeline {
   up() {
     const d = this.drag;
     this.drag = null;
+    if (d?.keys) {
+      if (d.delta) {
+        const frames = [...this.keySel.frames];
+        this.keySel = { i: d.i, frames: new Set(frames.map((f) => Math.max(0, f + d.delta))) };
+        this.cb.moveKeys?.(d.i, frames, d.delta);
+        this.cb.seek(this.keyTime(d.i, Math.max(0, d.f + d.delta))); // the playhead follows the dragged key
+      }
+      return;
+    }
     if (d?.patch) this.cb.timing(d.i, d.patch, true);
   }
 

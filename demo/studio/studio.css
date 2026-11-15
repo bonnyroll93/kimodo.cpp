@@ -296,3 +296,7 @@ body {
 .timeline { bottom: 104px; }
 .attr-timing input[type="checkbox"] { width: auto; }
 .attr-timing .toggle { justify-self: start; }
+/* Timeline keyframes: selectable and draggable */
+.tl-track .tl-key { pointer-events: auto; cursor: ew-resize; z-index: 2; top: 3px; width: 10px; height: 10px; margin-left: -5px; box-shadow: 0 0 0 1px #0b1015; }
+.tl-track .tl-key:hover { background: #ffd38a; }
+.tl-track .tl-key.selected { background: #fff; box-shadow: 0 0 0 2px var(--accent); }

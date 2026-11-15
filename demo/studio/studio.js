@@ -274,6 +274,8 @@ const keyPanel = new KeyPanel({
   getCharacter: () => character, onSelectJoint: (i) => select(i),
 });
 motionPanel.keyJoint = () => keyPanel.jointName();
+motionPanel.graphOpen = () => keyPanel.graph.open;
+motionPanel.onKeysEdited = () => { keyPanel.updateInfo(); if (keyPanel.graph.open) keyPanel.graph.draw(); };
 const syncKeys = () => keyPanel.sync();
 const previousShown = motionPanel.onShown;
 motionPanel.onShown = () => { previousShown?.(); syncKeys(); };

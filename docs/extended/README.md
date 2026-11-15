@@ -501,6 +501,12 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     two clips that reproduce the original motion; *Duplicate* places a copy right after
     it, root continuing; *Delete* removes the selected clip or anim layer (the scene keeps
     at least one clip).
+  - **Keyframes on the timeline:** anim-layer rows show ◆ for the selected joint's keys,
+    or for every keyed frame when no joint is selected. Click a key to select it and seek
+    there (Shift+click adds / removes), drag to move the selected keys in time (whole
+    frames of the layer's time; a key landing on another replaces it), Delete removes
+    them. With a joint selected only its keys change; otherwise every joint's keys at
+    those frames. Undo works as for any edit.
   - **Mouse:** drag a clip to move it, also onto another track row; drag its left edge to
     trim the start and its right edge to trim the end. Times snap to frames; Shift moves
     freely. Click empty space to seek.
