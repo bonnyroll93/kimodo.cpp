@@ -128,6 +128,7 @@ export class SceneFile {
       viewport.controls.target.fromArray(scene.camera.target);
       viewport.controls.update();
     }
+    this.ctx.onOpened?.();
     if (warnings.length) status(`Scene opened with warnings: ${warnings.join('; ')}`, true);
     else status(`Scene opened: ${fileName}`);
   }

@@ -15,6 +15,7 @@ import { PathEditor } from './viewer/path-editor.js';
 import { SceneFile } from './editor/scene-file.js';
 import { KeyPanel } from './editor/key-panel.js';
 import { MotionLibrary } from './editor/motion-library.js';
+import { History } from './editor/history.js';
 
 const $ = (id) => document.getElementById(id);
 const status = (text, error = false) => {
@@ -136,6 +137,7 @@ async function open(source, name, serverId = null) {
     $('embedded-anim').replaceChildren(new Option(anims.length ? 'None (use Motion / Layers)' : 'none', ''), ...anims.map((n) => new Option(n, n)));
     $('embedded-row').hidden = !anims.length;
     if (player.motion) motionPanel.schedule();
+    undoHistory?.reset();
     select(-1);
     applyVisibility();
     $('empty').hidden = true;
@@ -226,10 +228,15 @@ const motionLibrary = new MotionLibrary({
   },
 });
 
+// Undo / redo of scene edits (Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z).
+const undoHistory = new History({ $, status, motionPanel, retarget: retargetPanel, keyPanel });
+undoHistory.reset(); // the initial state is the first undo step
+
 const sceneFile = new SceneFile({
   $, status, viewport, player, motionPanel, retargetPanel, exportPanel, applyVisibility, clearCharacter,
   getCharacter: () => character,
   openCharacter: (url, name, id) => open(url, name, id),
+  onOpened: () => undoHistory.reset(),
 });
 
 // Animations stored in the loaded GLB (exported files, or any animated character).
@@ -374,6 +381,7 @@ motionPanel.loadSources().then(() => {
     if (params.get('frame')) { player.play(false); player.setFrame(Number(params.get('frame'))); }
     if (params.get('mapping') === 'open' && $('mapping-editor').hidden) $('edit-mapping').click();
     if (params.get('export') === '1') $('export-glb').click();
+    undoHistory.reset(); // the linked state is where undo starts
   });
 }).catch((err) => status(`Cannot list motions: ${err.message || err}`, true));
 if (params.get('load')) {

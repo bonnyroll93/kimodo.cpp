@@ -420,6 +420,14 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     match what you see.
   - Gizmo edits are exact when the keyframe layer is the top layer at weight 1, which is
     how *+ Keys* adds it.
+- **Undo / redo.** Ctrl+Z undoes, and Ctrl+Y or Ctrl+Shift+Z redoes; ↶ and ↷ are in the
+  toolbar. The history keeps the last 100 states of everything you edit: layers and their
+  sources, root motion and paths (including viewport edits), keyframes (gizmo and graph
+  editor), masks, clip timing, mapping, retarget and foot-lock options, and the export
+  name.
+  - Quick successive edits, such as a drag, count as one step.
+  - In text fields, Ctrl+Z stays the field's own undo.
+  - Loading a character or opening a scene starts a new history.
 - **Scenes.** *Save scene* downloads the whole studio state as JSON:
   - the character reference;
   - every layer (source, root motion, path waypoints, blend, weight, mask or custom mask,
