@@ -11,9 +11,12 @@
 //                                               compose and bake an animation layer stack
 //   kmd-anim export CHARACTER.glb CLIP_DIR OUT.glb [--name S] [--replace-animations]
 //                                               character + clip -> one animated GLB
+//   kmd-anim footlock IN_DIR OUT_DIR [--character FILE.glb] [foot lock options]
+//                                               detect foot contacts, pin feet with two-bone IK
 #include <kimodo/anim/clip.hpp>
 #include <kimodo/anim/gltf.hpp>
 #include <kimodo/anim/gltf_export.hpp>
+#include <kimodo/anim/ik.hpp>
 #include <kimodo/anim/layers.hpp>
 #include <kimodo/anim/retarget.hpp>
 #include <kimodo/anim/root_motion.hpp>
@@ -106,7 +109,10 @@ int usage() {
                  "       kmd-anim export CHARACTER.glb|.gltf CLIP_DIR OUT.glb [--name S] [--replace-animations]\n"
                  "           [--export-scale] [--skin N]\n"
                  "       CLIP_DIR is a retarget or layers output for that character; the character's meshes,\n"
-                 "       materials, skins and existing animations are kept and the clip is added.\n";
+                 "       materials, skins and existing animations are kept and the clip is added.\n"
+                 "       kmd-anim footlock IN_DIR OUT_DIR [--character FILE.glb] [--foot-height M] [--foot-speed M_PER_S]\n"
+                 "           [--foot-blend FRAMES] [--no-hip-adjust]\n"
+                 "       (layers also accepts --foot-lock plus the same --foot-* options, applied after baking)\n";
     return 2;
 }
 
@@ -338,6 +344,36 @@ int retarget_command(int argc, char **argv) {
     std::cout << meta.str();
     return 0;
 }
+// Parses a --foot-* option at argv[i]; returns false if argv[i] is not one.
+bool parse_foot_option(int argc, char **argv, int &i, FootLockOptions &o) {
+    const std::string_view arg = argv[i];
+    auto value = [&]() -> std::string {
+        if (i + 1 >= argc) throw std::runtime_error(std::string(arg) + " needs a value");
+        return argv[++i];
+    };
+    if (arg == "--foot-height") o.height_threshold = std::stof(value());
+    else if (arg == "--foot-speed") o.speed_threshold = std::stof(value());
+    else if (arg == "--foot-blend") o.blend_frames = static_cast<std::size_t>(std::stoul(value()));
+    else if (arg == "--no-hip-adjust") o.adjust_hips = false;
+    else return false;
+    return true;
+}
+
+std::string foot_lock_json(const FootLockResult &r) {
+    std::ostringstream o;
+    o << "{\"contacts\":[";
+    for (std::size_t i = 0; i < r.contacts.size(); ++i) {
+        const FootContact &c = r.contacts[i];
+        o << (i ? "," : "") << "{\"foot\":\"" << (c.foot == 0 ? "left" : "right") << "\",\"start\":" << c.start
+          << ",\"end\":" << c.end << ",\"position\":" << vec(c.position) << "}";
+    }
+    o << "],\"ground\":" << num(r.ground) << ",\"leg_length\":" << num(r.leg_length) << ",\"height_threshold\":"
+      << num(r.height_threshold) << ",\"speed_threshold\":" << num(r.speed_threshold) << ",\"slide_before\":"
+      << num(r.slide_before) << ",\"slide_after\":" << num(r.slide_after) << ",\"unreachable_frames\":"
+      << r.unreachable_frames << ",\"max_hip_drop\":" << num(r.max_hip_drop) << "}";
+    return o.str();
+}
+
 // Reads a layer input: a clip directory (clip.json / retarget.json) or a native motion directory.
 std::expected<AnimationClip, std::string> read_layer_input(const std::filesystem::path &dir, float fps) {
     if (std::filesystem::exists(dir / "clip.json") || std::filesystem::exists(dir / "retarget.json")) return read_clip_dir(dir);
@@ -363,8 +399,12 @@ int layers_command(int argc, char **argv) {
     std::vector<Pending> pending;
     GltfImportOptions import;
     std::optional<std::filesystem::path> character;
+    bool lock_feet = false;
+    FootLockOptions foot;
     for (int i = 3; i < argc; ++i) {
         const std::string_view arg = argv[i];
+        if (arg == "--foot-lock") { lock_feet = true; continue; }
+        if (parse_foot_option(argc, argv, i, foot)) continue;
         auto value = [&]() -> std::string {
             if (i + 1 >= argc) throw std::runtime_error(std::string(arg) + " needs a value");
             return argv[++i];
@@ -458,8 +498,15 @@ int layers_command(int argc, char **argv) {
     }
     summary << "]";
     AnimationClip baked = stack.bake(fps);
+    std::string foot_meta;
+    if (lock_feet) {
+        auto locked = foot_lock(baked, *skeleton, foot);
+        if (!locked) throw std::runtime_error("foot lock: " + locked.error());
+        baked = std::move(locked->clip);
+        foot_meta = ",\"foot_lock\":" + foot_lock_json(*locked);
+    }
     const std::string extra = "{\"skeleton\":" + quote(skeleton->source) + ",\"duration\":" + num(stack.duration()) +
-                              ",\"layers\":" + summary.str() + "}";
+                              ",\"layers\":" + summary.str() + foot_meta + "}";
     if (auto ok = write_clip_dir(out, baked, *skeleton, extra); !ok) throw std::runtime_error(ok.error());
     if (native) // also the kmd-generate layout, so native results play like any generated motion
         if (auto ok = write_motion_dir(out, clip_to_motion(baked)); !ok) throw std::runtime_error(ok.error());
@@ -467,6 +514,38 @@ int layers_command(int argc, char **argv) {
     std::cout << meta.rdbuf();
     return 0;
 }
+int footlock_command(int argc, char **argv) {
+    if (argc < 4) return usage();
+    const std::filesystem::path in = argv[2], out = argv[3];
+    FootLockOptions options;
+    std::optional<std::filesystem::path> character;
+    for (int i = 4; i < argc; ++i) {
+        const std::string_view arg = argv[i];
+        if (arg == "--character" && i + 1 < argc) character = argv[++i];
+        else if (!parse_foot_option(argc, argv, i, options)) throw std::runtime_error("unknown option '" + std::string(arg) + "'");
+    }
+    auto clip = read_layer_input(in, 30.F);
+    if (!clip) throw std::runtime_error(clip.error());
+    std::optional<Skeleton> skeleton;
+    if (character) {
+        auto c = load_gltf_character(*character);
+        if (!c) throw std::runtime_error(c.error());
+        skeleton = std::move(c->skeleton);
+    } else {
+        auto s = native_skeleton_for_joint_count(clip->joint_count);
+        if (!s) throw std::runtime_error(s.error() + " (pass --character for a character clip)");
+        skeleton = std::move(*s);
+    }
+    auto r = foot_lock(*clip, *skeleton, options);
+    if (!r) throw std::runtime_error(r.error());
+    const std::string meta = "{\"skeleton\":" + quote(skeleton->source) + ",\"foot_lock\":" + foot_lock_json(*r) + "}";
+    if (auto ok = write_clip_dir(out, r->clip, *skeleton, meta); !ok) throw std::runtime_error(ok.error());
+    if (!character)
+        if (auto ok = write_motion_dir(out, clip_to_motion(r->clip)); !ok) throw std::runtime_error(ok.error());
+    std::cout << meta << "\n";
+    return 0;
+}
+
 int export_command(int argc, char **argv) {
     if (argc < 5) return usage();
     const std::filesystem::path character_path = argv[2], clip_dir = argv[3], out = argv[4];
@@ -506,6 +585,7 @@ int main(int argc, char **argv) try {
     if (argc >= 2 && std::string_view(argv[1]) == "retarget") return retarget_command(argc, argv);
     if (argc >= 2 && std::string_view(argv[1]) == "layers") return layers_command(argc, argv);
     if (argc >= 2 && std::string_view(argv[1]) == "export") return export_command(argc, argv);
+    if (argc >= 2 && std::string_view(argv[1]) == "footlock") return footlock_command(argc, argv);
     if (argc < 3 || std::string_view(argv[1]) != "inspect") return usage();
     if (std::string_view(argv[2]) == "--native") {
         if (argc != 4) return usage();

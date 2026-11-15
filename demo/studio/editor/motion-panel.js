@@ -82,6 +82,8 @@ export class MotionPanel {
         this.formChanged();
       });
     for (const r of document.querySelectorAll('input[name="root-mode"]')) r.addEventListener('change', () => this.formChanged());
+    for (const id of ['foot-lock', 'hip-adjust', 'foot-height', 'foot-speed', 'foot-blend'])
+      $(id).addEventListener('change', () => { $('foot-opts').hidden = !$('foot-lock').checked; this.schedule(); });
 
     this.layerPanel = new LayerPanel($('layers-list'), $('add-layer'), {
       select: (i) => this.select(i),
@@ -209,9 +211,20 @@ export class MotionPanel {
     return def.names.map((name, i) => ({ name, depth: (() => { let d = 0; for (let p = def.parents[i]; p >= 0; p = def.parents[p]) d++; return d; })() }));
   }
 
+  // Foot locking applies to the whole result (after the layers are baked).
+  footLockRequest() {
+    const $ = this.$;
+    if (!$('foot-lock').checked) return null;
+    return {
+      enabled: true, adjust_hips: $('hip-adjust').checked,
+      height: Math.max(0, Number($('foot-height').value) || 0), speed: Math.max(0, Number($('foot-speed').value) || 0),
+      blend: Math.max(0, Math.round(Number($('foot-blend').value) || 0)),
+    };
+  }
+
   isSimple() {
     const l = this.layers[0];
-    return this.layers.length === 1 && l.blend === 'override' && l.weight === 1 && l.mask === 'full' && l.enabled && !l.muted;
+    return !this.$('foot-lock').checked && this.layers.length === 1 && l.blend === 'override' && l.weight === 1 && l.mask === 'full' && l.enabled && !l.muted;
   }
 
   // ----- sources / requests -----------------------------------------------------------
@@ -322,7 +335,8 @@ export class MotionPanel {
   }
 
   async applyStack(rt) {
-    const body = await postJSON('/api/layers', { layers: this.layers.map((l, i) => this.layerRequest(l, i)), ...(rt || {}) });
+    const foot_lock = this.footLockRequest();
+    const body = await postJSON('/api/layers', { layers: this.layers.map((l, i) => this.layerRequest(l, i)), ...(rt || {}), ...(foot_lock ? { foot_lock } : {}) });
     const base = Math.max(0, this.layers.findIndex((l) => l.enabled));
     const act = body.layers[this.active], baseRm = body.layers[base].root_motion;
     const [rotations, translations, stackRoot, baseRoot, baseRot, actRoot, samples, sourceRoot] = await Promise.all([
@@ -343,7 +357,9 @@ export class MotionPanel {
         meta: body.native ? null : JSON.parse(JSON.stringify(body.layers[base].retarget)),
       },
       layers: meta.layers.map((l, i) => ({ name: l.name, duration: l.duration, enabled: l.enabled, muted: l.muted, index: i })),
-      summary: `${this.layers.length} layers, ${meta.frames} frames`,
+      footLock: meta.foot_lock ?? null,
+      fps: meta.fps,
+      summary: `${this.layers.length} layer${this.layers.length === 1 ? '' : 's'}, ${meta.frames} frames${meta.foot_lock ? ', feet locked' : ''}`,
     };
   }
 
@@ -366,14 +382,22 @@ export class MotionPanel {
     this.sourceRootShown = r.overlay.sourceRoot;
     this.samples = r.overlay.samples;
     this.pathView.show({ ...r.overlay, map, ground });
+    const fl = r.footLock;
+    this.pathView.showContacts(fl?.contacts, fl?.ground ?? 0);
     // The joint list for a custom mask is known now (character or source skeleton).
     if (this.activeLayer.mask === 'custom') this.activeLayer.customMask = this.maskEditor.show(this.activeLayer.customMask, this.maskJoints());
-    this.timelineData = { layers: r.layers, duration: this.player.duration };
+    const fps = r.fps || this.player.fps;
+    this.timelineData = {
+      layers: r.layers, duration: this.player.duration,
+      contacts: fl ? fl.contacts.map((c) => ({ foot: c.foot, start: c.start / fps, end: c.end / fps })) : null,
+    };
     this.timeline.set({ ...this.timelineData, active: this.active });
     const travel = (a) => Math.hypot(a[a.length - 3] - a[0], a[a.length - 1] - a[2]);
     this.$('motion-info').textContent =
       `${def.key} · ${this.player.frames} frames @ ${this.player.fps} fps · ${this.player.duration.toFixed(2)} s · ` +
-      `active layer root travel ${travel(r.overlay.sourceRoot).toFixed(2)} m → ${travel(r.overlay.resultRoot).toFixed(2)} m`;
+      `active layer root travel ${travel(r.overlay.sourceRoot).toFixed(2)} m → ${travel(r.overlay.resultRoot).toFixed(2)} m` +
+      (fl ? ` · foot lock: ${fl.contacts.length} contacts, slide ${(fl.slide_before * 1000).toFixed(1)} → ${(fl.slide_after * 1000).toFixed(1)} mm` +
+            `, hips −${(fl.max_hip_drop * 100).toFixed(1)} cm${fl.unreachable_frames ? `, ${fl.unreachable_frames} frames out of reach` : ''}` : '');
     this.status(`Motion: ${r.summary}${rt ? ' · retargeted' : ''}`);
     this.onLoaded?.(first);
   }

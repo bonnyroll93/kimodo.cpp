@@ -30,7 +30,7 @@ func TestLayersEndpoint(t *testing.T) {
 	}
 	type result struct {
 		Meta struct {
-			Frames   int `json:"frames"`
+			Frames   int                     `json:"frames"`
 			Joints   []struct{ Name string } `json:"joints"`
 			Duration float64                 `json:"duration"`
 			Layers   []struct {
@@ -80,7 +80,24 @@ func TestLayersEndpoint(t *testing.T) {
 		t.Fatal("character stack arrays")
 	}
 
+	// Foot locking on the character stack: contacts and slide statistics in the metadata.
+	rec := post(`{"character":"sample:test_rig.glb","foot_lock":{"enabled":true},"layers":[{"root_motion":` + walk + `}]}`)
+	var locked struct {
+		Meta struct {
+			FootLock struct {
+				Contacts    []struct{ Foot string } `json:"contacts"`
+				SlideBefore float64                 `json:"slide_before"`
+				SlideAfter  float64                 `json:"slide_after"`
+			} `json:"foot_lock"`
+		} `json:"meta"`
+	}
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &locked) != nil || len(locked.Meta.FootLock.Contacts) == 0 ||
+		locked.Meta.FootLock.SlideAfter >= locked.Meta.FootLock.SlideBefore || locked.Meta.FootLock.SlideAfter > 1e-3 {
+		t.Fatalf("foot lock: %d %s", rec.Code, rec.Body.String())
+	}
+
 	for _, bad := range []string{
+		`{"foot_lock":{"enabled":true,"height":-1},"layers":[{"root_motion":` + walk + `}]}`,
 		`{"layers":[]}`,
 		`{"layers":[{"root_motion":` + walk + `,"weight":1.5}]}`,
 		`{"layers":[{"root_motion":` + walk + `,"mode":"multiply"}]}`,

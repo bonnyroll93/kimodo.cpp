@@ -104,6 +104,17 @@
         <label class="toggle"><input type="checkbox" id="orient" checked> Orient root along path</label>
         <p class="note">Post-processing only: the generated steps are not re-timed, so feet may slide when the path speed differs from the walk.</p>
       </div>
+      <div class="footlock">
+        <div class="row">
+          <label class="toggle" title="Detect foot contacts and pin the feet with two-bone IK (removes foot sliding)"><input type="checkbox" id="foot-lock"> Foot locking (IK)</label>
+          <label class="toggle" title="Lower the hips slightly when a pinned foot would be out of reach"><input type="checkbox" id="hip-adjust" checked> Adjust hips</label>
+        </div>
+        <div id="foot-opts" class="row" hidden>
+          <label class="field" title="Contact height above the ground in metres (0 = 8% of the leg)">Height m<input id="foot-height" type="number" min="0" max="1" step="0.01" value="0"></label>
+          <label class="field" title="Contact speed in m/s (0 = 40% of the leg per second)">Speed m/s<input id="foot-speed" type="number" min="0" max="20" step="0.05" value="0"></label>
+          <label class="field" title="Blend frames around each contact">Blend<input id="foot-blend" type="number" min="0" max="30" step="1" value="4"></label>
+        </div>
+      </div>
       <p id="motion-info" class="muted small"></p>
       <div class="retarget">
         <div class="row">

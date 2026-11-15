@@ -21,20 +21,56 @@ import (
 type layerRequest struct {
 	Name       string            `json:"name"`
 	RootMotion rootMotionRequest `json:"root_motion"`
-	Mode       string            `json:"mode"`               // override (default) | additive
-	Weight     *float64          `json:"weight,omitempty"`   // default 1
-	Mask       json.RawMessage   `json:"mask,omitempty"`     // preset name or custom mask object
-	Enabled    *bool             `json:"enabled,omitempty"`  // default true
+	Mode       string            `json:"mode"`              // override (default) | additive
+	Weight     *float64          `json:"weight,omitempty"`  // default 1
+	Mask       json.RawMessage   `json:"mask,omitempty"`    // preset name or custom mask object
+	Enabled    *bool             `json:"enabled,omitempty"` // default true
 	Muted      bool              `json:"muted,omitempty"`
 	Reference  string            `json:"reference,omitempty"` // first (default) | rest | frame index
 	Wrap       string            `json:"wrap,omitempty"`      // clamp (default) | loop
 }
 
+type footLockRequest struct {
+	Enabled    bool    `json:"enabled"`
+	Height     float64 `json:"height,omitempty"`      // contact height threshold, m (0 = auto)
+	Speed      float64 `json:"speed,omitempty"`       // contact speed threshold, m/s (0 = auto)
+	Blend      *int    `json:"blend,omitempty"`       // blend frames (default 4)
+	AdjustHips *bool   `json:"adjust_hips,omitempty"` // default true
+}
+
 type layersRequest struct {
-	Character string          `json:"character,omitempty"`
-	Mapping   json.RawMessage `json:"mapping,omitempty"`
-	AlignRest bool            `json:"align_rest,omitempty"`
-	Layers    []layerRequest  `json:"layers"`
+	Character string           `json:"character,omitempty"`
+	Mapping   json.RawMessage  `json:"mapping,omitempty"`
+	AlignRest bool             `json:"align_rest,omitempty"`
+	Layers    []layerRequest   `json:"layers"`
+	FootLock  *footLockRequest `json:"foot_lock,omitempty"`
+}
+
+// footLockArgs validates the foot-lock options and returns kmd-anim layers flags.
+func footLockArgs(f *footLockRequest) ([]string, *httpError) {
+	if f == nil || !f.Enabled {
+		return nil, nil
+	}
+	if !finite(f.Height, f.Speed) || f.Height < 0 || f.Height > 1 || f.Speed < 0 || f.Speed > 20 {
+		return nil, &httpError{http.StatusBadRequest, "foot lock: height must be 0..1 m and speed 0..20 m/s"}
+	}
+	args := []string{"--foot-lock"}
+	if f.Height > 0 {
+		args = append(args, "--foot-height", num(f.Height))
+	}
+	if f.Speed > 0 {
+		args = append(args, "--foot-speed", num(f.Speed))
+	}
+	if f.Blend != nil {
+		if *f.Blend < 0 || *f.Blend > 30 {
+			return nil, &httpError{http.StatusBadRequest, "foot lock: blend must be 0..30 frames"}
+		}
+		args = append(args, "--foot-blend", num(float64(*f.Blend)))
+	}
+	if f.AdjustHips != nil && !*f.AdjustHips {
+		args = append(args, "--no-hip-adjust")
+	}
+	return args, nil
 }
 
 type layerResult struct {
@@ -46,7 +82,9 @@ var frameIndex = regexp.MustCompile(`^[0-9]{1,6}$`)
 
 // layerArgs validates one layer and returns its kmd-anim options (after --layer DIR).
 func (c studioConfig) layerArgs(l layerRequest, index int) ([]string, *httpError) {
-	bad := func(msg string) *httpError { return &httpError{http.StatusBadRequest, "layer " + num(float64(index+1)) + ": " + msg} }
+	bad := func(msg string) *httpError {
+		return &httpError{http.StatusBadRequest, "layer " + num(float64(index+1)) + ": " + msg}
+	}
 	name := strings.TrimSpace(l.Name)
 	if name == "" {
 		name = "Layer " + num(float64(index+1))
@@ -163,6 +201,11 @@ func (c studioConfig) layers(ctx context.Context, req layersRequest) (layersResu
 		args = append(args, "--native", skeleton)
 	}
 	args = append(args, layerArgs...)
+	footArgs, herr := footLockArgs(req.FootLock)
+	if herr != nil {
+		return layersResult{}, herr
+	}
+	args = append(args, footArgs...)
 	id := hashID(append(key, args...)...)
 	dir := filepath.Join(c.output, "layers", id)
 	if herr := c.runCached(ctx, dir, "clip.json", func(out string) []string {
@@ -230,4 +273,3 @@ func registerLayers(mux *http.ServeMux, c studioConfig) {
 		http.ServeFile(w, r, path)
 	})
 }
-

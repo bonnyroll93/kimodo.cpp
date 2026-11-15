@@ -17,6 +17,7 @@ The original generation path is unchanged; `tests/data/baseline/` guards it bit 
 | 3 | retargeting (role-based mapping, JSON mappings, studio preview on the character) | done |
 | 4 | animation layers (Override/Additive, masks, enable/mute), layer timeline | done |
 | 5 | GLB export (mesh + skin + clip), round-trip tests, baseline regression test | done |
+| F5 | two-bone IK, foot contact detection, foot locking (backlog) | done |
 
 ## Layout
 
@@ -222,6 +223,45 @@ output is one self-contained `.glb`.
 - the same holds for the T-pose rig, the Mixamo-named A-pose rig, the data-URI `.gltf`
   rig and a baked layer stack.
 
+## F5: IK and foot locking
+
+```cpp
+#include <kimodo/anim/ik.hpp>
+
+auto locked = kimodo::anim::foot_lock(clip, skeleton);   // FootLockOptions{} = automatic thresholds
+// locked->clip, locked->contacts (foot, frames, pinned position), slide_before/after, max_hip_drop
+kimodo::anim::solve_two_bone_ik(skeleton, pose, thigh, calf, foot, target);   // one frame, in place
+```
+
+- **Two-bone IK** is analytic. It sets the knee angle so the hip-to-ankle distance matches
+  the target, then aims the chain at it. The knee keeps its current bend plane; a straight
+  leg uses the character's lateral axis, so knees bend forward. The foot keeps its
+  animated global orientation. Unreachable targets are clamped to full reach.
+- **Contact detection** marks a foot as in contact while two conditions hold:
+  - the lower of ankle and toe is within 8% of the leg length above the ground (the lowest
+    foot point of the clip);
+  - the ankle's horizontal speed is below 40% of the leg length per second.
+
+  Short gaps are merged and contacts shorter than 3 frames are dropped. Both thresholds
+  can be set.
+- **Foot locking**:
+  - pins each contact's ankle horizontally at its mean position, keeping the animated
+    height so heel and toe roll stay natural;
+  - solves both legs with IK and blends in and out over 4 frames;
+  - with `adjust_hips` (on by default), lowers the root by the smallest smoothed amount
+    that keeps every pinned foot reachable, at most 10% of the leg length.
+
+  Spine, arms, head, root rotation and horizontal root position stay bit-identical, and
+  frames away from any contact are untouched.
+- **Results on the test motion:** sliding inside contacts goes from 23–64 mm to below
+  0.001 mm, with no frame out of reach. This holds for the generated walk, the walk
+  retargeted onto the test rig, a curved path and a path 20% faster than the walk.
+- **Where it applies.** Foot locking is a final step after the layers are baked:
+  `kmd-anim layers … --foot-lock`, `kmd-anim footlock`, `foot_lock` in `/api/layers` and
+  `/api/export`, and the *Foot locking (IK)* option in the studio. So it also applies to
+  the exported GLB. The studio draws a print at each pinned position and a row of contact
+  bars per foot in the timeline.
+
 ## Tools
 
 ```sh
@@ -246,6 +286,15 @@ kmd-anim layers OUT_DIR (--native soma30 | --character character.glb) [--fps N] 
 ```sh
 kmd-anim export character.glb CLIP_DIR out.glb [--name Walk] [--replace-animations] [--export-scale]
 ```
+
+```sh
+kmd-anim footlock IN_DIR OUT_DIR [--character character.glb] [--foot-height M] [--foot-speed M_PER_S] \
+    [--foot-blend FRAMES] [--no-hip-adjust]
+kmd-anim layers … --foot-lock [--foot-height M] [--foot-speed M_PER_S] [--foot-blend N] [--no-hip-adjust]
+```
+
+`footlock` reads a native motion directory or a clip directory and writes a clip
+directory. Its `clip.json` holds `foot_lock` with the contacts and statistics.
 
 `export` writes the character with the clip in `CLIP_DIR` (output of `retarget` or
 `layers`) as a new animation. It then reloads the result to make sure it is still a valid
@@ -327,7 +376,7 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
   - `/studio/?motion=sample:soma30-walk-s42&mode=path&preset=scurve&frame=45`
   - `/studio/?load=samples/test_rig_mixamo_apose.glb&motion=sample:soma30-walk-s42&mode=inplace&align=1&mapping=open`
   - `/studio/?load=samples/test_rig.glb&motion=sample:soma30-walk-s42&stack=demo&mask=custom` (a demo two-layer stack)
-  - `…&export=1` runs the export once the motion is ready; `/studio/?load=<url of a .glb>&embedded=<animation>&frame=45` reopens a file
+  - `…&footlock=1` turns foot locking on; `…&export=1` runs the export once the motion is ready; `/studio/?load=<url of a .glb>&embedded=<animation>&frame=45` reopens a file
 
 | Endpoint | Purpose |
 |---|---|
@@ -341,7 +390,7 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
 | `POST /api/retarget/check` | `{character, skeleton, mapping}` → diagnostics |
 | `POST /api/retarget` | `{root_motion:{…}, character, mapping?, align_rest?, root_scale?, yaw?}` |
 | `GET /api/retarget/<id>/{retarget.json,rotations.f32,translations.f32}` | result, cached by request hash |
-| `POST /api/layers` | `{character?, mapping?, align_rest?, layers:[{name, root_motion, mode, weight, mask, enabled, muted, reference, wrap}]}` (1–16 layers) |
+| `POST /api/layers` | `{character?, mapping?, align_rest?, foot_lock?:{enabled, height?, speed?, blend?, adjust_hips?}, layers:[{name, root_motion, mode, weight, mask, enabled, muted, reference, wrap}]}` (1–16 layers) |
 | `GET /api/layers/<id>/{clip.json,rotations.f32,translations.f32,root.f32}` | baked stack, cached by request hash |
 | `POST /api/export` | `{name?, character, mapping?, align_rest?, layers:[…]}` → `{url, download, bytes, meta}` |
 | `GET /api/export/<id>/<name>.glb[?download=1]` | the exported GLB (inline for the viewer, or as an attachment) |
@@ -378,6 +427,7 @@ it.
 | `kimodo-anim-retarget-test` | roles, mapping JSON/diagnostics, rest pose, axis flips, limb lengths, facing, A-pose |
 | `kimodo-anim-layers-test` | Override/Additive, masks, enable vs mute, weights, quaternion edge cases, fps/durations |
 | `kimodo-anim-export-test` | GLB round trip (skeleton, mesh, skin, IBMs, poses at start/middle/end) |
+| `kimodo-anim-ik-test` | two-bone IK (reach, bone lengths, knee plane, degenerate cases), contacts, foot locking on native, retargeted and path-following walks |
 | `kimodo-anim-*-cli` | `kmd-anim` subcommands end to end |
 | `go test ./demo` | studio routes, root motion, retarget, layers, export endpoints (with the real `kmd-anim`) |
 | `kimodo-generate-baseline-parity` | the original generation path is unchanged (opt-in) |
@@ -402,8 +452,15 @@ it.
 ## Known limitations
 
 - **Path following** is procedural post-processing. It neither conditions the model nor
-  re-times steps. With `Duration`/`Speed` timing, or after retargeting, feet can slide:
-  there is no IK and no foot locking.
+  re-times steps.
+  - Foot locking removes the sliding caused by curvature, retargeting or moderate speed
+    differences.
+  - When the path is much faster than the walk (for example 2× or more), no foot is ever
+    slow enough to count as a contact, so nothing is locked. Pinning would also be out of
+    reach.
+- **Foot locking** pins the ankle; toes are not solved separately. Hip lowering is limited
+  to 10% of the leg length, and the bend plane comes from the animation. There are no
+  arm/hand constraints, look-at or ground-penetration solving beyond the pinned feet.
 - **Retargeting** supports humanoids compatible with the source rig.
   - It needs one skin with one root joint and unique joint names.
   - Translations are transferred only for the root; other joints keep their bone lengths.

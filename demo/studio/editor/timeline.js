@@ -29,8 +29,9 @@ export class Timeline {
     container.addEventListener('pointerup', () => { dragging = false; });
   }
 
-  // layers: [{name, duration, enabled, muted}], duration: stack seconds, active: index.
-  set({ layers, duration, active }) {
+  // layers: [{name, duration, enabled, muted}], duration: stack seconds, active: index,
+  // contacts: optional foot contacts [{foot: 'left'|'right', start, end}] in seconds.
+  set({ layers, duration, active, contacts = null }) {
     this.duration = duration;
     this.container.replaceChildren();
     this.container.hidden = !layers.length;
@@ -57,6 +58,25 @@ export class Timeline {
       labels.append(label);
       tracks.append(track);
     });
+    if (contacts) {
+      for (const foot of ['left', 'right']) {
+        const label = document.createElement('div');
+        label.className = 'tl-label foot';
+        label.textContent = `${foot === 'left' ? 'Left' : 'Right'} foot contacts`;
+        const track = document.createElement('div');
+        track.className = `tl-track foot ${foot}`;
+        for (const c of contacts.filter((x) => x.foot === foot)) {
+          const bar = document.createElement('div');
+          bar.className = 'tl-contact';
+          bar.style.left = `${duration > 0 ? (c.start / duration) * 100 : 0}%`;
+          bar.style.width = `${duration > 0 ? Math.max(0.5, ((c.end - c.start) / duration) * 100) : 0}%`;
+          bar.title = `${foot} foot pinned ${c.start.toFixed(2)}–${c.end.toFixed(2)} s`;
+          track.append(bar);
+        }
+        labels.append(label);
+        tracks.append(track);
+      }
+    }
     tracks.append(this.playhead);
     this.container.append(labels, tracks);
   }

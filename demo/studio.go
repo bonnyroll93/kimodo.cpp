@@ -18,10 +18,10 @@ import (
 var studioFiles embed.FS
 
 type studioConfig struct {
-	sampleRigs    string // *.glb characters offered under /studio/samples/
-	sampleMotions string // kmd-generate output directories offered as motion sources
-	output        string // demo output directory (root-motion results go below it)
-	anim          string // kmd-anim executable
+	sampleRigs    string                // *.glb characters offered under /studio/samples/
+	sampleMotions string                // kmd-generate output directories offered as motion sources
+	output        string                // demo output directory (root-motion results go below it)
+	anim          string                // kmd-anim executable
 	animations    func() []studioMotion // ready gallery animations, may be nil
 }
 

@@ -185,6 +185,14 @@ body {
 .export { display: grid; gap: 6px; border-top: 1px solid var(--line); padding-top: 10px; }
 .export .row { align-items: end; }
 .export .button.primary:disabled { opacity: .45; cursor: default; }
+.footlock { display: grid; gap: 6px; border-top: 1px solid var(--line); padding-top: 8px; }
+.footlock .row { align-items: end; flex-wrap: wrap; }
+.footlock .field input { width: 100%; }
+.tl-contact { position: absolute; top: 0; bottom: 0; border-radius: 3px; }
+.tl-track.foot { position: relative; background: #0b1015; cursor: ew-resize; }
+.tl-track.foot.left .tl-contact { background: #5ee6becc; }
+.tl-track.foot.right .tl-contact { background: #ffb547cc; }
+.tl-label.foot { cursor: default; }
 .status {
   padding: 6px 16px; border-top: 1px solid var(--line); background: var(--panel);
   color: var(--muted); font-size: .8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

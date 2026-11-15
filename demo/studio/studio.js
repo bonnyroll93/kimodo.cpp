@@ -242,6 +242,7 @@ motionPanel.loadSources().then(() => {
   if (params.get('lock')) $('lock').value = params.get('lock');
   if (params.get('timing')) $('timing').value = params.get('timing');
   if (params.get('align') === '1') $('align-rest').checked = true;
+  if (params.get('footlock') === '1') { $('foot-lock').checked = true; $('foot-opts').hidden = false; }
   $('motion-source').value = motion;
   motionPanel.activeLayer.config = motionPanel.readForm();
   // stack=demo: a second, additive upper-body layer (in place) at half weight; mask=... overrides its mask.

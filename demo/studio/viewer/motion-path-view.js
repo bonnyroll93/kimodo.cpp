@@ -36,6 +36,7 @@ export class MotionPathView {
   clear() {
     this.group.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
     this.group.clear();
+    this.contacts = null;
   }
 
   // samples: Float32Array [N,3] or null; waypoints: [[x,y,z]]; sourceRoot/resultRoot: Float32Array [T,3].
@@ -55,6 +56,26 @@ export class MotionPathView {
         this.group.add(m);
       });
     }
+  }
+
+  // Foot contacts: a small print at each pinned ankle position (left green, right amber).
+  showContacts(contacts, ground = 0) {
+    if (this.contacts) {
+      this.contacts.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
+      this.group.remove(this.contacts);
+    }
+    this.contacts = new THREE.Group();
+    this.contacts.name = 'foot-contacts';
+    if (contacts?.length) {
+      const geo = new THREE.BoxGeometry(0.07, 0.006, 0.16);
+      const mats = { left: new THREE.MeshBasicMaterial({ color: 0x5ee6be }), right: new THREE.MeshBasicMaterial({ color: 0xffb547 }) };
+      for (const c of contacts) {
+        const m = new THREE.Mesh(geo, mats[c.foot]);
+        m.position.set(c.position[0], ground + LIFT * 4, c.position[2]);
+        this.contacts.add(m);
+      }
+    }
+    this.group.add(this.contacts);
   }
 
   set visible(v) { this.group.visible = v; }
