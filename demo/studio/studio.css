@@ -257,6 +257,7 @@ body {
 .icon-button.danger:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
 @media (max-width: 900px) { .library-row { grid-template-columns: minmax(0, 1fr) 60px; } .library-row > :nth-child(3), .library-row > :nth-child(4) { display: none; } }
 .button:disabled { opacity: .4; cursor: default; }
+.timeline.stretching .tl-bar { cursor: col-resize !important; outline: 1px dashed #ffb54788; outline-offset: -1px; }
 .status {
   padding: 6px 16px; border-top: 1px solid var(--line); background: var(--panel);
   color: var(--muted); font-size: .8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

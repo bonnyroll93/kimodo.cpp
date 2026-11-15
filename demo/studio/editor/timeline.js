@@ -3,6 +3,8 @@
 //   drag the bar: move it in time · drag the left edge: trim the start · drag the right
 //   edge: trim the end (Alt: stretch, i.e. change the speed) · click a label: make the
 //   layer active · click/drag empty track space: seek.
+// Ctrl (or Alt) + drag stretches / compresses a clip (changes its speed): body or right edge
+// keep the start, the left edge keeps the end; Ctrl + wheel over a clip does the same in steps.
 // The toolbar edits the active clip: split at the playhead, duplicate after it, speed,
 // repeat (cycles continue the root), fades, outside-range behaviour and root alignment.
 // Times snap to frames (Shift: free).
@@ -23,6 +25,12 @@ export class Timeline {
     container.addEventListener('pointerdown', (e) => this.down(e));
     container.addEventListener('pointermove', (e) => this.move(e));
     container.addEventListener('pointerup', () => this.up());
+    container.addEventListener('wheel', (e) => this.wheel(e), { passive: false });
+    // Holding Ctrl / Cmd / Alt shows the stretch cursor on the clips.
+    const mod = (e) => this.setStretchCursor(e.ctrlKey || e.metaKey || e.altKey);
+    window.addEventListener('keydown', mod);
+    window.addEventListener('keyup', mod);
+    window.addEventListener('blur', () => this.setStretchCursor(false));
   }
 
   // layers: [{name, duration (clip seconds), enabled, muted, timing, keyTimes, kind}],
@@ -80,7 +88,7 @@ export class Timeline {
       bar.style.left = this.pct(s);
       bar.style.width = this.pct(Math.max(e - s, 1 / this.fps));
       bar.title = `${l.name}: ${s.toFixed(2)}–${e.toFixed(2)} s · speed ${t.speed.toFixed(2)}× · ${t.repeat} cycle(s)` +
-        ' · drag to move, edges to trim (Alt + right edge: stretch)';
+        ' · drag: move · edges: trim · Ctrl + drag or Ctrl + wheel: stretch / compress';
       for (let k = 1; k < t.repeat; k++) {
         const sep = document.createElement('div');
         sep.className = 'tl-cycle';
@@ -209,17 +217,39 @@ export class Timeline {
     }
     const i = Number(bar.dataset.layer);
     const r = bar.getBoundingClientRect();
-    const zone = e.clientX - r.left < EDGE ? 'left' : r.right - e.clientX < EDGE ? 'right' : 'body';
+    let zone = e.clientX - r.left < EDGE ? 'left' : r.right - e.clientX < EDGE ? 'right' : 'body';
+    // Ctrl (Cmd on macOS) or Alt: stretch / compress instead of moving or trimming. On the
+    // body and the right edge the start stays put; on the left edge the end stays put.
+    const stretch = e.ctrlKey || e.metaKey || e.altKey;
+    if (stretch && zone === 'body') zone = 'right';
     if (i !== this.active) this.cb.select(i);
-    this.drag = { i, zone, t0: this.timeAt(e), timing: this.timingOf(i), segment: this.segment(i), stretch: e.altKey };
+    this.drag = { i, zone, t0: this.timeAt(e), timing: this.timingOf(i), segment: this.segment(i), stretch };
   }
+
+  // Ctrl + wheel over a clip: compress (wheel up) / stretch (wheel down) around its start.
+  wheel(e) {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    const bar = e.target.closest?.('.tl-bar');
+    if (!bar) return;
+    e.preventDefault(); // not the browser's page zoom
+    const i = Number(bar.dataset.layer);
+    if (i !== this.active) this.cb.select(i);
+    const t = this.timingOf(i);
+    const speed = Math.min(20, Math.max(0.05, t.speed * Math.exp(-e.deltaY * 0.0015)));
+    this.cb.timing(i, { speed }, false);
+    clearTimeout(this.wheelTimer);
+    this.wheelTimer = setTimeout(() => this.cb.timing(i, { speed: this.timingOf(i).speed }, true), 300);
+  }
+
+  setStretchCursor(on) { this.container.classList.toggle('stretching', on); }
 
   move(e) {
     if (!this.drag) {
       const bar = e.target.closest?.('.tl-bar');
       if (bar) {
         const r = bar.getBoundingClientRect();
-        bar.style.cursor = e.clientX - r.left < EDGE || r.right - e.clientX < EDGE ? 'ew-resize' : 'grab';
+        const edge = e.clientX - r.left < EDGE || r.right - e.clientX < EDGE;
+        bar.style.cursor = e.ctrlKey || e.metaKey || e.altKey ? 'col-resize' : edge ? 'ew-resize' : 'grab';
       }
       return;
     }
@@ -227,17 +257,22 @@ export class Timeline {
     if (d.seek) { this.cb.seek(this.timeAt(e)); return; }
     const dt = this.timeAt(e) - d.t0;
     const t = d.timing, len = (d.segment / t.speed) * t.repeat;
+    const speedFor = (newLen) => Math.min(20, Math.max(0.05, (d.segment * t.repeat) / Math.max(1 / this.fps, newLen)));
     let patch;
-    if (d.zone === 'body') {
+    if (d.stretch && d.zone === 'left') {
+      // Stretch keeping the end: the start follows the pointer.
+      const end = t.start + len;
+      const speed = speedFor(len - dt);
+      patch = { speed, start: end - (d.segment * t.repeat) / speed };
+    } else if (d.stretch) {
+      // Stretch keeping the start: the end follows the pointer.
+      patch = { speed: speedFor(len + dt) };
+    } else if (d.zone === 'body') {
       patch = { start: this.snap(t.start + dt, e) };
     } else if (d.zone === 'left') {
       // Trim the start: the content stays in place, the clip begins later/earlier.
       const clipDt = Math.max(-t.trim_in, Math.min(dt * t.speed, d.segment - 1 / this.fps));
       patch = { trim_in: t.trim_in + clipDt, start: this.snap(t.start + clipDt / t.speed, e) };
-    } else if (d.stretch || e.altKey) {
-      // Stretch: change the speed so the clip ends where the edge is.
-      const newLen = Math.max(1 / this.fps, len + dt);
-      patch = { speed: Math.min(20, Math.max(0.05, (d.segment * t.repeat) / newLen)) };
     } else {
       // Trim the end (of each cycle).
       const full = this.layers[d.i].duration ?? 0;

@@ -454,8 +454,12 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
   or when you press ↻.
 - **Clip timeline (retiming).** Every layer is a clip on the timeline.
   - **Editing with the mouse:** drag a clip to move it; drag its left edge to trim the
-    start, its right edge to trim the end, or Alt + right edge to stretch it (change the
-    speed). Times snap to frames; Shift moves freely.
+    start and its right edge to trim the end. Times snap to frames; Shift moves freely.
+  - **Stretch / compress** (change the speed) with **Ctrl + drag**, or Cmd / Alt:
+    - on the clip or its right edge the start stays put;
+    - on the left edge the end stays put;
+    - **Ctrl + wheel** over a clip stretches or compresses it in steps;
+    - while Ctrl is held, the clips show a stretch cursor.
   - **Toolbar for the active clip:**
     - *Split* cuts it at the playhead into two clips that reproduce the original motion;
     - *Duplicate* places a copy right after it, with *Align root* so the root continues;
