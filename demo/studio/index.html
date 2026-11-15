@@ -28,6 +28,7 @@
     <label class="toggle"><input type="checkbox" id="show-joints" checked> Joints</label>
     <label class="toggle"><input type="checkbox" id="show-grid" checked> Grid</label>
     <label class="toggle"><input type="checkbox" id="show-axes" checked> Axes</label>
+    <label class="toggle"><input type="checkbox" id="show-path" checked> Path</label>
     <span class="sep"></span>
     <button id="frame" class="button" title="Frame the character (F)">Frame</button>
     <a class="button ghost" href="/">Text to motion ↗</a>
@@ -46,8 +47,49 @@
       <p class="muted">or use <em>Open GLB</em> / <em>Sample rigs</em>. Orbit: left-drag · Pan: right-drag · Zoom: wheel · Select: click a joint</p>
     </div>
     <div id="drop" class="drop" hidden>Drop to load</div>
+    <div id="playbar" class="playbar" hidden>
+      <button id="play" class="button" title="Play / pause (Space)">Play</button>
+      <input id="scrub" type="range" min="0" max="0" value="0" step="1" aria-label="Frame">
+      <span id="frame-label" class="frame-label">0 / 0</span>
+      <label class="toggle"><input type="checkbox" id="loop" checked> Loop</label>
+    </div>
   </section>
-  <aside class="panel" aria-label="Inspector">
+  <aside class="panel" aria-label="Motion and inspector">
+    <div class="panel-head"><h2>Motion</h2></div>
+    <div class="motion-form">
+      <label class="field">Source <select id="motion-source"><option value="">Loading…</option></select></label>
+      <div class="segmented" role="radiogroup" aria-label="Root motion mode">
+        <label><input type="radio" name="root-mode" value="full" checked><span>Full</span></label>
+        <label><input type="radio" name="root-mode" value="inplace"><span>In place</span></label>
+        <label><input type="radio" name="root-mode" value="path"><span>Path</span></label>
+      </div>
+      <div id="inplace-opts" class="opts" hidden>
+        <label class="field">Remove travel
+          <select id="lock"><option value="both">Forward + lateral</option><option value="forward">Forward only</option><option value="lateral">Lateral only</option></select>
+        </label>
+      </div>
+      <div id="path-opts" class="opts" hidden>
+        <label class="field">Preset <select id="path-preset"></select></label>
+        <label class="field">Waypoints <span class="muted">(x z per line, metres)</span>
+          <textarea id="path-points" rows="5" spellcheck="false"></textarea>
+        </label>
+        <div class="row">
+          <label class="field">Curve <select id="path-interp"><option value="catmull">Catmull-Rom</option><option value="polyline">Polyline</option></select></label>
+          <label class="toggle"><input type="checkbox" id="path-loop"> Loop</label>
+        </div>
+        <div class="row">
+          <label class="field">Timing
+            <select id="timing"><option value="distance">Motion distance</option><option value="duration">Duration</option><option value="speed">Speed</option></select>
+          </label>
+          <label id="timing-value-row" class="field" hidden><span id="timing-unit">s</span>
+            <input id="timing-value" type="number" min="0" step="0.1" value="0">
+          </label>
+        </div>
+        <label class="toggle"><input type="checkbox" id="orient" checked> Orient root along path</label>
+        <p class="note">Post-processing only: the generated steps are not re-timed, so feet may slide when the path speed differs from the walk.</p>
+      </div>
+      <p id="motion-info" class="muted small"></p>
+    </div>
     <div class="panel-head"><h2>Inspector</h2></div>
     <div id="inspector" class="inspector"><p class="muted pad">Select a joint in the hierarchy or the viewport.</p></div>
     <div class="panel-head"><h2>Character</h2></div>

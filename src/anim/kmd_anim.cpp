@@ -1,10 +1,18 @@
 // kmd-anim: Kimodo Extended post-processing tool.
 //   kmd-anim inspect CHARACTER.glb [--skin N]   skeleton of a rigged glTF/GLB as JSON
 //   kmd-anim inspect --native KEY               native Kimodo skeleton (smplx22|soma30|g1skel34)
+//   kmd-anim root-motion IN_DIR OUT_DIR --mode full|inplace|path [options]
+//                                               Full / InPlace / CustomPath on kmd-generate output
+#include <kimodo/anim/clip.hpp>
 #include <kimodo/anim/gltf.hpp>
+#include <kimodo/anim/root_motion.hpp>
 #include <kimodo/anim/skeleton.hpp>
 
+#include <algorithm>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <stdexcept>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -64,12 +72,123 @@ std::string skeleton_json(const Skeleton &s) {
 
 int usage() {
     std::cerr << "usage: kmd-anim inspect CHARACTER.glb [--skin N]\n"
-                 "       kmd-anim inspect --native smplx22|soma30|g1skel34\n";
+                 "       kmd-anim inspect --native smplx22|soma30|g1skel34\n"
+                 "       kmd-anim root-motion IN_DIR OUT_DIR --mode full|inplace|path\n"
+                 "           [--up X,Y,Z] [--forward X,Y,Z] [--lock both|forward|lateral] [--fps N]\n"
+                 "           [--points X,Y,Z;X,Y,Z;...] [--interp catmull|polyline] [--loop]\n"
+                 "           [--timing distance|duration|speed] [--duration S] [--speed M_PER_S] [--no-orient]\n"
+                 "       IN_DIR/OUT_DIR hold root_positions.f32 + local_rotations_xyzw.f32; path mode also\n"
+                 "       writes OUT_DIR/path_samples.f32 ([N,3], the evaluated curve for display).\n";
     return 2;
+}
+
+Vec3 parse_vec3(std::string_view text) {
+    Vec3 v;
+    if (std::sscanf(std::string(text).c_str(), "%f,%f,%f", &v.x, &v.y, &v.z) != 3)
+        throw std::runtime_error("expected X,Y,Z but got '" + std::string(text) + "'");
+    return v;
+}
+
+std::vector<Vec3> parse_points(std::string_view text) {
+    std::vector<Vec3> points;
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        const std::size_t end = std::min(text.find(';', start), text.size());
+        if (end > start) points.push_back(parse_vec3(text.substr(start, end - start)));
+        start = end + 1;
+    }
+    return points;
+}
+
+int root_motion(int argc, char **argv) {
+    if (argc < 4) return usage();
+    const std::filesystem::path in = argv[2], out = argv[3];
+    RootMotionSettings settings;
+    float fps = 30.F;
+    bool have_mode = false;
+    auto path_spec = [&]() -> MotionPathSpec & {
+        if (!settings.path) settings.path.emplace();
+        return *settings.path;
+    };
+    for (int i = 4; i < argc; ++i) {
+        const std::string_view arg = argv[i];
+        auto value = [&]() -> std::string_view {
+            if (i + 1 >= argc) throw std::runtime_error(std::string(arg) + " needs a value");
+            return argv[++i];
+        };
+        if (arg == "--mode") {
+            const auto m = value();
+            have_mode = true;
+            if (m == "full") settings.mode = RootMotionMode::Full;
+            else if (m == "inplace") settings.mode = RootMotionMode::InPlace;
+            else if (m == "path") settings.mode = RootMotionMode::CustomPath;
+            else throw std::runtime_error("unknown mode '" + std::string(m) + "'");
+        } else if (arg == "--up") {
+            settings.axes.up = parse_vec3(value());
+        } else if (arg == "--forward") {
+            settings.axes.forward = parse_vec3(value());
+        } else if (arg == "--fps") {
+            fps = std::stof(std::string(value()));
+        } else if (arg == "--lock") {
+            const auto l = value();
+            settings.in_place.lock_forward = l == "both" || l == "forward";
+            settings.in_place.lock_lateral = l == "both" || l == "lateral";
+            if (!settings.in_place.lock_forward && !settings.in_place.lock_lateral)
+                throw std::runtime_error("--lock must be both, forward or lateral");
+        } else if (arg == "--points") {
+            path_spec().points = parse_points(value());
+        } else if (arg == "--interp") {
+            const auto t = value();
+            if (t == "catmull") path_spec().interpolation = PathInterpolation::CatmullRom;
+            else if (t == "polyline") path_spec().interpolation = PathInterpolation::Polyline;
+            else throw std::runtime_error("unknown interpolation '" + std::string(t) + "'");
+        } else if (arg == "--loop") {
+            path_spec().loop = true;
+        } else if (arg == "--timing") {
+            const auto t = value();
+            if (t == "distance") settings.follow.timing = PathTiming::MotionDistance;
+            else if (t == "duration") settings.follow.timing = PathTiming::Duration;
+            else if (t == "speed") settings.follow.timing = PathTiming::Speed;
+            else throw std::runtime_error("unknown timing '" + std::string(t) + "'");
+        } else if (arg == "--duration") {
+            settings.follow.duration = std::stof(std::string(value()));
+        } else if (arg == "--speed") {
+            settings.follow.speed = std::stof(std::string(value()));
+        } else if (arg == "--no-orient") {
+            settings.follow.orient_to_path = false;
+        } else {
+            throw std::runtime_error("unknown option '" + std::string(arg) + "'");
+        }
+    }
+    if (!have_mode) throw std::runtime_error("--mode is required");
+    if (auto ok = validate(settings); !ok) throw std::runtime_error(ok.error());
+
+    auto motion = read_motion_dir(in);
+    if (!motion) throw std::runtime_error(motion.error());
+    auto skeleton = native_skeleton_for_joint_count(motion->joints);
+    if (!skeleton) throw std::runtime_error(skeleton.error());
+    auto clip = clip_from_motion(*skeleton, *motion, fps);
+    if (!clip) throw std::runtime_error(clip.error());
+    if (auto ok = apply_root_motion(*clip, settings); !ok) throw std::runtime_error(ok.error());
+    if (auto ok = write_motion_dir(out, clip_to_motion(*clip)); !ok) throw std::runtime_error(ok.error());
+    if (settings.mode == RootMotionMode::CustomPath) {
+        auto path = MotionPath::build(*settings.path, settings.axes); // built successfully above
+        const auto samples = path->sample(256);
+        std::ofstream f(out / "path_samples.f32", std::ios::binary | std::ios::trunc);
+        for (const Vec3 &p : samples) {
+            const float xyz[3] = {p.x, p.y, p.z};
+            f.write(reinterpret_cast<const char *>(xyz), sizeof xyz);
+        }
+        if (!f) throw std::runtime_error("cannot write path_samples.f32");
+    }
+    std::cout << "{\"frames\":" << motion->frames << ",\"joints\":" << motion->joints
+              << ",\"skeleton\":" << quote(skeleton->source) << "}\n";
+    return 0;
 }
 } // namespace
 
 int main(int argc, char **argv) try {
+    if (argc >= 2 && std::string_view(argv[1]) == "root-motion") return root_motion(argc, argv);
     if (argc < 3 || std::string_view(argv[1]) != "inspect") return usage();
     if (std::string_view(argv[2]) == "--native") {
         if (argc != 4) return usage();

@@ -58,15 +58,22 @@ export class Viewport {
     this.renderer.render(this.scene, this.camera);
   }
 
-  // Fit the camera to an object's bounding box, keeping the current viewing direction.
-  frame(object) {
-    const box = new THREE.Box3().setFromObject(object, true);
+  // Fit the camera to one or more objects, keeping the current viewing direction.
+  // precise: use vertex-accurate bounds (skinned meshes); instanced overlays need false.
+  // direction (optional THREE.Vector3): view from this direction instead of the current one.
+  frame(objects, precise = true, direction = null) {
+    const box = new THREE.Box3();
+    for (const o of [].concat(objects)) box.union(new THREE.Box3().setFromObject(o, precise));
+    return this.frameBox(box, direction);
+  }
+
+  frameBox(box, direction = null) {
     if (box.isEmpty()) return;
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
     const radius = Math.max(size.length() / 2, 0.05);
     const distance = radius / Math.sin(THREE.MathUtils.degToRad(this.camera.fov / 2)) * 1.1;
-    const dir = this.camera.position.clone().sub(this.controls.target).normalize();
+    const dir = direction ? direction.clone().normalize() : this.camera.position.clone().sub(this.controls.target).normalize();
     if (!Number.isFinite(dir.x) || dir.lengthSq() === 0) dir.set(0.5, 0.35, 0.8).normalize();
     this.controls.target.copy(center);
     this.camera.position.copy(center).addScaledVector(dir, distance);
@@ -74,7 +81,7 @@ export class Viewport {
     this.camera.far = distance * 200;
     this.camera.updateProjectionMatrix();
     // Scale helpers to the character so tiny or huge rigs stay readable.
-    const unit = Math.pow(10, Math.round(Math.log10(Math.max(size.y, size.x, size.z, 1e-3))));
+    const unit = Math.pow(10, Math.floor(Math.log10(Math.max(size.y, size.x, size.z, 1e-3))));
     this.grid.scale.setScalar(unit);
     this.grid.position.set(center.x, box.min.y, center.z);
     this.axes.scale.setScalar(unit * 0.5);

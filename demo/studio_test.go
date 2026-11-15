@@ -19,7 +19,7 @@ func TestStudioRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
-	registerStudio(mux, rigs)
+	registerStudio(mux, studioConfig{sampleRigs: rigs})
 	get := func(path string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))

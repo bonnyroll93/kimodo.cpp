@@ -102,6 +102,22 @@ struct Transform {
     return {mul(inv_s, rotate(inv_r, -t.translation)), inv_r, inv_s};
 }
 
+// Which directions mean "up" and "forward" for a motion. Kimodo and glTF: Y up, +Z forward.
+// Both must be unit length and perpendicular; lateral() completes the basis.
+struct AxisConvention {
+    Vec3 up{0.F, 1.F, 0.F};
+    Vec3 forward{0.F, 0.F, 1.F};
+
+    [[nodiscard]] constexpr Vec3 lateral() const noexcept { return cross(up, forward); }
+    // Component of v perpendicular to up (projection onto the ground plane through the origin).
+    [[nodiscard]] constexpr Vec3 horizontal(Vec3 v) const noexcept { return v - up * dot(v, up); }
+    // Signed angle (radians) about up from `forward` to the horizontal part of `direction`.
+    [[nodiscard]] inline float heading(Vec3 direction) const noexcept {
+        const Vec3 h = horizontal(direction);
+        return std::atan2(dot(cross(forward, h), up), dot(forward, h));
+    }
+};
+
 // Column-major 4x4 matrix (glTF layout): m[column * 4 + row].
 struct Mat4 {
     float m[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};

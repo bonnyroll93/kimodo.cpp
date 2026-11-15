@@ -104,7 +104,8 @@ endif()
 # Kimodo Extended motion runtime. Additive: the kimodo library never links it.
 if(KIMODO_BUILD_ANIM)
   add_library(kimodo_anim STATIC
-    src/anim/types.cpp src/anim/skeleton.cpp src/anim/gltf_import.cpp src/anim/cgltf_impl.cpp)
+    src/anim/types.cpp src/anim/skeleton.cpp src/anim/gltf_import.cpp src/anim/cgltf_impl.cpp
+    src/anim/clip.cpp src/anim/root_motion.cpp src/anim/motion_path.cpp)
   add_library(kimodo::anim ALIAS kimodo_anim)
   target_include_directories(kimodo_anim
     PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
@@ -131,6 +132,18 @@ if(BUILD_TESTING AND KIMODO_BUILD_TESTS AND KIMODO_BUILD_ANIM)
   set_tests_properties(kimodo-anim-inspect-native PROPERTIES PASS_REGULAR_EXPRESSION "\"source\":\"native:soma30\",\"joint_count\":30")
   add_test(NAME kimodo-anim-inspect-noskin COMMAND kmd-anim inspect "${KIMODO_TEST_RIGS}/test_noskin.glb")
   set_tests_properties(kimodo-anim-inspect-noskin PROPERTIES WILL_FAIL TRUE)
+  set(KIMODO_TEST_WALK "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/baseline/soma30-walk-s42")
+  add_executable(kimodo-anim-root-motion-test tests/anim/anim_root_motion_test.cpp)
+  target_link_libraries(kimodo-anim-root-motion-test PRIVATE kimodo_anim)
+  add_test(NAME kimodo-anim-root-motion-test COMMAND kimodo-anim-root-motion-test "${KIMODO_TEST_WALK}")
+  add_test(NAME kimodo-anim-root-motion-cli
+    COMMAND kmd-anim root-motion "${KIMODO_TEST_WALK}" "${CMAKE_CURRENT_BINARY_DIR}/anim-test-out/path"
+            --mode path --points "0,0,0;2,0,1;4,0,-1" --interp catmull)
+  set_tests_properties(kimodo-anim-root-motion-cli PROPERTIES PASS_REGULAR_EXPRESSION "\"skeleton\":\"native:soma30\"")
+  add_test(NAME kimodo-anim-root-motion-exclusive
+    COMMAND kmd-anim root-motion "${KIMODO_TEST_WALK}" "${CMAKE_CURRENT_BINARY_DIR}/anim-test-out/bad"
+            --mode inplace --points "0,0,0;1,0,0")
+  set_tests_properties(kimodo-anim-root-motion-exclusive PROPERTIES WILL_FAIL TRUE)
 endif()
 if(BUILD_TESTING AND KIMODO_BUILD_TESTS)
   add_executable(kimodo-capi-test tests/capi_test.cpp)

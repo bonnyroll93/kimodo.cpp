@@ -17,9 +17,19 @@ import (
 //go:embed studio
 var studioFiles embed.FS
 
-// registerStudio serves the viewer under /studio/ and the sample rigs from sampleRigs
-// (read-only, *.glb only) under /studio/samples/.
-func registerStudio(mux *http.ServeMux, sampleRigs string) {
+type studioConfig struct {
+	sampleRigs    string // *.glb characters offered under /studio/samples/
+	sampleMotions string // kmd-generate output directories offered as motion sources
+	output        string // demo output directory (root-motion results go below it)
+	anim          string // kmd-anim executable
+	animations    func() []studioMotion // ready gallery animations, may be nil
+}
+
+// registerStudio serves the viewer under /studio/, the sample rigs (read-only, *.glb only)
+// under /studio/samples/, and the step 2 motion and root-motion endpoints.
+func registerStudio(mux *http.ServeMux, c studioConfig) {
+	sampleRigs := c.sampleRigs
+	registerRootMotion(mux, c)
 	sub, err := fs.Sub(studioFiles, "studio")
 	if err != nil {
 		panic(err)

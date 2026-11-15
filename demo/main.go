@@ -478,6 +478,8 @@ func main() {
 	output := flag.String("output", "demo-output", "persistent gallery directory")
 	comparisons := flag.String("comparisons", "quantization-comparisons", "viewer-ready quantization comparison directories")
 	sampleRigs := flag.String("sample-rigs", "tests/data/rigs", "sample rigged GLB characters offered by /studio")
+	sampleMotions := flag.String("sample-motions", "tests/data/baseline", "sample motion directories offered by /studio")
+	animTool := flag.String("anim", "", "kmd-anim post-processing command (default: next to -generator)")
 	flag.Parse()
 	if err := os.MkdirAll(*output, 0755); err != nil {
 		log.Fatal(err)
@@ -784,6 +786,10 @@ func main() {
 		http.ServeFile(w, r, filepath.Join(g.output, a.ID, name))
 	})
 	log.Printf("Kimodo text-to-motion demo listening at http://%s", *addr)
-	registerStudio(mux, *sampleRigs)
+	if *animTool == "" {
+		*animTool = defaultAnimTool(*generator)
+	}
+	registerStudio(mux, studioConfig{sampleRigs: *sampleRigs, sampleMotions: *sampleMotions, output: *output, anim: *animTool,
+		animations: func() []studioMotion { return g.studioMotions() }})
 	log.Fatal(http.ListenAndServe(*addr, mux))
 }

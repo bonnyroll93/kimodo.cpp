@@ -1,13 +1,15 @@
 // Skeleton overlay: bone lines plus pickable joint markers drawn on top of the mesh.
 import * as THREE from 'three';
 
-const COLOR = new THREE.Color(0x3bd3d0);
 const COLOR_MUTED = new THREE.Color(0x5b6b77);
 const COLOR_SELECTED = new THREE.Color(0xffb547);
 
 export class SkeletonView {
-  constructor(scene) {
+  // color: joints/bones of this overlay; markerScale: relative marker size.
+  constructor(scene, { color = 0x3bd3d0, markerScale = 1 } = {}) {
     this.scene = scene;
+    this.color = new THREE.Color(color);
+    this.markerScale = markerScale;
     this.group = new THREE.Group();
     this.group.name = 'skeleton-overlay';
     scene.add(this.group);
@@ -24,21 +26,21 @@ export class SkeletonView {
     this.clear();
     this.joints = character ? character.joints : [];
     if (!this.joints.length) return;
-    const r = Math.max(radius * 0.012, 1e-4);
+    const r = Math.max(radius * 0.012 * this.markerScale, 1e-4);
 
     const sphere = new THREE.SphereGeometry(r, 12, 8);
     const material = new THREE.MeshBasicMaterial({ depthTest: false, transparent: true, opacity: 0.95 });
     this.markers = new THREE.InstancedMesh(sphere, material, this.joints.length);
     this.markers.renderOrder = 20;
     this.markers.frustumCulled = false;
-    for (const j of this.joints) this.markers.setColorAt(j.index, j.deforming ? COLOR : COLOR_MUTED);
+    for (const j of this.joints) this.markers.setColorAt(j.index, j.deforming ? this.color : COLOR_MUTED);
     this.group.add(this.markers);
 
     const segments = this.joints.filter((j) => j.parent >= 0).length;
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(Math.max(segments, 1) * 6), 3));
     this.lines = new THREE.LineSegments(geometry,
-      new THREE.LineBasicMaterial({ color: 0x3bd3d0, depthTest: false, transparent: true, opacity: 0.8 }));
+      new THREE.LineBasicMaterial({ color: this.color, depthTest: false, transparent: true, opacity: 0.8 }));
     this.lines.renderOrder = 19;
     this.lines.frustumCulled = false;
     this.group.add(this.lines);
@@ -66,7 +68,7 @@ export class SkeletonView {
     if (!this.markers) return;
     if (this.selected >= 0) {
       const j = this.joints[this.selected];
-      this.markers.setColorAt(j.index, j.deforming ? COLOR : COLOR_MUTED);
+      this.markers.setColorAt(j.index, j.deforming ? this.color : COLOR_MUTED);
     }
     this.selected = index;
     if (index >= 0) this.markers.setColorAt(index, COLOR_SELECTED);

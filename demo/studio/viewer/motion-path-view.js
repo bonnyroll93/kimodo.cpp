@@ -1,0 +1,59 @@
+// Ground overlays: the evaluated MotionPath (as computed by kmd-anim), its waypoints, and
+// the root trajectory of the source and of the processed motion.
+import * as THREE from 'three';
+
+const LIFT = 0.003; // keep lines just above the grid
+
+function line(points, color, opacity, dashed = false) {
+  const geometry = new THREE.BufferGeometry().setFromPoints(points);
+  const material = dashed
+    ? new THREE.LineDashedMaterial({ color, transparent: true, opacity, dashSize: 0.06, gapSize: 0.05, depthWrite: false })
+    : new THREE.LineBasicMaterial({ color, transparent: true, opacity, depthWrite: false });
+  const l = new THREE.Line(geometry, material);
+  if (dashed) l.computeLineDistances();
+  l.renderOrder = 5;
+  return l;
+}
+
+function groundTrail(root) {
+  const pts = [];
+  for (let i = 0; i < root.length; i += 3) pts.push(new THREE.Vector3(root[i], LIFT, root[i + 2]));
+  return pts;
+}
+
+export class MotionPathView {
+  constructor(scene) {
+    this.group = new THREE.Group();
+    this.group.name = 'motion-path';
+    scene.add(this.group);
+  }
+
+  clear() {
+    this.group.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
+    this.group.clear();
+  }
+
+  // samples: Float32Array [N,3] or null; waypoints: [[x,y,z]]; sourceRoot/resultRoot: Float32Array [T,3].
+  show({ samples = null, waypoints = [], sourceRoot = null, resultRoot = null }) {
+    this.clear();
+    if (sourceRoot) this.group.add(line(groundTrail(sourceRoot), 0x8b9aa5, 0.55, true));
+    if (samples && samples.length >= 6) {
+      const pts = [];
+      for (let i = 0; i < samples.length; i += 3) pts.push(new THREE.Vector3(samples[i], LIFT * 2, samples[i + 2]));
+      this.group.add(line(pts, 0x3bd3d0, 0.95));
+    }
+    if (resultRoot) this.group.add(line(groundTrail(resultRoot), 0x9f7aea, 0.9));
+    if (waypoints.length) {
+      const geo = new THREE.CylinderGeometry(0.04, 0.04, 0.01, 20);
+      const mat = new THREE.MeshBasicMaterial({ color: 0x3bd3d0 });
+      const first = new THREE.MeshBasicMaterial({ color: 0x5ee6be });
+      waypoints.forEach((p, i) => {
+        const m = new THREE.Mesh(geo, i === 0 ? first : mat);
+        m.position.set(p[0], LIFT * 3, p[2]);
+        this.group.add(m);
+      });
+    }
+  }
+
+  set visible(v) { this.group.visible = v; }
+}
