@@ -119,6 +119,7 @@ type layersRequest struct {
 	Mapping   json.RawMessage  `json:"mapping,omitempty"`
 	AlignRest bool             `json:"align_rest,omitempty"`
 	ReferencePose json.RawMessage `json:"reference_pose,omitempty"` // the character's edited T-pose
+	ControlRig    json.RawMessage `json:"control_rig,omitempty"`    // IK arms / legs (control_rig.hpp), after the layers
 	Layers    []layerRequest   `json:"layers"`
 	FootLock  *footLockRequest `json:"foot_lock,omitempty"`
 	Length    float64          `json:"length,omitempty"` // scene length override in seconds (0: the stack's)
@@ -353,6 +354,13 @@ func (c studioConfig) layers(ctx context.Context, req layersRequest) (layersResu
 	}
 	if req.Length > 0 {
 		args = append(args, "--length", num(req.Length))
+	}
+	if len(req.ControlRig) > 0 && string(req.ControlRig) != "null" {
+		rigPath, herr := c.storeJSON("control-rigs", req.ControlRig)
+		if herr != nil {
+			return layersResult{}, herr
+		}
+		args = append(args, "--control-rig", rigPath)
 	}
 	id := hashID(append(key, args...)...)
 	dir := filepath.Join(c.output, "layers", id)

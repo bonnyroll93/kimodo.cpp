@@ -310,3 +310,34 @@ body {
 .tl-label.ruler { cursor: default; height: 16px; }
 .tl-playhead-handle { position: absolute; top: -2px; left: -6px; width: 14px; height: 12px; border-radius: 3px 3px 7px 7px; background: #ffb547; pointer-events: auto; cursor: ew-resize; }
 .timeline.scrubbing, .timeline.scrubbing * { cursor: col-resize !important; }
+/* Column tabs (Outliner | Picker, Animate | Setup) */
+.tabs { display: flex; gap: 2px; padding: 8px 10px 0; border-bottom: 1px solid var(--line); flex: 0 0 auto; }
+.tabs button { border: 1px solid transparent; border-bottom: 0; background: transparent; color: var(--muted); font: inherit; font-size: .78rem;
+  letter-spacing: .06em; text-transform: uppercase; padding: 6px 12px; border-radius: 6px 6px 0 0; cursor: pointer; }
+.tabs button.on { color: var(--text); background: var(--panel); border-color: var(--line); margin-bottom: -1px; }
+.tab-page { display: flex; flex-direction: column; min-height: 0; }
+.tab-page[hidden] { display: none; }
+.panel:first-child .tab-page[data-page="outliner"] { flex: 1 1 auto; overflow: hidden; }
+.panel:first-child .tab-page[data-page="outliner"] .tree { flex: 1 1 auto; min-height: 120px; }
+.panel:first-child .tab-page[data-page="outliner"] .inspector { max-height: 40%; overflow: auto; }
+.panel:first-child .tab-page[data-page="picker"] { flex: 1 1 auto; overflow: auto; }
+/* Rig panel and picker */
+.rig-limbs { display: grid; gap: 6px; }
+.rig-limb { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; align-items: center; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font-size: .8rem; }
+.rig-limb.picked { border-color: #ffb547; }
+.rig-limb .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.rig-limb .seg button { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: .72rem; padding: 2px 8px; cursor: pointer; }
+.rig-limb .seg button.on { background: color-mix(in srgb, var(--accent) 25%, transparent); color: var(--text); font-weight: 600; }
+.rig-limb select { border: 1px solid var(--line); border-radius: 5px; background: #0b1015; color: var(--text); font: inherit; font-size: .72rem; padding: 1px 3px; }
+.rig-limb .keys { grid-column: 1 / -1; color: var(--muted); font-size: .7rem; }
+.picker { padding: 6px 10px 14px; }
+.picker svg { width: 100%; height: auto; display: block; }
+.picker .bone { stroke: #3a4a57; stroke-width: 3; stroke-linecap: round; }
+.picker .spot { fill: #5ee6be33; stroke: #5ee6be; stroke-width: 1.5; cursor: pointer; }
+.picker .spot:hover, .picker .ctl:hover { stroke-width: 2.5; }
+.picker .spot.picked { fill: #ffb547; stroke: #ffb547; }
+.picker .ctl { fill: #ffb54722; stroke: #ffb547; stroke-width: 1.5; cursor: pointer; }
+.picker .ctl.off { stroke: #5b6b77; fill: transparent; stroke-dasharray: 3 2; }
+.picker .ctl.picked { fill: #ffb547; }
+.picker .lbl { fill: #5b6b77; font-size: 9px; font-family: var(--mono); pointer-events: none; }
+.tl-track .tl-key.rig { background: #c4b5fd; cursor: pointer; }

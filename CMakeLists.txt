@@ -110,7 +110,7 @@ if(KIMODO_BUILD_ANIM)
     src/anim/types.cpp src/anim/skeleton.cpp src/anim/gltf_import.cpp src/anim/cgltf_impl.cpp
     src/anim/clip.cpp src/anim/root_motion.cpp src/anim/motion_path.cpp
     src/anim/retarget_mapping.cpp src/anim/retarget.cpp src/anim/layers.cpp src/anim/gltf_export.cpp
-    src/anim/ik.cpp src/anim/keyframes.cpp)
+    src/anim/ik.cpp src/anim/keyframes.cpp src/anim/control_rig.cpp)
   add_library(kimodo::anim ALIAS kimodo_anim)
   target_include_directories(kimodo_anim
     PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
@@ -158,6 +158,9 @@ if(BUILD_TESTING AND KIMODO_BUILD_TESTS AND KIMODO_BUILD_ANIM)
   add_test(NAME kimodo-anim-retarget-tpose-cli
     COMMAND kmd-anim retarget "${KIMODO_TEST_WALK}" "${KIMODO_TEST_RIGS}/test_rig_mixamo_apose.glb" "${CMAKE_CURRENT_BINARY_DIR}/anim-test-out/tpose" --rest-pose --align-rest)
   set_tests_properties(kimodo-anim-retarget-tpose-cli PROPERTIES PASS_REGULAR_EXPRESSION "\"frames\":1,")
+  add_executable(kimodo-anim-control-rig-test tests/anim/anim_control_rig_test.cpp)
+  target_link_libraries(kimodo-anim-control-rig-test PRIVATE kimodo_anim)
+  add_test(NAME kimodo-anim-control-rig-test COMMAND kimodo-anim-control-rig-test "${KIMODO_TEST_WALK}")
   add_executable(kimodo-anim-layers-test tests/anim/anim_layers_test.cpp)
   target_link_libraries(kimodo-anim-layers-test PRIVATE kimodo_anim)
   add_test(NAME kimodo-anim-layers-test COMMAND kimodo-anim-layers-test "${KIMODO_TEST_WALK}" "${KIMODO_TEST_RIGS}")

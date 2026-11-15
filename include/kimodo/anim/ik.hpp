@@ -30,6 +30,11 @@ namespace kimodo::anim {
 bool solve_two_bone_ik(const Skeleton &skeleton, std::span<Transform> local, int a, int b, int c, Vec3 target,
                        bool keep_end_orientation = true);
 
+// Same, with a pole: the middle joint (elbow, knee) points towards `pole` (skeleton space),
+// and with end_rotation the end joint (hand, foot) takes that global rotation.
+bool solve_two_bone_ik_pole(const Skeleton &skeleton, std::span<Transform> local, int a, int b, int c, Vec3 target,
+                            Vec3 pole, const Quat *end_rotation = nullptr);
+
 struct LegChain {
     int thigh = -1, calf = -1, foot = -1, toe = -1;
 };

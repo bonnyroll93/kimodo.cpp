@@ -457,7 +457,7 @@ export class MotionPanel {
     let end = this.player.duration;
     for (const i of this.layers.keys()) if (this.layers[i].enabled) end = Math.max(end, this.extent(i)[1]);
     this.timeline.set({ layers: items, duration: end, active: this.active, fps, tracks: this.trackCount,
-      contacts: this.timelineData?.contacts ?? null, range: this.player.range ? this.player.rangeFrames.map((f) => f / fps) : null });
+      rigRow: this.rigRow?.() ?? null, contacts: this.timelineData?.contacts ?? null, range: this.player.range ? this.player.rangeFrames.map((f) => f / fps) : null });
   }
 
   canRemove(i) { return isKeys(this.layers[i]) || this.layers.filter((l) => !isKeys(l)).length > 1; }
@@ -666,7 +666,7 @@ export class MotionPanel {
 
   isSimple() {
     const l = this.layers[0];
-    return this.rootScope === 'clip' && !this.$('foot-lock').checked && !(this.sceneLength > 0) && this.layers.length === 1 && !isKeys(l) && isDefaultTiming(l) &&
+    return this.rootScope === 'clip' && !this.controlRigRequest?.() && !this.$('foot-lock').checked && !(this.sceneLength > 0) && this.layers.length === 1 && !isKeys(l) && isDefaultTiming(l) &&
       l.blend === 'override' && l.weight === 1 && l.mask === 'full' && l.enabled && !l.muted;
   }
 
@@ -725,7 +725,8 @@ export class MotionPanel {
     return this.stackOrder().map((i) => this.layerRequest(this.layers[i], i, eff.get(i)));
   }
   stackBody() {
-    return { layers: this.stackRequest(), ...(this.sceneLength > 0 ? { length: this.sceneLength } : {}),
+    const rig = this.controlRigRequest?.();
+    return { layers: this.stackRequest(), ...(this.sceneLength > 0 ? { length: this.sceneLength } : {}), ...(rig ? { control_rig: rig } : {}),
       ...(this.rootScope === 'scene' ? { scene_root: this.rootMotionRequest({ ...this.sceneRoot, source: '' }) } : {}) };
   }
 

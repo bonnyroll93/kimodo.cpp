@@ -395,6 +395,31 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     session and saved in scenes; *Use automatic* forgets it.
   - Locally opened `.glb` files are uploaded once, on demand. Bones are matched by glTF
     node index, because three.js rewrites names such as `mixamorig:Hips`.
+- **Layout (after ActionForge).** Left column: *Outliner* (skeleton tree and inspector) |
+  *Picker*. Right column: *Animate* (Rig, Anim layers, Attribute editor, Motion) | *Setup*
+  (Character & retarget, foot locking, Export, character stats). The chosen tabs are
+  remembered in the browser.
+- **Control rig (IK / FK arms and legs).** *Animate › Rig* lists the left / right arm and
+  leg (chains found through the retarget mapping). Each is **FK** until its **IK** is
+  turned on, for the whole animation (ActionForge's "simple" workflow):
+  - IK on draws a **box** at the hand / foot (the IK control) and a **diamond** for the
+    elbow / knee (the pole) on the character; click one (or pick it in the Picker) to
+    move it with the gizmo (W move, E rotate the box). Releasing it keys it at the
+    current frame (K keys it again, *Delete key* removes the key at this frame, *Reset
+    limb* removes all its keys). While dragging, the chain is solved in the browser for
+    immediate feedback; the bake then does the same in `kmd-anim`.
+  - A control without keys follows the animation (IK changes nothing); keyed, the hand /
+    foot reaches it (planted where it is constant) and takes its rotation, and the
+    elbow / knee points at the pole. *follows Root / Hips* sets the space the controls
+    are keyed in: Root keeps a hand fixed in the scene, Hips carries it with the body.
+  - The picked control's keys appear in the timeline (◆ row; click one to go there).
+  - The rig is applied after all the layers and before foot locking (`control_rig` in
+    `/api/layers` and `/api/export`; `kmd-anim layers --control-rig RIG.json`;
+    `include/kimodo/anim/control_rig.hpp`), so the export matches. It is saved in
+    scenes and undoable. FK posing stays on the anim layers' gizmo.
+- **Picker** (left column): a picture of the body. A circle picks that joint (FK), a box
+  a hand's / foot's IK control, a diamond a pole (dashed: IK off; clicking turns it on).
+  The figure faces you: the character's left is on the right.
 - **Story mode: anim clips, anim layers and the attribute editor.** The scene is made of
   *anim clips* on tracks (the Story timeline under the viewport) and *anim layers*
   (keyframes, in the right panel), similar to MotionBuilder's Story mode.

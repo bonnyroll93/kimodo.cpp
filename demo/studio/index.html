@@ -40,10 +40,22 @@
   </div>
 </header>
 <main class="layout">
-  <aside class="panel" aria-label="Scene hierarchy">
-    <div class="panel-head"><h2>Skeleton</h2><span id="joint-count" class="muted"></span></div>
-    <input id="filter" class="filter" type="search" placeholder="Filter joints" autocomplete="off">
-    <div id="hierarchy" class="tree" role="tree"><p class="muted pad">No character loaded.</p></div>
+  <aside class="panel" aria-label="Outliner and picker">
+    <nav class="tabs" data-tabs="left">
+      <button type="button" data-tab="outliner" class="on">Outliner</button>
+      <button type="button" data-tab="picker">Picker</button>
+    </nav>
+    <div class="tab-page" data-page="outliner">
+      <div class="panel-head"><h2>Skeleton</h2><span id="joint-count" class="muted"></span></div>
+      <input id="filter" class="filter" type="search" placeholder="Filter joints" autocomplete="off">
+      <div id="hierarchy" class="tree" role="tree"><p class="muted pad">No character loaded.</p></div>
+      <div class="panel-head"><h2>Inspector</h2></div>
+      <div id="inspector" class="inspector"><p class="muted pad">Select a joint in the hierarchy or the viewport.</p></div>
+    </div>
+    <div class="tab-page" data-page="picker" hidden>
+      <div class="panel-head"><h2>Picker</h2><span class="muted small">click a joint or a control</span></div>
+      <div id="picker" class="picker"><p class="muted pad">Load a character and a motion (retargeted) to pick its joints and controls.</p></div>
+    </div>
   </aside>
   <section class="stage" id="stage-root">
     <div id="viewport" class="viewport"></div>
@@ -119,7 +131,25 @@
       </div>
     </div>
   </section>
-  <aside class="panel" aria-label="Motion and inspector">
+  <aside class="panel" aria-label="Animate and setup">
+    <nav class="tabs" data-tabs="right">
+      <button type="button" data-tab="animate" class="on">Animate</button>
+      <button type="button" data-tab="setup">Setup</button>
+    </nav>
+    <div class="tab-page" data-page="animate">
+    <div class="panel-head"><h2>Rig</h2><label class="toggle small" title="Draw the IK controls and poles on the character (click one to pick it)"><input type="checkbox" id="show-controls" checked> Controls</label></div>
+    <div class="layers-form" id="rig-panel">
+      <div id="rig-limbs" class="rig-limbs"><p class="note">Load a character and retarget a motion onto it to use the control rig.</p></div>
+      <div id="rig-selected" class="key-joint"></div>
+      <div class="button-row">
+        <button id="rig-move" class="button small-button on" type="button" title="Move the picked control (W)">Move</button>
+        <button id="rig-rotate" class="button small-button" type="button" title="Rotate the picked IK control (E)">Rotate</button>
+        <button id="rig-key" class="button primary small-button" type="button" title="Key the picked control at the current frame (K)">Key</button>
+        <button id="rig-delete-key" class="button small-button" type="button" title="Delete the picked control's key at the current frame">Delete key</button>
+        <button id="rig-reset" class="button small-button" type="button" title="Delete every key of the picked limb's IK control and pole (back to the animation)">Reset limb</button>
+      </div>
+      <p class="note">IK on: the hand / foot follows its box control (keyed), the elbow / knee points at its pole (diamond). Without keys a control follows the animation. Auto key: moving a control keys it.</p>
+    </div>
     <div class="panel-head"><h2>Anim layers</h2><span class="button-row"><button id="add-key-layer" class="button small-button" type="button" title="Add an anim layer on top: pose bones with the gizmo and key them">+ Keys</button></span></div>
     <div class="layers-form">
       <div id="layers-list" class="layers-list"></div>
@@ -233,18 +263,12 @@
         <p class="note">Post-processing only: the generated steps are not re-timed, so feet may slide when the path speed differs from the walk.</p>
       </div>
       </div>
-      <div class="footlock">
-        <div class="row">
-          <label class="toggle" title="Detect foot contacts and pin the feet with two-bone IK (removes foot sliding)"><input type="checkbox" id="foot-lock"> Foot locking (IK)</label>
-          <label class="toggle" title="Lower the hips slightly when a pinned foot would be out of reach"><input type="checkbox" id="hip-adjust" checked> Adjust hips</label>
-        </div>
-        <div id="foot-opts" class="row" hidden>
-          <label class="field" title="Contact height above the ground in metres (0 = 8% of the leg)">Height m<input id="foot-height" type="number" min="0" max="1" step="0.01" value="0"></label>
-          <label class="field" title="Contact speed in m/s (0 = 40% of the leg per second)">Speed m/s<input id="foot-speed" type="number" min="0" max="20" step="0.05" value="0"></label>
-          <label class="field" title="Blend frames around each contact">Blend<input id="foot-blend" type="number" min="0" max="30" step="1" value="4"></label>
-        </div>
-      </div>
       <p id="motion-info" class="muted small"></p>
+    </div>
+    </div>
+    <div class="tab-page" data-page="setup" hidden>
+      <div class="panel-head"><h2>Character &amp; retarget</h2></div>
+      <div class="motion-form">
       <div class="retarget">
         <div class="row">
           <label class="toggle"><input type="checkbox" id="retarget-on"> Retarget onto character</label>
@@ -274,6 +298,20 @@
           </div>
         </div>
       </div>
+      <div class="footlock">
+        <div class="row">
+          <label class="toggle" title="Detect foot contacts and pin the feet with two-bone IK (removes foot sliding)"><input type="checkbox" id="foot-lock"> Foot locking (IK)</label>
+          <label class="toggle" title="Lower the hips slightly when a pinned foot would be out of reach"><input type="checkbox" id="hip-adjust" checked> Adjust hips</label>
+        </div>
+        <div id="foot-opts" class="row" hidden>
+          <label class="field" title="Contact height above the ground in metres (0 = 8% of the leg)">Height m<input id="foot-height" type="number" min="0" max="1" step="0.01" value="0"></label>
+          <label class="field" title="Contact speed in m/s (0 = 40% of the leg per second)">Speed m/s<input id="foot-speed" type="number" min="0" max="20" step="0.05" value="0"></label>
+          <label class="field" title="Blend frames around each contact">Blend<input id="foot-blend" type="number" min="0" max="30" step="1" value="4"></label>
+        </div>
+      </div>
+      </div>
+      <div class="panel-head"><h2>Export</h2></div>
+      <div class="motion-form">
       <div class="export">
         <div class="row">
           <label class="field">Export name <input id="export-name" value="Kimodo" maxlength="60"></label>
@@ -285,13 +323,12 @@
           <button id="open-export" class="button small-button" type="button" title="Load the exported GLB and play its animation">Open exported</button>
         </div>
       </div>
-    </div>
-    <div class="panel-head"><h2>Inspector</h2></div>
-    <div id="inspector" class="inspector"><p class="muted pad">Select a joint in the hierarchy or the viewport.</p></div>
-    <div class="panel-head"><h2>Character</h2></div>
-    <dl id="stats" class="stats"></dl>
-    <div id="embedded-row" class="motion-form" hidden>
-      <label class="field">Embedded animation <select id="embedded-anim"></select></label>
+      </div>
+      <div class="panel-head"><h2>Character</h2></div>
+      <dl id="stats" class="stats"></dl>
+      <div id="embedded-row" class="motion-form" hidden>
+        <label class="field">Embedded animation <select id="embedded-anim"></select></label>
+      </div>
     </div>
   </aside>
 </main>

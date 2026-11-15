@@ -15,10 +15,11 @@ export function installJointPicking(viewport, skeletonView, onSelect) {
     down = null;
     if (moved > 4) return;
     const markers = skeletonView.markers;
-    if (!markers || !markers.visible) return;
     const rect = canvas.getBoundingClientRect();
     ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
     raycaster.setFromCamera(ndc, viewport.camera);
+    if (viewport.pickControls?.(raycaster)) return; // a rig control was clicked
+    if (!markers || !markers.visible) return;
     const hits = raycaster.intersectObject(markers, false);
     // Markers draw on top of everything, so prefer the hit closest to the ray, not to the camera.
     if (hits.length) {

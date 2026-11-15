@@ -50,8 +50,9 @@ export class Timeline {
 
   // layers: per MotionPanel.layers index {name, kind, track, duration (clip s), enabled, muted,
   // timing, eff (effective timing incl. auto blends), keyTimes}; duration: stack seconds.
-  set({ layers, duration, active, contacts = null, fps = 30, tracks = 1, range = null }) {
+  set({ layers, duration, active, contacts = null, fps = 30, tracks = 1, range = null, rigRow = null }) {
     this.range = range;
+    this.rigRow = rigRow;
     this.layers = layers;
     this.duration = Math.max(duration, 1e-3);
     this.fps = fps;
@@ -130,6 +131,24 @@ export class Timeline {
         tick.dataset.frame = f;
         tick.style.left = this.pct(this.keyTime(i, f));
         tick.title = `key at frame ${f}${l.bound ? ' of the clip' : ''} · click: select (Shift: add) · drag: move · Delete: remove`;
+        track.append(tick);
+      }
+      labels.append(label);
+      tracks.append(track);
+    }
+    if (this.rigRow) { // keys of the control picked in the rig (click one to go to it)
+      const label = document.createElement('div');
+      label.className = 'tl-label keys';
+      label.textContent = `◆ ${this.rigRow.label}`;
+      label.title = 'Keys of the picked rig control';
+      const track = document.createElement('div');
+      track.className = 'tl-track keys-row rig-row';
+      for (const f of this.rigRow.frames) {
+        const tick = document.createElement('div');
+        tick.className = 'tl-key rig';
+        tick.dataset.rigFrame = f;
+        tick.style.left = this.pct(f / this.fps);
+        tick.title = `rig key at frame ${f} (click: go there)`;
         track.append(tick);
       }
       labels.append(label);
@@ -265,6 +284,8 @@ export class Timeline {
     }
     if (!this.tracksEl || !e.target.closest('.tl-track')) return;
     if (e.target.closest('.tl-ruler')) this.container.classList.add('scrubbing');
+    const rigTick = e.target.closest('.tl-key.rig');
+    if (rigTick) { this.cb.seek(Number(rigTick.dataset.rigFrame) / this.fps); return; }
     const tick = e.target.closest('.tl-key');
     if (tick) {
       this.container.setPointerCapture(e.pointerId);

@@ -36,7 +36,7 @@ std::expected<AnimationClip, std::string> in_skeleton_order(const AnimationClip 
 }
 
 bool solve(const Skeleton &s, std::span<Transform> local, int a, int b, int c, Vec3 target, bool keep_end,
-           Vec3 bend_hint) {
+           Vec3 bend_hint, const Vec3 *pole = nullptr, const Quat *end_rotation = nullptr) {
     const auto global = forward_kinematics(s, local);
     const auto ia = static_cast<std::size_t>(a), ib = static_cast<std::size_t>(b), ic = static_cast<std::size_t>(c);
     const Vec3 A = global[ia].translation, B = global[ib].translation, C = global[ic].translation;
@@ -59,7 +59,17 @@ bool solve(const Skeleton &s, std::span<Transform> local, int a, int b, int c, V
     const Quat W1 = Quat::from_axis_angle(n, b_want - b_now);
     const Vec3 C1 = B + rotate(W1, C - B);
     // 2. Aim: rotate the whole chain about A so that C lands on the target direction.
-    const Quat W2 = dist > 1.e-9F ? from_to(C1 - A, at) : Quat{};
+    Quat W2 = dist > 1.e-9F ? from_to(C1 - A, at) : Quat{};
+    // 3. Pole: twist the chain about A -> target so the middle joint points at the pole.
+    if (pole != nullptr && dist > 1.e-9F) {
+        const Vec3 u = normalize(at);
+        const Vec3 b2 = rotate(W2, B - A), p = *pole - A;
+        const Vec3 bp = b2 - u * dot(b2, u), pp = p - u * dot(p, u);
+        if (length(bp) > 1.e-6F * la && length(pp) > 1.e-6F) {
+            const float ang = std::atan2(dot(cross(bp, pp), u), dot(bp, pp));
+            W2 = normalize(Quat::from_axis_angle(u, ang) * W2);
+        }
+    }
 
     const Quat Ra = normalize(W2 * global[ia].rotation);
     const Quat Rb = normalize(W2 * W1 * global[ib].rotation);
@@ -67,7 +77,8 @@ bool solve(const Skeleton &s, std::span<Transform> local, int a, int b, int c, V
     const Quat parent = pa >= 0 ? global[static_cast<std::size_t>(pa)].rotation : Quat{};
     local[ia].rotation = normalize(inverse(normalize(parent)) * Ra);
     local[ib].rotation = normalize(inverse(Ra) * Rb);
-    if (keep_end) local[ic].rotation = normalize(inverse(Rb) * global[ic].rotation);
+    if (end_rotation != nullptr) local[ic].rotation = normalize(inverse(Rb) * normalize(*end_rotation));
+    else if (keep_end) local[ic].rotation = normalize(inverse(Rb) * global[ic].rotation);
     return reachable;
 }
 
@@ -83,6 +94,15 @@ bool solve_two_bone_ik(const Skeleton &skeleton, std::span<Transform> local, int
     if (skeleton.joints[static_cast<std::size_t>(b)].parent != a || skeleton.joints[static_cast<std::size_t>(c)].parent != b)
         return false;
     return solve(skeleton, local, a, b, c, target, keep_end_orientation, {});
+}
+
+bool solve_two_bone_ik_pole(const Skeleton &skeleton, std::span<Transform> local, int a, int b, int c, Vec3 target,
+                            Vec3 pole, const Quat *end_rotation) {
+    const int n = static_cast<int>(skeleton.size());
+    if (a < 0 || b < 0 || c < 0 || a >= n || b >= n || c >= n || local.size() != skeleton.size()) return false;
+    if (skeleton.joints[static_cast<std::size_t>(b)].parent != a || skeleton.joints[static_cast<std::size_t>(c)].parent != b)
+        return false;
+    return solve(skeleton, local, a, b, c, target, true, {}, &pole, end_rotation);
 }
 
 std::expected<std::array<LegChain, 2>, std::string> find_legs(const Skeleton &s) {

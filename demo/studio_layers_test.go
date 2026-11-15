@@ -112,6 +112,12 @@ func TestLayersEndpoint(t *testing.T) {
 		t.Fatal("scene source root size")
 	}
 
+	// Control rig: the left hand planted by IK; the meta reports the solved limb.
+	crec := post(`{"layers":[{"name":"base","root_motion":` + walk + `}],"control_rig":{"version":1,"fps":30,"hips":"Hips","limbs":[{"name":"left_arm","chain":["LeftArm","LeftForeArm","LeftHand"],"ik":true,"target":{"tx":[{"f":0,"v":0.3}],"ty":[{"f":0,"v":1.0}],"tz":[{"f":0,"v":0.2}]}}]}}`)
+	if crec.Code != http.StatusOK || !strings.Contains(crec.Body.String(), `"control_rig":{"solved":["left_arm"]`) {
+		t.Fatalf("control rig: %d %s", crec.Code, crec.Body.String())
+	}
+
 	// Character stack with a custom mask object.
 	r = decode(post(`{"character":"sample:test_rig.glb","layers":[{"root_motion":` + walk + `},
 		{"name":"left arm","root_motion":{"source":"sample:soma30-walk-s42","mode":"inplace"},"mask":{"version":1,"name":"left arm","default":0,"weights":{"LeftArm":1,"LeftForeArm":0.5}}}]}`))

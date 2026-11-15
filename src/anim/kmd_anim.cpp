@@ -18,6 +18,7 @@
 #include <kimodo/anim/gltf_export.hpp>
 #include <kimodo/anim/ik.hpp>
 #include <kimodo/anim/keyframes.hpp>
+#include <kimodo/anim/control_rig.hpp>
 #include <kimodo/anim/layers.hpp>
 #include <kimodo/anim/retarget.hpp>
 #include <kimodo/anim/root_motion.hpp>
@@ -104,6 +105,7 @@ int usage() {
                  "       frame of the source's rest pose (T-pose) instead of the motion (with --align-rest: the\n"
                  "       character in the T-pose the retargeting works from).\n"
                  "       kmd-anim layers OUT_DIR (--native KEY | --character FILE.glb [--skin N]) [--fps N] [--length S]\n"
+                 "           [--control-rig RIG.json]   IK arms / legs (control_rig.hpp) after the layers\n"
                  "           --layer DIR [--name S] [--mode override|additive] [--weight W]\n"
                  "                       [--mask full|upper|lower|MASK.json] [--disabled] [--muted]\n"
                  "                       [--reference first|rest|FRAME] [--wrap clamp|loop]  (repeat per layer)\n"
@@ -414,6 +416,7 @@ int layers_command(int argc, char **argv) {
     std::optional<Skeleton> skeleton;
     bool native = false;
     float fps = 0.F, input_fps = 30.F, length = 0.F;
+    std::optional<ControlRig> control_rig;
     struct Pending {
         AnimationLayer layer;
         std::filesystem::path dir;
@@ -452,6 +455,10 @@ int layers_command(int argc, char **argv) {
             fps = std::stof(value());
         } else if (arg == "--input-fps") {
             input_fps = std::stof(value());
+        } else if (arg == "--control-rig") {
+            auto r = load_control_rig(value());
+            if (!r) throw std::runtime_error(r.error());
+            control_rig = std::move(*r);
         } else if (arg == "--length") {
             length = std::stof(value());
             if (!(length >= 0.F) || length > 3600.F) throw std::runtime_error("--length must be in [0, 3600] seconds");
@@ -575,6 +582,13 @@ int layers_command(int argc, char **argv) {
     }
     summary << "]";
     AnimationClip baked = stack.bake(fps, length);
+    std::string rig_meta;
+    if (control_rig) { // IK limbs, after the layers and before foot locking
+        auto r = apply_control_rig(baked, *skeleton, *control_rig);
+        if (!r) throw std::runtime_error(r.error());
+        rig_meta = ",\"control_rig\":{\"solved\":" + string_list(r->solved) + ",\"warnings\":" + string_list(r->warnings) +
+                   ",\"unreachable_frames\":" + std::to_string(r->unreachable_frames) + "}";
+    }
     std::string foot_meta;
     if (lock_feet) {
         auto locked = foot_lock(baked, *skeleton, foot);
@@ -583,7 +597,7 @@ int layers_command(int argc, char **argv) {
         foot_meta = ",\"foot_lock\":" + foot_lock_json(*locked);
     }
     const std::string extra = "{\"skeleton\":" + quote(skeleton->source) + ",\"duration\":" + num(stack.duration()) + ",\"length\":" + num(length) +
-                              ",\"layers\":" + summary.str() + foot_meta + "}";
+                              ",\"layers\":" + summary.str() + rig_meta + foot_meta + "}";
     if (auto ok = write_clip_dir(out, baked, *skeleton, extra); !ok) throw std::runtime_error(ok.error());
     if (native) // also the kmd-generate layout, so native results play like any generated motion
         if (auto ok = write_motion_dir(out, clip_to_motion(baked)); !ok) throw std::runtime_error(ok.error());

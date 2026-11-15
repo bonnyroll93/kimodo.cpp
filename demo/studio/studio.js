@@ -19,6 +19,8 @@ import { History } from './editor/history.js';
 import { rigSnapshot, jointNameMap, transferScene } from './editor/rig-transfer.js';
 import { restoreBindPose } from './editor/bind-pose.js';
 import { TPoseEditor } from './editor/tpose-editor.js';
+import { ControlRig } from './editor/control-rig.js';
+import { Picker } from './editor/picker.js';
 
 const $ = (id) => document.getElementById(id);
 const status = (text, error = false) => {
@@ -37,7 +39,7 @@ window.addEventListener('keydown', (e) => { if (e.key === 'Shift') shiftDown = t
 window.addEventListener('keyup', (e) => { if (e.key === 'Shift') shiftDown = false; });
 window.addEventListener('blur', () => { shiftDown = false; });
 
-function select(index) {
+function select(index, fromRig = false) {
   // Mask picking: a click on a joint includes/excludes it in the active layer's mask.
   const mask = motionPanel?.maskEditor;
   if (mask?.picking && mask.visible && character && index >= 0 && retargetPanel.enabled)
@@ -45,6 +47,8 @@ function select(index) {
   selected = character && index >= 0 && index < character.joints.length ? index : -1;
   keyPanel?.setJoint(selected);
   tposeEditor?.setJoint(selected);
+  if (!fromRig && controlRig?.picked) controlRig.pick(null);
+  picker?.setJoint(selected);
   skeletonView.select(selected);
   hierarchy.select(selected);
   inspector.showJoint(character, selected);
@@ -291,6 +295,31 @@ motionPanel.graphOpen = () => keyPanel.graph.open;
 const tposeEditor = new TPoseEditor({ $, viewport, player, retarget: retargetPanel, status, getCharacter: () => character, applyVisibility });
 tposeEditor.onExit = () => { if (player.motion) { player.setFrame(player.frame); motionPanel.schedule(); } };
 keyPanel.blocked = () => tposeEditor.active;
+motionPanel.tposeActive = () => tposeEditor.active;
+
+// Control rig (IK / FK limbs) and the body picker.
+const controlRig = new ControlRig({ $, viewport, player, motionPanel, retarget: retargetPanel, status, getCharacter: () => character });
+const picker = new Picker({ host: $('picker'), retarget: retargetPanel, rig: controlRig, getCharacter: () => character, selectJoint: (i) => select(i) });
+motionPanel.controlRigRequest = () => controlRig.request();
+motionPanel.rigRow = () => controlRig.pickedKeyFrames();
+controlRig.onPick = (p) => { if (p) select(-1, true); picker.render(); motionPanel.renderTimeline(); };
+const shownBeforeRig = motionPanel.onShown;
+motionPanel.onShown = () => { shownBeforeRig?.(); controlRig.renderPanel(); picker.render(); };
+
+// Column tabs (Outliner | Picker, Animate | Setup); the choice is remembered in this browser.
+for (const nav of document.querySelectorAll('nav.tabs')) {
+  const aside = nav.parentElement, key = `kimodo-studio-tab-${nav.dataset.tabs}`;
+  const show = (tab) => {
+    for (const b of nav.querySelectorAll('button')) b.classList.toggle('on', b.dataset.tab === tab);
+    for (const page of aside.querySelectorAll(':scope > .tab-page')) page.hidden = page.dataset.page !== tab;
+    try { localStorage.setItem(key, tab); } catch { /* storage unavailable */ }
+    if (tab === 'picker') picker.render();
+  };
+  for (const b of nav.querySelectorAll('button')) b.addEventListener('click', () => show(b.dataset.tab));
+  let saved = null;
+  try { saved = localStorage.getItem(key); } catch { /* storage unavailable */ }
+  if (saved && nav.querySelector(`[data-tab="${saved}"]`)) show(saved);
+}
 motionPanel.isDragging = () => !!viewport.gizmoDragging || tposeEditor.active; // results wait until the mode ends
 motionPanel.onKeysEdited = () => { keyPanel.updateInfo(); if (keyPanel.graph.open) keyPanel.graph.draw(); };
 const syncKeys = () => keyPanel.sync();
@@ -487,4 +516,4 @@ if (params.get('load')) {
 }
 
 // Debug hook for automated checks: /studio/?debug=1 exposes the main objects.
-if (new URLSearchParams(location.search).get('debug') === '1') window.__studio = { THREE, player, motionPanel, keyPanel, retargetPanel, tposeEditor, getCharacter: () => character, select };
+if (new URLSearchParams(location.search).get('debug') === '1') window.__studio = { THREE, player, motionPanel, keyPanel, retargetPanel, tposeEditor, controlRig, getCharacter: () => character, select };

@@ -41,6 +41,7 @@ export class History {
       layers: mp.layers.map(({ customMaskFrom, ...l }) => l),
       active: mp.active,
       length: mp.sceneLength,
+      rig: mp.controlRig ?? null,
       rootScope: mp.rootScope,
       sceneRoot: mp.sceneRoot,
       retarget: { on: $('retarget-on').checked, align: $('align-rest').checked, mapping: this.retarget.mapping ?? null, pose: this.retarget.referencePose ?? null },
@@ -95,6 +96,7 @@ export class History {
     try {
       mp.layers = s.layers;
       mp.sceneLength = s.length ?? 0;
+      mp.controlRig = s.rig ?? null;
       mp.rootScope = s.rootScope ?? 'clip';
       if (s.sceneRoot) mp.sceneRoot = s.sceneRoot;
       $('retarget-on').checked = s.retarget.on && !!this.retarget.character?.joints.length;
