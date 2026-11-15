@@ -9,8 +9,11 @@
 //                                               retarget a native motion onto a rigged character
 //   kmd-anim layers OUT_DIR (--native KEY | --character FILE.glb) --layer DIR [layer options]...
 //                                               compose and bake an animation layer stack
+//   kmd-anim export CHARACTER.glb CLIP_DIR OUT.glb [--name S] [--replace-animations]
+//                                               character + clip -> one animated GLB
 #include <kimodo/anim/clip.hpp>
 #include <kimodo/anim/gltf.hpp>
+#include <kimodo/anim/gltf_export.hpp>
 #include <kimodo/anim/layers.hpp>
 #include <kimodo/anim/retarget.hpp>
 #include <kimodo/anim/root_motion.hpp>
@@ -99,7 +102,11 @@ int usage() {
                  "                       [--reference first|rest|FRAME] [--wrap clamp|loop]  (repeat per layer)\n"
                  "       DIR is a clip directory (clip.json/retarget.json) or a native motion directory;\n"
                  "       layers are applied bottom to top in command-line order. OUT_DIR gets clip.json,\n"
-                 "       local_rotations_xyzw.f32, local_translations.f32 (+ root_positions.f32 if --native).\n";
+                 "       local_rotations_xyzw.f32, local_translations.f32 (+ root_positions.f32 if --native).\n"
+                 "       kmd-anim export CHARACTER.glb|.gltf CLIP_DIR OUT.glb [--name S] [--replace-animations]\n"
+                 "           [--export-scale] [--skin N]\n"
+                 "       CLIP_DIR is a retarget or layers output for that character; the character's meshes,\n"
+                 "       materials, skins and existing animations are kept and the clip is added.\n";
     return 2;
 }
 
@@ -460,6 +467,37 @@ int layers_command(int argc, char **argv) {
     std::cout << meta.rdbuf();
     return 0;
 }
+int export_command(int argc, char **argv) {
+    if (argc < 5) return usage();
+    const std::filesystem::path character_path = argv[2], clip_dir = argv[3], out = argv[4];
+    GltfExportOptions options;
+    GltfImportOptions import;
+    for (int i = 5; i < argc; ++i) {
+        const std::string_view arg = argv[i];
+        if (arg == "--name" && i + 1 < argc) options.animation_name = argv[++i];
+        else if (arg == "--replace-animations") options.replace_animations = true;
+        else if (arg == "--export-scale") options.export_scale = true;
+        else if (arg == "--skin" && i + 1 < argc) import.skin = std::stoi(argv[++i]);
+        else throw std::runtime_error("unknown option '" + std::string(arg) + "'");
+    }
+    auto character = load_gltf_character(character_path, import);
+    if (!character) throw std::runtime_error(character.error());
+    auto clip = read_clip_dir(clip_dir);
+    if (!clip) throw std::runtime_error(clip.error());
+    auto report = export_gltf_animation(character_path, character->skeleton, *clip, out, options);
+    if (!report) throw std::runtime_error(report.error());
+    // The written file must load again as the same character.
+    auto again = load_gltf_character(out, import);
+    if (!again) throw std::runtime_error("exported file does not reload: " + again.error());
+    std::vector<std::string> warnings = report->warnings;
+    std::cout << "{\"output\":" << quote(out.string()) << ",\"animation\":" << quote(options.animation_name)
+              << ",\"frames\":" << report->frames << ",\"duration\":" << num(report->duration)
+              << ",\"channels\":" << report->channels << ",\"animations\":" << report->animations
+              << ",\"embedded_files\":" << report->embedded_files << ",\"joints\":" << again->skeleton.size()
+              << ",\"meshes\":" << again->meshes << ",\"skins\":" << again->skins << ",\"warnings\":" << string_list(warnings)
+              << "}\n";
+    return 0;
+}
 } // namespace
 
 int main(int argc, char **argv) try {
@@ -467,6 +505,7 @@ int main(int argc, char **argv) try {
     if (argc >= 2 && std::string_view(argv[1]) == "map") return map_command(argc, argv);
     if (argc >= 2 && std::string_view(argv[1]) == "retarget") return retarget_command(argc, argv);
     if (argc >= 2 && std::string_view(argv[1]) == "layers") return layers_command(argc, argv);
+    if (argc >= 2 && std::string_view(argv[1]) == "export") return export_command(argc, argv);
     if (argc < 3 || std::string_view(argv[1]) != "inspect") return usage();
     if (std::string_view(argv[2]) == "--native") {
         if (argc != 4) return usage();

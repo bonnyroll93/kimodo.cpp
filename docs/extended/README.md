@@ -16,7 +16,7 @@ The original generation path is unchanged; `tests/data/baseline/` guards it bit 
 | 2 | root motion (Full / InPlace) and MotionPath, studio playback | done |
 | 3 | retargeting (role-based mapping, JSON mappings, studio preview on the character) | done |
 | 4 | animation layers (Override/Additive, masks, enable/mute), layer timeline | done |
-| 5 | GLB export, regression | — |
+| 5 | GLB export (mesh + skin + clip), round-trip tests, baseline regression test | done |
 
 ## Layout
 
@@ -192,6 +192,36 @@ auto clip = stack.bake();                // [0, duration] at the first layer's f
 
 Not in the MVP: `Multiply` and procedural layers, weight curves, keyframe editing.
 
+## Step 5 API: GLB export
+
+```cpp
+#include <kimodo/anim/gltf_export.hpp>
+
+auto character = kimodo::anim::load_gltf_character("character.glb");
+auto report = kimodo::anim::export_gltf_animation("character.glb", character->skeleton, final_clip,
+                                                  "character_animation.glb", {.animation_name = "Walk"});
+```
+
+**What the export keeps.** The export edits the glTF JSON and copies everything in the
+source unchanged: meshes, materials, textures, skins and inverse bind matrices, the other
+nodes, extensions and extras. The source can be a `.glb` or a `.gltf`. Its external
+`.bin` buffers, data-URI buffers and external or data-URI images are embedded, so the
+output is one self-contained `.glb`.
+
+**What it adds.** One animation, with LINEAR rotation and translation channels per joint.
+- Scale channels are optional (`export_scale`).
+- The file's existing animations are kept unless you set `replace_animations`.
+- Where a joint's glTF parent is not its skeleton parent (a root below an `Armature`
+  node), the transform is converted back to node-local values.
+- Quaternion keys are kept sign-continuous, so slerp takes the short way.
+
+**Round-trip test.** The test reloads the written file and checks three things:
+- the importer still sees the same skeleton, mesh, skin and inverse bind matrices;
+- the animation, applied to the file's nodes and composed with `cgltf_node_transform_world`,
+  matches the clip's forward kinematics at the first, middle and last frame within 0.1 mm;
+- the same holds for the T-pose rig, the Mixamo-named A-pose rig, the data-URI `.gltf`
+  rig and a baked layer stack.
+
 ## Tools
 
 ```sh
@@ -212,6 +242,14 @@ kmd-anim layers OUT_DIR (--native soma30 | --character character.glb) [--fps N] 
                 [--disabled] [--muted] [--reference first|rest|FRAME] [--wrap clamp|loop] \
     --layer DIR ...
 ```
+
+```sh
+kmd-anim export character.glb CLIP_DIR out.glb [--name Walk] [--replace-animations] [--export-scale]
+```
+
+`export` writes the character with the clip in `CLIP_DIR` (output of `retarget` or
+`layers`) as a new animation. It then reloads the result to make sure it is still a valid
+character.
 
 `layers` takes each `DIR` from either a clip directory (`kmd-anim retarget`/`layers` output)
 or a native motion directory. It writes `clip.json`, `local_rotations_xyzw.f32` and
@@ -274,6 +312,12 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
   - A single default layer behaves exactly as before. A real stack is baked on the
     server, on the character's skeleton when retargeting, otherwise on the native
     skeleton.
+- **Export.** *Export GLB* bakes the current result (motion, root mode, retarget and
+  layers) onto the loaded character and offers the `.glb` for download.
+  - *Open exported* loads the written file back into the viewer and plays its animation
+    from the file, so you can compare it with the preview.
+  - Any loaded GLB that contains animations shows an *Embedded animation* selector. These
+    animations play through three.js' `AnimationMixer`, on the same play bar.
 - **Timeline.** It shows one bar per layer (clip length on the stack's time axis), the
   active layer, disabled and muted states, and a playhead.
   - Click a row label to make that layer active; click or drag on the bars to seek.
@@ -283,6 +327,7 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
   - `/studio/?motion=sample:soma30-walk-s42&mode=path&preset=scurve&frame=45`
   - `/studio/?load=samples/test_rig_mixamo_apose.glb&motion=sample:soma30-walk-s42&mode=inplace&align=1&mapping=open`
   - `/studio/?load=samples/test_rig.glb&motion=sample:soma30-walk-s42&stack=demo&mask=custom` (a demo two-layer stack)
+  - `…&export=1` runs the export once the motion is ready; `/studio/?load=<url of a .glb>&embedded=<animation>&frame=45` reopens a file
 
 | Endpoint | Purpose |
 |---|---|
@@ -298,6 +343,8 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
 | `GET /api/retarget/<id>/{retarget.json,rotations.f32,translations.f32}` | result, cached by request hash |
 | `POST /api/layers` | `{character?, mapping?, align_rest?, layers:[{name, root_motion, mode, weight, mask, enabled, muted, reference, wrap}]}` (1–16 layers) |
 | `GET /api/layers/<id>/{clip.json,rotations.f32,translations.f32,root.f32}` | baked stack, cached by request hash |
+| `POST /api/export` | `{name?, character, mapping?, align_rest?, layers:[…]}` → `{url, download, bytes, meta}` |
+| `GET /api/export/<id>/<name>.glb[?download=1]` | the exported GLB (inline for the viewer, or as an attachment) |
 
 The demo finds `kmd-anim` next to `-generator`; override that location with `-anim`.
 
@@ -312,3 +359,77 @@ go test ./demo
 ```
 
 On Windows put `build/bin/Release` (ggml DLLs) on `PATH` before running the GGML tests.
+
+**Generation regression guard.** Configure with `-DKIMODO_BASELINE_PARITY=ON`. The test
+`kimodo-generate-baseline-parity` then:
+- runs `kmd-generate` with the recorded prompt, frames, steps and seed of
+  `tests/data/baseline/soma30-walk-s42`;
+- requires the outputs to be bit-identical to `SHA256SUMS`.
+
+It needs `models/kimodo-soma-rp-v1.1-f32.gguf` and `Llama-3-Kimodo-Q8_0.gguf`; override the
+paths with `KIMODO_BASELINE_MOTION` and `KIMODO_BASELINE_TEXT`. The baseline was captured
+on Vulkan with an RTX 4070 Laptop, so on other backends or GPUs recapture it before using
+it.
+
+| Suite | What it covers |
+|---|---|
+| `kimodo-anim-skeleton-test` | math, native skeletons, FK, glTF import (vs inverse bind matrices) |
+| `kimodo-anim-root-motion-test` | clip conversion, Full bit-exact, InPlace drift, MotionPath geometry/timing/degenerate cases |
+| `kimodo-anim-retarget-test` | roles, mapping JSON/diagnostics, rest pose, axis flips, limb lengths, facing, A-pose |
+| `kimodo-anim-layers-test` | Override/Additive, masks, enable vs mute, weights, quaternion edge cases, fps/durations |
+| `kimodo-anim-export-test` | GLB round trip (skeleton, mesh, skin, IBMs, poses at start/middle/end) |
+| `kimodo-anim-*-cli` | `kmd-anim` subcommands end to end |
+| `go test ./demo` | studio routes, root motion, retarget, layers, export endpoints (with the real `kmd-anim`) |
+| `kimodo-generate-baseline-parity` | the original generation path is unchanged (opt-in) |
+
+## MVP definition of done
+
+| # | Requirement (MVP_PLAN §11) | Where it is verified |
+|---|---|---|
+| 1 | original project builds, existing tests unchanged | full build; same 12 environment-only failures as at step 0 (missing smplx model/fixtures/numpy), no new failures |
+| 2 | a rigged GLB is imported and shown | `kimodo-anim-skeleton-test`, studio |
+| 3 | skeleton inspectable, joints selectable | studio hierarchy, picking, inspector |
+| 4 | Kimodo motion in Full and InPlace | `kimodo-anim-root-motion-test` (Full bit-exact, InPlace drift < 1e-5 m) |
+| 5 | waypoints / Catmull–Rom MotionPath | `kimodo-anim-root-motion-test` |
+| 6 | retarget onto a compatible humanoid | `kimodo-anim-retarget-test` |
+| 7 | two or more layers composed | `kimodo-anim-layers-test`, `TestLayersEndpoint` |
+| 8 | Upper Body mask never moves the legs | `kimodo-anim-layers-test` (bit-identical leg joints) |
+| 9 | weight, enable and mute verifiable | `kimodo-anim-layers-test` |
+| 10 | result shown in the viewport | studio (playback on native skeleton or character) |
+| 11 | exported GLB reopens with mesh, skin, animation | `kimodo-anim-export-test`, `TestExportEndpoint`, studio *Open exported* |
+| 12 | new features optional, original behaviour unchanged | `KIMODO_BUILD_ANIM` target is separate; `kimodo-generate-baseline-parity`; original demo routes untouched |
+
+## Known limitations
+
+- **Path following** is procedural post-processing. It neither conditions the model nor
+  re-times steps. With `Duration`/`Speed` timing, or after retargeting, feet can slide:
+  there is no IK and no foot locking.
+- **Retargeting** supports humanoids compatible with the source rig.
+  - It needs one skin with one root joint and unique joint names.
+  - Translations are transferred only for the root; other joints keep their bone lengths.
+  - Shear and non-uniform scale in the rig hierarchy are approximated, with no shear.
+- **Layers** offer Override and Additive only, with no Multiply, procedural layers or
+  weight curves. Additive does not touch scale.
+- **Export** writes LINEAR channels sampled at the clip frame rate (no key reduction).
+  - Images with remote (`http://`) URIs stay external, and the export reports a warning.
+  - Only GLB/glTF are supported; FBX is out of scope for the MVP.
+- **Studio**:
+  - three.js r170 comes from jsDelivr, so the studio needs network access;
+  - every edit is processed on the server, so slider changes are not previewed live;
+  - the editor has no keyframe editing and no in-viewport path manipulation;
+  - custom masks are edited by joint name.
+- **Generation regression test** is bit-exact only on the backend and GPU where the
+  baseline was captured.
+
+## Test assets
+
+| File | Purpose |
+|---|---|
+| `tests/data/baseline/soma30-walk-s42/` | generated soma30 walk (90 f) + `SHA256SUMS`: regression baseline and motion test data |
+| `tests/data/rigs/test_rig.glb` | T-pose humanoid: rotated `Armature`, non-topological node order, rest rotations, a non-deforming end joint |
+| `tests/data/rigs/test_rig_mixamo_apose.glb` | same with `mixamorig:` names and arms in an A-pose |
+| `tests/data/rigs/test_rig_embedded.gltf` | same as JSON glTF with a base64 data-URI buffer (export embedding) |
+| `tests/data/rigs/test_noskin.glb` | unskinned mesh (must be rejected) |
+
+All rigs are generated by `scripts/make_test_rig_glb.py` (standard library only) and are
+deterministic.

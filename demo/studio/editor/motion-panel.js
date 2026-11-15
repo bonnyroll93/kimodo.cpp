@@ -260,6 +260,10 @@ export class MotionPanel {
     return req;
   }
 
+  // The current stack as /api/layers or /api/export "layers" (a single default layer bakes
+  // to exactly its clip).
+  stackRequest() { return this.layers.map((l, i) => this.layerRequest(l, i)); }
+
   layerRequest(l, i) {
     const mask = l.mask === 'custom' ? (l.customMask || { version: 1, name: 'custom', default: 1, weights: {} }) : l.mask;
     return {
@@ -346,6 +350,10 @@ export class MotionPanel {
   show(def, rt, r) {
     const first = !this.shownOnce;
     this.shownOnce = true;
+    if (this.player.embedded) { // a Motion/Layers result replaces an embedded animation preview
+      this.player.setEmbedded(null);
+      this.$('embedded-anim').value = '';
+    }
     this.player.setSkeleton(def);
     this.player.setMotion(r.motion);
     if (r.target) {

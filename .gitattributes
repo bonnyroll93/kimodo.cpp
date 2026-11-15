@@ -3,3 +3,4 @@
 *.glb binary
 *.gguf binary
 *.png binary
+SHA256SUMS text eol=lf

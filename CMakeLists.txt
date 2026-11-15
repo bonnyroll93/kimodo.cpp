@@ -7,6 +7,9 @@ option(KIMODO_BUILD_TESTS "Build Kimodo tests" ON)
 option(KIMODO_ENABLE_VULKAN "Enable GGML Vulkan backend when GGML is available" ON)
 option(KIMODO_ENABLE_FUZZERS "Build libFuzzer parser targets" OFF)
 option(KIMODO_BUILD_ANIM "Build the Kimodo Extended motion runtime (kimodo_anim, kmd-anim)" ON)
+option(KIMODO_BASELINE_PARITY "Register the generation baseline parity test (needs the soma30 model and Q8 text bundle)" OFF)
+set(KIMODO_BASELINE_MOTION "${CMAKE_CURRENT_SOURCE_DIR}/models/kimodo-soma-rp-v1.1-f32.gguf" CACHE FILEPATH "Motion GGUF of the generation baseline")
+set(KIMODO_BASELINE_TEXT "${CMAKE_CURRENT_SOURCE_DIR}/Llama-3-Kimodo-Q8_0.gguf" CACHE FILEPATH "Text bundle of the generation baseline")
 set(KIMODO_GGML_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ggml" CACHE PATH "Pinned GGML submodule source directory")
 set(KIMODO_ROOT_PARITY_MODEL "${CMAKE_CURRENT_SOURCE_DIR}/models/kimodo-smplx-rp-v1-f32.gguf" CACHE FILEPATH "F32 motion GGUF required by parity tests")
 set(KIMODO_ROOT_PARITY_FIXTURE "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/smplx-zero-embedding" CACHE PATH "Fixture directory required by motion parity tests")
@@ -106,7 +109,7 @@ if(KIMODO_BUILD_ANIM)
   add_library(kimodo_anim STATIC
     src/anim/types.cpp src/anim/skeleton.cpp src/anim/gltf_import.cpp src/anim/cgltf_impl.cpp
     src/anim/clip.cpp src/anim/root_motion.cpp src/anim/motion_path.cpp
-    src/anim/retarget_mapping.cpp src/anim/retarget.cpp src/anim/layers.cpp)
+    src/anim/retarget_mapping.cpp src/anim/retarget.cpp src/anim/layers.cpp src/anim/gltf_export.cpp)
   add_library(kimodo::anim ALIAS kimodo_anim)
   target_include_directories(kimodo_anim
     PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
@@ -159,8 +162,24 @@ if(BUILD_TESTING AND KIMODO_BUILD_TESTS AND KIMODO_BUILD_ANIM)
             --layer "${KIMODO_TEST_WALK}" --name base
             --layer "${KIMODO_TEST_WALK}" --mode additive --weight 0.5 --mask upper --reference rest)
   set_tests_properties(kimodo-anim-layers-cli PROPERTIES PASS_REGULAR_EXPRESSION "\"mask\":\"upper\"")
+  add_executable(kimodo-anim-export-test tests/anim/anim_export_test.cpp)
+  target_include_directories(kimodo-anim-export-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/cgltf")
+  target_link_libraries(kimodo-anim-export-test PRIVATE kimodo_anim)
+  add_test(NAME kimodo-anim-export-test COMMAND kimodo-anim-export-test "${KIMODO_TEST_WALK}" "${KIMODO_TEST_RIGS}")
+  add_test(NAME kimodo-anim-export-cli
+    COMMAND kmd-anim export "${KIMODO_TEST_RIGS}/test_rig.glb" "${CMAKE_CURRENT_BINARY_DIR}/anim-test-out/retarget"
+            "${CMAKE_CURRENT_BINARY_DIR}/anim-test-out/test_rig_walk.glb" --name Walk)
+  set_tests_properties(kimodo-anim-export-cli PROPERTIES DEPENDS kimodo-anim-retarget-cli
+    PASS_REGULAR_EXPRESSION "\"joints\":20,\"meshes\":1,\"skins\":1")
   add_test(NAME kimodo-anim-map-cli COMMAND kmd-anim map soma30 "${KIMODO_TEST_RIGS}/test_rig.glb")
   set_tests_properties(kimodo-anim-map-cli PROPERTIES PASS_REGULAR_EXPRESSION "\"target\": \"LeftLeg\",[ \r\n]*\"source\": \"LeftShin\"")
+endif()
+if(BUILD_TESTING AND KIMODO_BUILD_TESTS AND KIMODO_BASELINE_PARITY AND TARGET kmd-generate)
+  add_test(NAME kimodo-generate-baseline-parity
+    COMMAND "${CMAKE_COMMAND}" -DGENERATOR=$<TARGET_FILE:kmd-generate> "-DMOTION=${KIMODO_BASELINE_MOTION}"
+            "-DTEXT=${KIMODO_BASELINE_TEXT}" "-DCASE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/tests/data/baseline/soma30-walk-s42"
+            "-DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/baseline-parity" -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/baseline_parity.cmake")
+  set_tests_properties(kimodo-generate-baseline-parity PROPERTIES TIMEOUT 600)
 endif()
 if(BUILD_TESTING AND KIMODO_BUILD_TESTS)
   add_executable(kimodo-capi-test tests/capi_test.cpp)

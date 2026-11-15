@@ -10,6 +10,7 @@ import { AnimationPlayer } from './viewer/animation-player.js';
 import { MotionPathView } from './viewer/motion-path-view.js';
 import { MotionPanel } from './editor/motion-panel.js';
 import { RetargetPanel } from './editor/retarget-panel.js';
+import { ExportPanel } from './editor/export-panel.js';
 
 const $ = (id) => document.getElementById(id);
 const status = (text, error = false) => {
@@ -44,7 +45,7 @@ viewport.onFrame.push(() => {
   lastTick = now;
 });
 player.onChange((p) => {
-  $('playbar').hidden = !p.motion;
+  $('playbar').hidden = !p.frames;
   $('play').textContent = p.playing ? 'Pause' : 'Play';
   $('scrub').max = Math.max(p.frames - 1, 0);
   $('scrub').value = p.frame;
@@ -54,7 +55,7 @@ player.onChange((p) => {
 $('play').addEventListener('click', () => player.play());
 $('scrub').addEventListener('input', (e) => { player.play(false); player.setFrame(Number(e.target.value)); });
 $('loop').addEventListener('change', (e) => { player.loop = e.target.checked; });
-const retargetPanel = new RetargetPanel({ $, status, onChange: () => motionPanel.schedule() });
+const retargetPanel = new RetargetPanel({ $, status, onChange: () => { exportPanel.sync(); motionPanel.schedule(); } });
 const motionPanel = new MotionPanel({
   $, player, pathView, status, retarget: retargetPanel,
   onSeek: (t) => { player.play(false); player.setFrame(t * player.fps); },
@@ -97,6 +98,10 @@ async function open(source, name, serverId = null) {
     hierarchy.setCharacter(character);
     inspector.showStats(character);
     retargetPanel.setCharacter(character, { id: serverId, upload: source instanceof ArrayBuffer ? source : null });
+    exportPanel.sync();
+    const anims = character.gltf.animations.map((a) => a.name || 'unnamed');
+    $('embedded-anim').replaceChildren(new Option(anims.length ? 'None (use Motion / Layers)' : 'none', ''), ...anims.map((n) => new Option(n, n)));
+    $('embedded-row').hidden = !anims.length;
     if (player.motion) motionPanel.schedule();
     select(-1);
     applyVisibility();
@@ -116,6 +121,42 @@ $('file').addEventListener('change', async (e) => {
   if (file) await open(await file.arrayBuffer(), file.name);
   e.target.value = '';
 });
+
+const exportPanel = new ExportPanel({
+  $, status, motionPanel, retarget: retargetPanel,
+  // Reopen an exported GLB: it replaces the character and plays its embedded animation.
+  onOpen: async (url, file, animation) => {
+    $('retarget-on').checked = false;
+    player.clear();
+    pathView.clear();
+    await open(url, file);
+    selectEmbedded(animation);
+  },
+});
+
+// Animations stored in the loaded GLB (exported files, or any animated character).
+function selectEmbedded(name) {
+  const clip = character?.gltf.animations.find((a) => (a.name || 'unnamed') === name);
+  $('embedded-anim').value = clip ? name : '';
+  if (!clip) { player.setEmbedded(null); return; }
+  player.clear();
+  pathView.clear();
+  $('retarget-on').checked = false;
+  retargetPanel.sync();
+  exportPanel.sync();
+  player.setEmbedded({ character, clip });
+  // Frame the whole animation: sample the character's bounds at start, middle and end.
+  const box = new THREE.Box3();
+  for (const f of [0, Math.floor(player.frames / 2), player.frames - 1]) {
+    player.setFrame(f);
+    box.union(new THREE.Box3().setFromObject(character.root, true));
+  }
+  player.setFrame(0);
+  viewport.frameBox(box, new THREE.Vector3(0.75, 0.45, 0.9));
+  $('empty').hidden = true;
+  status(`Playing embedded animation "${name}" (${clip.duration.toFixed(2)} s) from ${character.name}`);
+}
+$('embedded-anim').addEventListener('change', (e) => selectEmbedded(e.target.value));
 
 // Frame the whole motion from its data (root trails + path), at least a person tall.
 // side: view perpendicular to the overall travel, slightly from above.
@@ -217,12 +258,17 @@ motionPanel.loadSources().then(() => {
   motionPanel.apply().then(() => {
     if (params.get('frame')) { player.play(false); player.setFrame(Number(params.get('frame'))); }
     if (params.get('mapping') === 'open' && $('mapping-editor').hidden) $('edit-mapping').click();
+    if (params.get('export') === '1') $('export-glb').click();
   });
 }).catch((err) => status(`Cannot list motions: ${err.message || err}`, true));
 if (params.get('load')) {
   const url = params.get('load');
   const file = decodeURIComponent(url.split('/').pop());
   open(url, file, url.startsWith('samples/') ? `sample:${file}` : null).then(() => {
+    if (params.get('embedded')) {
+      selectEmbedded(params.get('embedded'));
+      if (params.get('frame')) player.setFrame(Number(params.get('frame')));
+    }
     const joint = params.get('joint');
     if (joint && character) select(character.joints.findIndex((j) => j.name === joint));
   });

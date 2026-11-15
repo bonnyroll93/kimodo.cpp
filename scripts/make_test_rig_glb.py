@@ -9,8 +9,11 @@ Standard library only. Writes, into OUTPUT_DIR (default tests/data/rigs):
                    * a non-deforming end joint (HeadTop_End);
   test_noskin.glb  the same hierarchy with an unskinned mesh (importer must reject it);
   test_rig_mixamo_apose.glb
-                   the skinned rig with "mixamorig:" joint names and arms in an A-pose.
+                   the skinned rig with "mixamorig:" joint names and arms in an A-pose;
+  test_rig_embedded.gltf
+                   test_rig as JSON glTF with a base64 data-URI buffer.
 """
+import base64
 import json
 import math
 import struct
@@ -239,6 +242,9 @@ def main():
     write_glb(out / "test_rig.glb", *build(skinned=True))
     write_glb(out / "test_noskin.glb", *build(skinned=False))
     write_glb(out / "test_rig_mixamo_apose.glb", *build(skinned=True, prefix="mixamorig:", arm_deg=135.0))
+    gltf, binary = build(skinned=True)
+    gltf["buffers"][0]["uri"] = "data:application/octet-stream;base64," + base64.b64encode(binary).decode()
+    (out / "test_rig_embedded.gltf").write_text(json.dumps(gltf, separators=(",", ":")), encoding="utf-8")
     print(f"wrote test_rig.glb, test_noskin.glb and test_rig_mixamo_apose.glb to {out}")
 
 

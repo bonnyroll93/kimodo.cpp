@@ -182,6 +182,9 @@ body {
 .tl-track.disabled .tl-bar { background: transparent; border: 1px dashed #8b9aa566; }
 .tl-label.disabled, .tl-label.muted { text-decoration: line-through; }
 .tl-playhead { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: #ffb547; pointer-events: none; }
+.export { display: grid; gap: 6px; border-top: 1px solid var(--line); padding-top: 10px; }
+.export .row { align-items: end; }
+.export .button.primary:disabled { opacity: .45; cursor: default; }
 .status {
   padding: 6px 16px; border-top: 1px solid var(--line); background: var(--panel);
   color: var(--muted); font-size: .8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

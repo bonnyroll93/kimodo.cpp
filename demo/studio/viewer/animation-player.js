@@ -20,8 +20,9 @@ export class AnimationPlayer {
     this.listeners = [];
   }
 
-  // Timeline length: the source motion or the character track (a layer stack may be longer).
-  get frames() { return this.motion ? Math.max(this.motion.frames, this.target?.frames ?? 0) : 0; }
+  // Timeline length: the source motion, the character track (a layer stack may be longer)
+  // or an animation embedded in the loaded GLB.
+  get frames() { return Math.max(this.motion?.frames ?? 0, this.motion ? this.target?.frames ?? 0 : 0, this.embedded?.frames ?? 0); }
   get fps() { return this.motion ? this.motion.fps : 30; }
   get duration() { return this.frames > 1 ? (this.frames - 1) / this.fps : 0; }
 
@@ -56,7 +57,28 @@ export class AnimationPlayer {
     this.setFrame(Math.min(this.frame, frames - 1));
   }
 
+  // Plays an animation stored in the character's GLB (e.g. a reopened export) with
+  // three.js' AnimationMixer, driven by the same timeline (sampled at 30 fps).
+  setEmbedded(embedded) {
+    if (this.embedded) {
+      this.embedded.mixer.stopAllAction();
+      this.embedded.mixer.uncacheRoot(this.embedded.character.root);
+      this.embedded.character.root.traverse((o) => { if (o.isSkinnedMesh) o.skeleton.pose(); });
+    }
+    this.embedded = null;
+    if (embedded) {
+      const mixer = new THREE.AnimationMixer(embedded.character.root);
+      const action = mixer.clipAction(embedded.clip);
+      action.play();
+      this.embedded = { ...embedded, mixer, action, frames: Math.round(embedded.clip.duration * 30) + 1 };
+    }
+    this.frame = 0;
+    this.setFrame(0);
+    this.emit();
+  }
+
   clear() {
+    this.setEmbedded(null);
     this.setTarget(null);
     this.motion = null;
     this.playing = false;
@@ -134,10 +156,15 @@ export class AnimationPlayer {
   }
 
   setFrame(f) {
-    if (!this.motion) return;
-    const { root, rotations, joints } = this.motion;
+    if (!this.frames) return;
     this.frame = Math.max(0, Math.min(this.frames - 1, Math.round(f)));
     this.time = this.frame / this.fps;
+    if (this.embedded) {
+      this.embedded.mixer.setTime(this.time);
+      this.embedded.character.root.updateMatrixWorld(true);
+    }
+    if (!this.motion) { this.emit(); return; }
+    const { root, rotations, joints } = this.motion;
     const mf = Math.min(this.frame, this.motion.frames - 1); // source motion holds its last frame
     const r = mf * 3;
     this.joints[0].bone.position.set(root[r], root[r + 1], root[r + 2]);
@@ -151,11 +178,11 @@ export class AnimationPlayer {
     this.emit();
   }
 
-  play(on = !this.playing) { this.playing = on && !!this.motion; this.emit(); }
+  play(on = !this.playing) { this.playing = on && this.frames > 0; this.emit(); }
 
   // Advance by dt seconds (called from the render loop).
   update(dt) {
-    if (!this.playing || !this.motion) return;
+    if (!this.playing || !this.frames) return;
     let t = this.time + dt;
     if (t > this.duration) {
       if (this.loop && this.duration > 0) t %= this.duration;

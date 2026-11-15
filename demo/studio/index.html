@@ -126,11 +126,25 @@
           </div>
         </div>
       </div>
+      <div class="export">
+        <div class="row">
+          <label class="field">Export name <input id="export-name" value="Kimodo" maxlength="60"></label>
+          <button id="export-glb" class="button primary small-button" type="button" title="Character + final clip as one GLB">Export GLB</button>
+        </div>
+        <p id="export-hint" class="note"></p>
+        <div id="export-result" class="button-row" hidden>
+          <a id="export-link" class="button small-button" href="#">Download</a>
+          <button id="open-export" class="button small-button" type="button" title="Load the exported GLB and play its animation">Open exported</button>
+        </div>
+      </div>
     </div>
     <div class="panel-head"><h2>Inspector</h2></div>
     <div id="inspector" class="inspector"><p class="muted pad">Select a joint in the hierarchy or the viewport.</p></div>
     <div class="panel-head"><h2>Character</h2></div>
     <dl id="stats" class="stats"></dl>
+    <div id="embedded-row" class="motion-form" hidden>
+      <label class="field">Embedded animation <select id="embedded-anim"></select></label>
+    </div>
   </aside>
 </main>
 <footer id="status" class="status" role="status">Ready</footer>

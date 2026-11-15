@@ -32,6 +32,7 @@ func registerStudio(mux *http.ServeMux, c studioConfig) {
 	registerRootMotion(mux, c)
 	registerRetarget(mux, c)
 	registerLayers(mux, c)
+	registerExport(mux, c)
 	sub, err := fs.Sub(studioFiles, "studio")
 	if err != nil {
 		panic(err)

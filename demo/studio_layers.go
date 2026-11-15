@@ -9,6 +9,7 @@ package main
 // character, on the native skeleton of the motions.
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -105,6 +106,85 @@ func (c studioConfig) layerArgs(l layerRequest, index int) ([]string, *httpError
 	return args, nil
 }
 
+type layersResult struct {
+	id, dir, characterPath string
+	body                   map[string]any
+}
+
+// layers runs every layer through root motion (+ retarget with a character) and bakes the
+// stack with kmd-anim layers (all steps cached by request hash).
+func (c studioConfig) layers(ctx context.Context, req layersRequest) (layersResult, *httpError) {
+	if len(req.Layers) == 0 || len(req.Layers) > 16 {
+		return layersResult{}, &httpError{http.StatusBadRequest, "a stack needs 1 to 16 layers"}
+	}
+	args := []string{}
+	key := []string{req.Character}
+	var characterPath, skeleton string
+	if req.Character != "" {
+		path, ok := c.characterPath(req.Character)
+		if !ok {
+			return layersResult{}, &httpError{http.StatusNotFound, "unknown character"}
+		}
+		characterPath = path
+	}
+	results := make([]layerResult, len(req.Layers))
+	layerArgs := []string{}
+	for i, l := range req.Layers {
+		prefix := "layer " + num(float64(i+1)) + ": "
+		var dir string
+		if req.Character != "" {
+			rt, herr := c.retarget(ctx, retargetRequest{RootMotion: l.RootMotion, Character: req.Character, Mapping: req.Mapping, AlignRest: req.AlignRest})
+			if herr != nil {
+				return layersResult{}, &httpError{herr.status, prefix + herr.message}
+			}
+			dir, results[i] = rt.dir, layerResult{RootMotion: rt.RootMotion, Retarget: rt.Meta}
+		} else {
+			rm, herr := c.rootMotion(ctx, l.RootMotion)
+			if herr != nil {
+				return layersResult{}, &httpError{herr.status, prefix + herr.message}
+			}
+			if skeleton == "" {
+				skeleton = rm.SkeletonKey
+			} else if rm.SkeletonKey != skeleton {
+				return layersResult{}, &httpError{http.StatusBadRequest, "without a character all layers must use the same skeleton"}
+			}
+			dir, results[i] = rm.dir, layerResult{RootMotion: rm}
+		}
+		opts, herr := c.layerArgs(l, i)
+		if herr != nil {
+			return layersResult{}, herr
+		}
+		layerArgs = append(append(layerArgs, "--layer", dir), opts...)
+		key = append(append(key, dir), opts...)
+	}
+	if characterPath != "" {
+		args = append(args, "--character", characterPath)
+	} else {
+		args = append(args, "--native", skeleton)
+	}
+	args = append(args, layerArgs...)
+	id := hashID(append(key, args...)...)
+	dir := filepath.Join(c.output, "layers", id)
+	if herr := c.runCached(ctx, dir, "clip.json", func(out string) []string {
+		return append([]string{"layers", out}, args...)
+	}); herr != nil {
+		return layersResult{}, herr
+	}
+	meta, err := os.ReadFile(filepath.Join(dir, "clip.json"))
+	if err != nil || !json.Valid(meta) {
+		return layersResult{}, &httpError{http.StatusInternalServerError, "invalid layer stack result"}
+	}
+	body := map[string]any{
+		"id": id, "meta": json.RawMessage(meta), "layers": results, "native": characterPath == "",
+		"rotations":    "/api/layers/" + id + "/rotations.f32",
+		"translations": "/api/layers/" + id + "/translations.f32",
+	}
+	if characterPath == "" {
+		body["root"] = "/api/layers/" + id + "/root.f32"
+	}
+	return layersResult{id: id, dir: dir, characterPath: characterPath, body: body}, nil
+}
+
 func registerLayers(mux *http.ServeMux, c studioConfig) {
 	mux.HandleFunc("/api/layers", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -117,84 +197,13 @@ func registerLayers(mux *http.ServeMux, c studioConfig) {
 			writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 			return
 		}
-		if len(req.Layers) == 0 || len(req.Layers) > 16 {
-			writeError(w, http.StatusBadRequest, "a stack needs 1 to 16 layers")
-			return
-		}
-		args := []string{}
-		key := []string{req.Character}
-		var characterPath, skeleton string
-		if req.Character != "" {
-			path, ok := c.characterPath(req.Character)
-			if !ok {
-				writeError(w, http.StatusNotFound, "unknown character")
-				return
-			}
-			characterPath = path
-		}
-		results := make([]layerResult, len(req.Layers))
-		layerArgs := []string{}
-		for i, l := range req.Layers {
-			var dir string
-			if req.Character != "" {
-				rt, herr := c.retarget(r.Context(), retargetRequest{RootMotion: l.RootMotion, Character: req.Character, Mapping: req.Mapping, AlignRest: req.AlignRest})
-				if herr != nil {
-					writeError(w, herr.status, "layer "+num(float64(i+1))+": "+herr.message)
-					return
-				}
-				dir, results[i] = rt.dir, layerResult{RootMotion: rt.RootMotion, Retarget: rt.Meta}
-			} else {
-				rm, herr := c.rootMotion(r.Context(), l.RootMotion)
-				if herr != nil {
-					writeError(w, herr.status, "layer "+num(float64(i+1))+": "+herr.message)
-					return
-				}
-				if skeleton == "" {
-					skeleton = rm.SkeletonKey
-				} else if rm.SkeletonKey != skeleton {
-					writeError(w, http.StatusBadRequest, "without a character all layers must use the same skeleton")
-					return
-				}
-				dir, results[i] = rm.dir, layerResult{RootMotion: rm}
-			}
-			opts, herr := c.layerArgs(l, i)
-			if herr != nil {
-				writeError(w, herr.status, herr.message)
-				return
-			}
-			layerArgs = append(append(layerArgs, "--layer", dir), opts...)
-			key = append(key, dir)
-			key = append(key, opts...)
-		}
-		if characterPath != "" {
-			args = append(args, "--character", characterPath)
-		} else {
-			args = append(args, "--native", skeleton)
-		}
-		args = append(args, layerArgs...)
-		id := hashID(append(key, args...)...)
-		dir := filepath.Join(c.output, "layers", id)
-		if herr := c.runCached(r.Context(), dir, "clip.json", func(out string) []string {
-			return append([]string{"layers", out}, args...)
-		}); herr != nil {
+		res, herr := c.layers(r.Context(), req)
+		if herr != nil {
 			writeError(w, herr.status, herr.message)
 			return
 		}
-		meta, err := os.ReadFile(filepath.Join(dir, "clip.json"))
-		if err != nil || !json.Valid(meta) {
-			writeError(w, http.StatusInternalServerError, "invalid layer stack result")
-			return
-		}
-		res := map[string]any{
-			"id": id, "meta": json.RawMessage(meta), "layers": results, "native": characterPath == "",
-			"rotations":    "/api/layers/" + id + "/rotations.f32",
-			"translations": "/api/layers/" + id + "/translations.f32",
-		}
-		if characterPath == "" {
-			res["root"] = "/api/layers/" + id + "/root.f32"
-		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(res)
+		_ = json.NewEncoder(w).Encode(res.body)
 	})
 
 	mux.HandleFunc("/api/layers/", func(w http.ResponseWriter, r *http.Request) {
