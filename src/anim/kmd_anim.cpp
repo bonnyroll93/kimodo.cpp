@@ -93,7 +93,7 @@ int usage() {
     std::cerr << "usage: kmd-anim inspect CHARACTER.glb [--skin N]\n"
                  "       kmd-anim inspect --native smplx22|soma30|g1skel34\n"
                  "       kmd-anim root-motion IN_DIR OUT_DIR --mode full|inplace|path\n"
-                 "           [--up X,Y,Z] [--forward X,Y,Z] [--lock both|forward|lateral] [--fps N]\n"
+                 "           [--up X,Y,Z] [--forward X,Y,Z] [--lock both|forward|lateral] [--keep-start] [--fps N]\n"
                  "           [--points X,Y,Z;X,Y,Z;...] [--interp catmull|polyline] [--loop]\n"
                  "           [--seamless [--seamless-blend FRAMES] [--seamless-cut MIN_FRACTION]]   loopable clip\n"
                  "           [--timing distance|duration|speed] [--duration S] [--speed M_PER_S] [--no-orient]\n"
