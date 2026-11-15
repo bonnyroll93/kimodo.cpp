@@ -17,6 +17,7 @@ import { KeyPanel } from './editor/key-panel.js';
 import { MotionLibrary } from './editor/motion-library.js';
 import { History } from './editor/history.js';
 import { rigSnapshot, jointNameMap, transferScene } from './editor/rig-transfer.js';
+import { restoreBindPose } from './editor/bind-pose.js';
 
 const $ = (id) => document.getElementById(id);
 const status = (text, error = false) => {
@@ -108,6 +109,15 @@ $('scene-length').addEventListener('change', (e) => {
   motionPanel.schedule();
 });
 const retargetPanel = new RetargetPanel({ $, status, onChange: () => { exportPanel.sync(); motionPanel.schedule(); } });
+// T-pose preview: pause; leaving it restores the animated pose (or the bind pose without one).
+retargetPanel.onBeforePose = () => player.play(false);
+retargetPanel.onRestorePose = () => { if (player.target) player.setFrame(player.frame); else if (character) restoreBindPose(character); };
+let tposeFrame = -1;
+player.onChange((p) => {
+  if (!retargetPanel.tposeShown) { tposeFrame = p.frame; return; }
+  if (tposeFrame < 0) tposeFrame = p.frame;
+  if (p.playing || p.frame !== tposeFrame) { tposeFrame = p.frame; retargetPanel.showTPose(false); }
+});
 const motionPanel = new MotionPanel({
   $, player, pathView, status, retarget: retargetPanel,
   onSeek: (t) => { player.play(false); player.setFrame(t * player.fps); },

@@ -100,7 +100,11 @@ export async function loadCharacter(source, name) {
   // Rest pose in kmd-anim's joint space (see skeletonLocal), read before anything poses the bones.
   root.updateMatrixWorld(true);
   const character0 = { root, joints };
-  for (const j of joints) j.rest = skeletonLocal(character0, j);
+  for (const j of joints) {
+    j.rest = skeletonLocal(character0, j);
+    j.bind = { p: j.bone.position.clone(), q: j.bone.quaternion.clone(), s: j.bone.scale.clone() }; // three.js locals
+    j.restPos = new THREE.Vector3().setFromMatrixPosition(j.bone.matrixWorld);
+  }
 
   return {
     name, gltf, root, joints, roots: roots.map((r) => joints.findIndex((j) => j.bone === r)),

@@ -239,7 +239,11 @@
         </div>
         <p id="retarget-hint" class="note"></p>
         <div id="retarget-opts" class="opts" hidden>
-          <label class="toggle"><input type="checkbox" id="align-rest"> Align rest pose (A-pose / T-pose)</label>
+          <label class="toggle" title="Retarget from the character's T-pose: its rest bones are rotated onto the source skeleton's T-pose before the motion is transferred. Turned on automatically when the bind pose is not a T-pose"><input type="checkbox" id="align-rest"> Retarget from T-pose (align the bind pose)</label>
+          <div class="row">
+            <span id="pose-status" class="note"></span>
+            <button id="show-tpose" class="button small-button" type="button" title="Show the character in the T-pose the retargeting works from (any frame change hides it)">Show T-pose</button>
+          </div>
           <div id="mapping-status" class="mapping-status"></div>
           <div class="button-row">
             <button id="edit-mapping" class="button small-button" type="button">Edit mapping</button>

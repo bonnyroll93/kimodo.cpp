@@ -373,6 +373,14 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
   - *Edit mapping* shows a target→source table that you can edit. Every change is checked
     on the server and the errors and warnings appear inline.
   - *Auto* recomputes the mapping. *Save* and *Load* exchange mapping JSON files.
+  - **Bind pose and T-pose.** The native source skeletons rest in a T-pose. When the
+    mapping is known, the studio measures the character's upper arms in its bind pose; if
+    it is not a T-pose (e.g. an A-pose, arms -45°) *Retarget from T-pose* (rest alignment,
+    `--align-rest`) is turned on automatically and the panel says so; you can still turn it
+    off. *Show T-pose* poses the character in the T-pose the retargeting works from
+    (`kmd-anim retarget --rest-pose --align-rest`, `POST /api/retarget/tpose`); changing
+    frame or *Hide T-pose* goes back. The exported GLB keeps the character's own bind pose:
+    only the animation is computed from the T-pose.
   - Locally opened `.glb` files are uploaded once, on demand. Bones are matched by glTF
     node index, because three.js rewrites names such as `mixamorig:Hips`.
 - **Story mode: anim clips, anim layers and the attribute editor.** The scene is made of

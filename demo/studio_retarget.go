@@ -267,6 +267,69 @@ func registerRetarget(mux *http.ServeMux, c studioConfig) {
 		_ = json.NewEncoder(w).Encode(res)
 	})
 
+	// The character in the T-pose the retargeting works from: the source skeleton's rest pose
+	// (a T-pose for the native skeletons) retargeted with rest alignment.
+	//   POST /api/retarget/tpose {character, skeleton, mapping?} -> {id, meta, rotations, translations}
+	mux.HandleFunc("/api/retarget/tpose", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		var req struct {
+			Character string          `json:"character"`
+			Skeleton  string          `json:"skeleton"`
+			Mapping   json.RawMessage `json:"mapping,omitempty"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+			return
+		}
+		character, ok := c.characterPath(req.Character)
+		if !ok {
+			writeError(w, http.StatusNotFound, "unknown character")
+			return
+		}
+		var source *studioMotion
+		for _, m := range c.motions() {
+			if m.SkeletonKey == req.Skeleton {
+				source = &m
+				break
+			}
+		}
+		if source == nil {
+			writeError(w, http.StatusNotFound, "no motion of skeleton "+req.Skeleton+" to take its rest pose from")
+			return
+		}
+		extra := []string{"--rest-pose", "--align-rest"}
+		key := []string{"tpose", req.Character, req.Skeleton}
+		if len(req.Mapping) > 0 && string(req.Mapping) != "null" {
+			mappingPath, herr := c.storeMapping(req.Mapping)
+			if herr != nil {
+				writeError(w, herr.status, herr.message)
+				return
+			}
+			extra = append(extra, "--mapping", mappingPath)
+			key = append(key, mappingPath)
+		}
+		id := hashID(key...)
+		dir := filepath.Join(c.output, "retarget", id)
+		if herr := c.runCached(r.Context(), dir, "retarget.json", func(out string) []string {
+			return append([]string{"retarget", source.dir, character, out}, extra...)
+		}); herr != nil {
+			writeError(w, herr.status, herr.message)
+			return
+		}
+		meta, err := os.ReadFile(filepath.Join(dir, "retarget.json"))
+		if err != nil || !json.Valid(meta) {
+			writeError(w, http.StatusInternalServerError, "invalid retarget result")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "meta": json.RawMessage(meta),
+			"rotations": "/api/retarget/" + id + "/rotations.f32", "translations": "/api/retarget/" + id + "/translations.f32"})
+	})
+
 	mux.HandleFunc("/api/retarget/", func(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/retarget/"), "/")
 		files := map[string]string{"retarget.json": "retarget.json", "rotations.f32": "local_rotations_xyzw.f32", "translations.f32": "local_translations.f32"}

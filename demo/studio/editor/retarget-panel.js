@@ -1,6 +1,8 @@
 // Retarget controls: enable/disable, joint mapping (automatic, editable, JSON load/save) and
 // diagnostics. The mapping uses original glTF joint names, like the C++ importer.
 
+import { checkBindPose, poseCharacter, restoreBindPose } from './bind-pose.js';
+
 const esc = (s) => String(s);
 
 export class RetargetPanel {
@@ -17,7 +19,8 @@ export class RetargetPanel {
     this.timer = 0;
 
     $('retarget-on').addEventListener('change', () => { this.sync(); this.onChange(); });
-    $('align-rest').addEventListener('change', () => this.onChange());
+    $('align-rest').addEventListener('change', () => { this.alignTouched = true; this.showTPose(false); this.onChange(); });
+    $('show-tpose').addEventListener('click', () => this.showTPose(!this.tposeShown).catch((e) => this.status(`T-pose preview: ${e.message || e}`, true)));
     $('edit-mapping').addEventListener('click', () => {
       $('mapping-editor').hidden = !$('mapping-editor').hidden;
       $('edit-mapping').textContent = $('mapping-editor').hidden ? 'Edit mapping' : 'Hide mapping';
@@ -57,8 +60,12 @@ export class RetargetPanel {
   setCharacter(character, { id = null, upload = null } = {}) {
     this.mappingCache ??= new Map();
     if (this.mapping && this.cacheKey()) this.mappingCache.set(this.cacheKey(), this.mapping);
+    this.showTPose(false);
     this.character = character;
     this.characterId = id;
+    this.alignTouched = false; // the bind-pose check may turn alignment on for a new character
+    this.poseInfo = null;
+    this.$('pose-status').textContent = '';
     this.upload = upload;
     this.mapping = this.mappingCache.get(this.cacheKey()) ?? null;
     this.diagnostics(null);
@@ -101,6 +108,7 @@ export class RetargetPanel {
     if (!r.ok) throw new Error(body.error || `mapping failed (HTTP ${r.status})`);
     this.mapping = body.mapping;
     this.diagnostics(body);
+    this.checkPose();
     return this.mapping;
   }
 
@@ -121,6 +129,47 @@ export class RetargetPanel {
     if (!this.enabled) return null;
     const mapping = await this.ensureMapping();
     return { character: await this.ensureCharacterId(), mapping, align_rest: this.$('align-rest').checked };
+  }
+
+  // Bind pose check: not a T-pose -> retarget from the T-pose (unless the user chose otherwise).
+  checkPose() {
+    const info = this.character && checkBindPose(this.character, this.mapping);
+    this.poseInfo = info;
+    const $ = this.$;
+    if (!info) { $('pose-status').textContent = ''; return; }
+    const arms = info.arms.map((a) => `${a.side.toLowerCase()} arm ${a.degrees > 0 ? '+' : ''}${a.degrees.toFixed(0)}°`).join(', ');
+    if (!info.tpose && !this.alignTouched && !$('align-rest').checked) {
+      $('align-rest').checked = true;
+      this.status(`${this.character.name}: bind pose is an ${info.label} (${arms}) — retargeting from its T-pose ("Retarget from T-pose" turned on)`);
+    }
+    $('pose-status').textContent = `Bind pose: ${info.label} (${arms})${info.tpose ? '' : $('align-rest').checked ? ' → retargeted from the T-pose' : ' — turn on "Retarget from T-pose"'}`;
+  }
+
+  // T-pose preview: the character as the retargeting sees it at the source's rest.
+  async showTPose(on) {
+    const $ = this.$;
+    if (!on) {
+      if (this.tposeShown) {
+        this.tposeShown = false;
+        $('show-tpose').classList.remove('on');
+        $('show-tpose').textContent = 'Show T-pose';
+        if (this.onRestorePose) this.onRestorePose();
+        else if (this.character) restoreBindPose(this.character);
+      }
+      return;
+    }
+    if (!this.character || !this.skeletonKey) throw new Error('load a character and a motion first');
+    const body = { character: await this.ensureCharacterId(), skeleton: this.skeletonKey, mapping: await this.ensureMapping() };
+    const r = await fetch('/api/retarget/tpose', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const res = await r.json();
+    if (!r.ok) throw new Error(res.error || `HTTP ${r.status}`);
+    const rot = new Float32Array(await (await fetch(res.rotations)).arrayBuffer());
+    this.onBeforePose?.();
+    poseCharacter(this.character, res.meta, rot);
+    this.tposeShown = true;
+    $('show-tpose').classList.add('on');
+    $('show-tpose').textContent = 'Hide T-pose';
+    this.status('T-pose preview: the pose the retargeting starts from (change frame or press Hide to go back)');
   }
 
   diagnostics(d) {

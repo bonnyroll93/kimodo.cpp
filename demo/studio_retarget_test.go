@@ -51,6 +51,21 @@ func TestRetargetEndpoints(t *testing.T) {
 		t.Fatalf("auto mapping misses LeftLeg<-LeftShin: %s", mapped.Mapping)
 	}
 
+	// T-pose preview of the A-pose rig: one frame, joints in the character's order.
+	rec = do(http.MethodPost, "/api/retarget/tpose", []byte(`{"character":"sample:test_rig_mixamo_apose.glb","skeleton":"soma30"}`))
+	var tpose struct {
+		Meta struct {
+			Frames int `json:"frames"`
+		} `json:"meta"`
+		Rotations string `json:"rotations"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &tpose); err != nil || rec.Code != http.StatusOK || tpose.Meta.Frames != 1 {
+		t.Fatalf("tpose: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec = do(http.MethodGet, tpose.Rotations, nil); rec.Code != http.StatusOK || rec.Body.Len() == 0 {
+		t.Fatalf("tpose rotations: %d", rec.Code)
+	}
+
 	// Upload the same rig and retarget with the explicit mapping.
 	glb, err := os.ReadFile("../tests/data/rigs/test_rig.glb")
 	if err != nil {

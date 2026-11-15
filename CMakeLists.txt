@@ -155,6 +155,9 @@ if(BUILD_TESTING AND KIMODO_BUILD_TESTS AND KIMODO_BUILD_ANIM)
   add_test(NAME kimodo-anim-retarget-cli
     COMMAND kmd-anim retarget "${KIMODO_TEST_WALK}" "${KIMODO_TEST_RIGS}/test_rig.glb" "${CMAKE_CURRENT_BINARY_DIR}/anim-test-out/retarget")
   set_tests_properties(kimodo-anim-retarget-cli PROPERTIES PASS_REGULAR_EXPRESSION "\"translation_joint\":0,")
+  add_test(NAME kimodo-anim-retarget-tpose-cli
+    COMMAND kmd-anim retarget "${KIMODO_TEST_WALK}" "${KIMODO_TEST_RIGS}/test_rig_mixamo_apose.glb" "${CMAKE_CURRENT_BINARY_DIR}/anim-test-out/tpose" --rest-pose --align-rest)
+  set_tests_properties(kimodo-anim-retarget-tpose-cli PROPERTIES PASS_REGULAR_EXPRESSION "\"frames\":1,")
   add_executable(kimodo-anim-layers-test tests/anim/anim_layers_test.cpp)
   target_link_libraries(kimodo-anim-layers-test PRIVATE kimodo_anim)
   add_test(NAME kimodo-anim-layers-test COMMAND kimodo-anim-layers-test "${KIMODO_TEST_WALK}" "${KIMODO_TEST_RIGS}")

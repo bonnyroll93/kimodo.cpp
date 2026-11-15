@@ -99,7 +99,9 @@ int usage() {
                  "       kmd-anim retarget MOTION_DIR TARGET.glb OUT_DIR [--mapping FILE] [--save-mapping FILE]\n"
                  "           [--root-scale S] [--yaw DEG] [--no-auto-facing] [--align-rest] [--skin N] [--fps N]\n"
                  "       retarget writes OUT_DIR/retarget.json, local_rotations_xyzw.f32 [T,J,4] and\n"
-                 "       local_translations.f32 [T,J,3] in the target's joint order.\n"
+                 "       local_translations.f32 [T,J,3] in the target's joint order. --rest-pose retargets one\n"
+                 "       frame of the source's rest pose (T-pose) instead of the motion (with --align-rest: the\n"
+                 "       character in the T-pose the retargeting works from).\n"
                  "       kmd-anim layers OUT_DIR (--native KEY | --character FILE.glb [--skin N]) [--fps N] [--length S]\n"
                  "           --layer DIR [--name S] [--mode override|additive] [--weight W]\n"
                  "                       [--mask full|upper|lower|MASK.json] [--disabled] [--muted]\n"
@@ -276,13 +278,15 @@ int retarget_command(int argc, char **argv) {
     RetargetOptions options;
     GltfImportOptions import;
     float fps = 30.F;
+    bool rest_pose = false;
     for (int i = 5; i < argc; ++i) {
         const std::string_view arg = argv[i];
         auto value = [&]() -> std::string {
             if (i + 1 >= argc) throw std::runtime_error(std::string(arg) + " needs a value");
             return argv[++i];
         };
-        if (arg == "--mapping") mapping_file = value();
+        if (arg == "--rest-pose") rest_pose = true;
+        else if (arg == "--mapping") mapping_file = value();
         else if (arg == "--save-mapping") save_file = value();
         else if (arg == "--root-scale") options.root_scale = std::stof(value());
         else if (arg == "--yaw") options.yaw_offset_degrees = std::stof(value());
@@ -298,6 +302,13 @@ int retarget_command(int argc, char **argv) {
     if (!source) throw std::runtime_error(source.error());
     auto clip = clip_from_motion(*source, *motion, fps);
     if (!clip) throw std::runtime_error(clip.error());
+    if (rest_pose) {
+        // One frame of the source's rest pose (the native skeletons' rest is a T-pose): with
+        // --align-rest this is the character in the pose the retargeting works from.
+        clip->locals.assign(clip->locals.begin(), clip->locals.begin() + static_cast<std::ptrdiff_t>(clip->joint_count));
+        for (std::size_t j = 0; j < clip->joint_count; ++j) clip->locals[j] = source->joints[j].rest_local;
+        clip->locals[0].translation = clip_from_motion(*source, *motion, fps)->locals[0].translation;
+    }
     auto character = load_gltf_character(target_path, import);
     if (!character) throw std::runtime_error(character.error());
     const Skeleton &target = character->skeleton;
