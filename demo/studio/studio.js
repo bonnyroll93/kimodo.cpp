@@ -562,4 +562,4 @@ if (params.get('load')) {
 }
 
 // Debug hook for automated checks: /studio/?debug=1 exposes the main objects.
-if (new URLSearchParams(location.search).get('debug') === '1') window.__studio = { THREE, player, motionPanel, keyPanel, retargetPanel, tposeEditor, controlRig, poseTools, picker, channelBox, getCharacter: () => character, select };
+if (new URLSearchParams(location.search).get('debug') === '1') window.__studio = { THREE, viewport, player, motionPanel, keyPanel, retargetPanel, tposeEditor, controlRig, poseTools, picker, channelBox, getCharacter: () => character, select };

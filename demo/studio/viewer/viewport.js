@@ -29,10 +29,10 @@ export class Viewport {
     rim.position.set(-4, 3, -5);
     this.scene.add(rim);
 
-    this.grid = new THREE.GridHelper(10, 20, 0x3bd3d0, 0x25313b);
-    this.grid.material.transparent = true;
-    this.grid.material.opacity = 0.55;
-    this.scene.add(this.grid);
+    // Ground grid: always centred on the world origin at y = 0 (its centre lines are the X and
+    // Z axes); framing only rescales it and makes it bigger, never moves it.
+    this.gridHalf = 0;
+    this.setGrid(5);
     this.axes = new THREE.AxesHelper(0.5);
     this.axes.material.depthTest = false;
     this.axes.renderOrder = 10;
@@ -56,6 +56,20 @@ export class Viewport {
     this.controls.update();
     for (const fn of this.onFrame) fn();
     this.renderer.render(this.scene, this.camera);
+  }
+
+  // A grid of 2 * half units (cells of half a unit) around the origin, in grid units.
+  setGrid(half) {
+    if (half === this.gridHalf) return;
+    const visible = this.grid?.visible ?? true, scale = this.grid?.scale.x ?? 1;
+    if (this.grid) { this.scene.remove(this.grid); this.grid.geometry.dispose(); this.grid.material.dispose(); }
+    this.gridHalf = half;
+    this.grid = new THREE.GridHelper(2 * half, 4 * half, 0x3bd3d0, 0x25313b);
+    this.grid.material.transparent = true;
+    this.grid.material.opacity = 0.55;
+    this.grid.visible = visible;
+    this.grid.scale.setScalar(scale);
+    this.scene.add(this.grid);
   }
 
   // Fit the camera to one or more objects, keeping the current viewing direction.
@@ -82,8 +96,11 @@ export class Viewport {
     this.camera.updateProjectionMatrix();
     // Scale helpers to the character so tiny or huge rigs stay readable.
     const unit = Math.pow(10, Math.floor(Math.log10(Math.max(size.y, size.x, size.z, 1e-3))));
+    // The grid stays on the origin; it grows (in whole units) to reach what is framed.
+    const reach = Math.max(Math.abs(box.min.x), Math.abs(box.max.x), Math.abs(box.min.z), Math.abs(box.max.z)) / unit;
+    this.setGrid(Math.min(200, Math.max(5, Math.ceil(reach + 1))));
     this.grid.scale.setScalar(unit);
-    this.grid.position.set(center.x, box.min.y, center.z);
+    this.grid.position.set(0, 0, 0);
     this.axes.scale.setScalar(unit * 0.5);
     return radius;
   }
