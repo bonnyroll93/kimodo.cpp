@@ -54,7 +54,8 @@ export class Timeline {
   }
   extent(i) {
     const t = this.timingOf(i);
-    if (this.layers[i]?.kind === 'keys') return [t.start, Math.max(this.duration, t.start)]; // offsets apply to the whole scene
+    if (t.end > t.start) return [t.start, t.end]; // bound to a clip
+    if (this.layers[i]?.kind === 'keys') return [t.start, Math.max(this.duration, t.start)]; // the whole scene
     return [t.start, t.start + (this.segment(i) / t.speed) * t.repeat];
   }
   pct(seconds) { return `${(seconds / this.duration) * 100}%`; }
@@ -77,7 +78,7 @@ export class Timeline {
       const label = document.createElement('button');
       label.type = 'button';
       label.className = `tl-label keys${i === this.active ? ' active' : ''}${l.enabled ? '' : ' disabled'}${l.muted ? ' muted' : ''}`;
-      label.textContent = `◆ ${l.name}`;
+      label.textContent = `◆ ${l.name}${l.bound ? ' ⛓' : ''}`;
       label.title = 'Anim layer (keyframes) — click to edit it in the attribute editor';
       label.addEventListener('click', () => this.cb.select(i));
       const track = document.createElement('div');

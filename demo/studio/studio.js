@@ -16,6 +16,7 @@ import { SceneFile } from './editor/scene-file.js';
 import { KeyPanel } from './editor/key-panel.js';
 import { MotionLibrary } from './editor/motion-library.js';
 import { History } from './editor/history.js';
+import { rigSnapshot, jointNameMap, transferScene } from './editor/rig-transfer.js';
 
 const $ = (id) => document.getElementById(id);
 const status = (text, error = false) => {
@@ -150,10 +151,21 @@ for (const id of ['show-mesh', 'show-skeleton', 'show-joints', 'show-grid', 'sho
   $(id).addEventListener('change', applyVisibility);
 
 // source: ArrayBuffer (local file) or URL; serverId: id the backend knows (sample rigs).
-async function open(source, name, serverId = null) {
+// Opening another character keeps the scene (clips, anim layers, timing, paths, masks, options):
+// keys and custom masks move onto the new rig (editor/rig-transfer.js). transfer: false when a
+// scene file replaces the layers right after.
+async function open(source, name, serverId = null, { transfer = true } = {}) {
   status(`Loading ${name}…`);
   try {
     const next = await loadCharacter(source, name);
+    next.rig = rigSnapshot(next);
+    const prev = character;
+    const needsTransfer = transfer && prev?.rig && motionPanel.layers.some((l) =>
+      (l.kind === 'keys' && Object.keys(l.keys?.tracks ?? {}).length) || l.customMask?.weights);
+    let prevMapping = null;
+    if (needsTransfer) {
+      try { prevMapping = retargetPanel.skeletonKey ? await retargetPanel.ensureMapping() : null; } catch { /* names only */ }
+    }
     player.setTarget(null);
     if (character) {
       viewport.scene.remove(character.root);
@@ -167,6 +179,18 @@ async function open(source, name, serverId = null) {
     hierarchy.setCharacter(character);
     inspector.showStats(character);
     retargetPanel.setCharacter(character, { id: serverId, upload: source instanceof ArrayBuffer ? source : null });
+    let transferNote = '';
+    if (needsTransfer) {
+      let newMapping = null;
+      try { newMapping = retargetPanel.skeletonKey ? await retargetPanel.ensureMapping() : null; } catch { /* names only */ }
+      const names = jointNameMap(prev.rig, character.rig, prevMapping, newMapping);
+      const r = transferScene(motionPanel.layers, prev.rig, character.rig, names);
+      transferNote = ` · scene kept: ${r.joints} keyed joint(s) moved to the new rig` +
+        (r.rekeyed ? ` (${r.rekeyed} re-keyed for its joint axes, tangents auto)` : '') +
+        (r.masks ? `, ${r.masks} custom mask(s)` : '') +
+        (r.unmapped.size ? `; no match for ${[...r.unmapped].slice(0, 6).join(', ')}${r.unmapped.size > 6 ? '…' : ''} (kept under the old names)` : '');
+      motionPanel.select(motionPanel.active);
+    }
     exportPanel.sync();
     const anims = character.gltf.animations.map((a) => a.name || 'unnamed');
     $('embedded-anim').replaceChildren(new Option(anims.length ? 'None (use Motion / Layers)' : 'none', ''), ...anims.map((n) => new Option(n, n)));
@@ -180,7 +204,7 @@ async function open(source, name, serverId = null) {
     const s = character.stats;
     const msg = `${name}: ${s.joints} joints, ${s.skinnedMeshes} skinned mesh${s.skinnedMeshes === 1 ? '' : 'es'}, ${s.triangles.toLocaleString()} triangles`;
     const extra = [...character.warnings, ...character.notes];
-    status(extra.length ? `${msg} — ${extra.join(' ')}` : msg, character.warnings.length > 0);
+    status((extra.length ? `${msg} — ${extra.join(' ')}` : msg) + transferNote, character.warnings.length > 0);
   } catch (err) {
     console.error(err);
     status(`Could not load ${name}: ${err.message || err}`, true);
@@ -270,7 +294,7 @@ undoHistory.reset(); // the initial state is the first undo step
 const sceneFile = new SceneFile({
   $, status, viewport, player, motionPanel, retargetPanel, exportPanel, applyVisibility, clearCharacter,
   getCharacter: () => character,
-  openCharacter: (url, name, id) => open(url, name, id),
+  openCharacter: (url, name, id) => open(url, name, id, { transfer: false }),
   onOpened: () => undoHistory.reset(),
 });
 
@@ -407,7 +431,7 @@ motionPanel.loadSources().then(() => {
   if (params.get('footlock') === '1') { $('foot-lock').checked = true; $('foot-opts').hidden = false; }
   if (params.get('editpath') === '1') setTimeout(() => $('edit-path').click(), 0);
   $('motion-source').value = motion;
-  motionPanel.activeLayer.config = motionPanel.readForm();
+  motionPanel.storeForm();
   // stack=demo: a second, additive upper-body layer (in place) at half weight; mask=... overrides its mask.
   if (params.get('stack') === 'demo') {
     motionPanel.addTrack();

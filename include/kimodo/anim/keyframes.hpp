@@ -71,6 +71,7 @@ struct KeyframeTracks {
 struct KeyframeClip {
     AnimationClip clip;                 // tracks only for keyed joints that exist in the skeleton
     std::vector<std::string> warnings;  // e.g. keyed joints missing from the skeleton
+    std::map<std::string, unsigned, std::less<>> channels; // keyed joint -> ChannelRotation/ChannelTranslation bits
 };
 // Samples the curves into a clip of local transforms: rest rotation * offset rotation and
 // rest translation + offset translation, `frames` long (0: up to the last key).

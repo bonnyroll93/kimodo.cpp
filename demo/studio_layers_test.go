@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -68,6 +70,46 @@ func TestLayersEndpoint(t *testing.T) {
 	}
 	if len(get(r.Root)) != 90*12 {
 		t.Fatal("native stack root size")
+	}
+
+	// Scene root motion: two walks in sequence made in place as a whole (the second root
+	// aligned), then an override keyframe layer bound to [1, 2] s.
+	srec := post(`{"scene_root":{"mode":"inplace"},"layers":[{"name":"a","root_motion":` + walk + `,"timing":{"extend":"none"}},
+		{"name":"b","root_motion":` + walk + `,"timing":{"start":2.9,"empty_before":true,"fade_in":0.067,"align_root":true}},
+		{"name":"k","mode":"override","keys":{"version":1,"fps":30,"tracks":{"LeftForeArm":{"rx":[{"f":0,"v":30}]}}},"timing":{"start":1,"end":2,"empty_before":true}}]}`)
+	var scene struct {
+		Meta struct {
+			Frames int `json:"frames"`
+			Layers []struct {
+				Name string `json:"name"`
+			} `json:"layers"`
+		} `json:"meta"`
+		Root  string `json:"root"`
+		Scene struct {
+			Root string `json:"root"`
+			Meta struct {
+				Layers []struct {
+					Duration float64 `json:"duration"`
+				} `json:"layers"`
+			} `json:"meta"`
+		} `json:"scene"`
+	}
+	if srec.Code != http.StatusOK || json.Unmarshal(srec.Body.Bytes(), &scene) != nil {
+		t.Fatalf("scene root: %d %s", srec.Code, srec.Body.String())
+	}
+	if len(scene.Meta.Layers) != 2 || scene.Meta.Layers[0].Name != "Scene" || len(scene.Scene.Meta.Layers) != 2 || scene.Meta.Frames < 170 {
+		t.Fatalf("scene root meta: %+v", scene)
+	}
+	root := get(scene.Root)
+	f32 := func(b []byte, i int) float32 {
+		return math.Float32frombits(binary.LittleEndian.Uint32(b[i*4:]))
+	}
+	last := len(root)/12 - 1
+	if dx, dz := f32(root, last*3)-f32(root, 0), f32(root, last*3+2)-f32(root, 2); dx*dx+dz*dz > 1e-6 {
+		t.Fatalf("scene in place still travels: %v %v", dx, dz)
+	}
+	if len(get(scene.Scene.Root)) != len(root) {
+		t.Fatal("scene source root size")
 	}
 
 	// Character stack with a custom mask object.

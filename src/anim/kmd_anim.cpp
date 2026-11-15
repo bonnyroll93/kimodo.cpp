@@ -104,9 +104,10 @@ int usage() {
                  "           --layer DIR [--name S] [--mode override|additive] [--weight W]\n"
                  "                       [--mask full|upper|lower|MASK.json] [--disabled] [--muted]\n"
                  "                       [--reference first|rest|FRAME] [--wrap clamp|loop]  (repeat per layer)\n"
-                 "           --key-layer KEYS.json [same layer options]   keyframe offset layer (additive)\n"
+                 "           --key-layer KEYS.json [same layer options]   keyframe layer: additive offsets; with --mode\n"
+                 "                       override the keyed channels replace the pose (rest * offset)\n"
                  "           clip timing per layer: [--start S] [--trim-in S] [--trim-out S] [--speed X] [--repeat N]\n"
-                 "                       [--extend hold|none] [--fade-in S] [--fade-out S] [--ease-fades] [--empty-before] [--align-root]\n"
+                 "                       [--extend hold|none] [--fade-in S] [--fade-out S] [--ease-fades] [--empty-before] [--end S] [--align-root]\n"
                  "       DIR is a clip directory (clip.json/retarget.json) or a native motion directory;\n"
                  "       layers are applied bottom to top in command-line order. OUT_DIR gets clip.json,\n"
                  "       local_rotations_xyzw.f32, local_translations.f32 (+ root_positions.f32 if --native).\n"
@@ -403,6 +404,7 @@ int layers_command(int argc, char **argv) {
         std::filesystem::path keys; // keyframe layer (JSON) instead of a motion directory
         std::string mask = "full";
         std::string reference = "first";
+        bool mode_set = false; // --mode given (keyframe layers default to additive)
     };
     std::vector<Pending> pending;
     GltfImportOptions import;
@@ -446,6 +448,7 @@ int layers_command(int argc, char **argv) {
             current().layer.name = value();
         } else if (arg == "--mode") {
             const std::string m = value();
+            current().mode_set = true;
             if (m == "override") current().layer.mode = BlendMode::Override;
             else if (m == "additive") current().layer.mode = BlendMode::Additive;
             else throw std::runtime_error("unknown blend mode '" + m + "'");
@@ -483,6 +486,8 @@ int layers_command(int argc, char **argv) {
             current().layer.timing.fade_in = std::stof(value());
         } else if (arg == "--fade-out") {
             current().layer.timing.fade_out = std::stof(value());
+        } else if (arg == "--end") {
+            current().layer.timing.end = std::stof(value());
         } else if (arg == "--align-root") {
             current().layer.timing.align_root = true;
         } else if (arg == "--ease-fades") {
@@ -516,7 +521,10 @@ int layers_command(int argc, char **argv) {
             auto kc = keyframe_clip(*tracks, *skeleton);
             if (!kc) throw std::runtime_error(p.layer.name + ": " + kc.error());
             p.layer.clip = std::move(kc->clip);
-            p.layer.mode = BlendMode::Additive;
+            // Additive (default): offsets on top of the layers below. Override (--mode override):
+            // keyed joints take rest * offset, only in the channels they have keys for.
+            if (p.layer.mode == BlendMode::Override && p.mode_set) p.layer.channels = std::move(kc->channels);
+            else p.layer.mode = BlendMode::Additive;
             p.reference = "rest";
             layer_warnings = string_list(kc->warnings);
         } else {

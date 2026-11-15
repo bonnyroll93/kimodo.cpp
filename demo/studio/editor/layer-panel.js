@@ -56,9 +56,11 @@ export class LayerPanel {
       blend.append(new Option('Override', 'override'), new Option('Additive', 'additive'));
       blend.value = l.blend;
       blend.addEventListener('change', () => this.cb.change(i, { blend: blend.value }));
-      if (keys) { // keyframe layers are additive offsets
-        blend.replaceChildren(new Option('Keyframes (additive)', 'additive'));
-        blend.disabled = true;
+      if (keys) { // anim layers: offsets added on top, or keyed channels replacing the pose
+        blend.replaceChildren(new Option('Additive (offsets)', 'additive'), new Option('Override (replace)', 'override'));
+        blend.value = l.blend === 'override' ? 'override' : 'additive';
+        blend.title = 'Additive: keys are offsets added to the clips. Override: keyed joints take the keyed pose ' +
+          '(only the keyed channels; switching mode reinterprets existing keys)';
       }
       const weight = el('input', { type: 'range', min: 0, max: 1, step: 0.01, value: l.weight, title: 'Weight' });
       const weightText = el('span', { className: 'weight-text', textContent: l.weight.toFixed(2) });

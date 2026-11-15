@@ -55,6 +55,8 @@ export function parsePoints(text) {
   return points;
 }
 
+// The root-motion part of a config (everything but the source).
+const rootOnly = ({ source, ...rest }) => rest;
 const defaultConfig = () => ({
   source: '', mode: 'full', lock: 'both', preset: 'scurve', points: presetText(PATH_PRESETS.scurve),
   interp: 'catmull', loop: false, timing: 'distance', timingValue: 0, orient: true,
@@ -66,16 +68,21 @@ export const DEFAULT_TIMING = { start: 0, trim_in: 0, trim_out: 0, speed: 1, rep
 const timingOf = (l) => ({ ...DEFAULT_TIMING, ...(l.timing ?? {}) });
 const isDefaultTiming = (l) => Object.entries(DEFAULT_TIMING).every(([k, v]) => timingOf(l)[k] === v);
 const isKeys = (l) => l?.kind === 'keys';
+const newId = () => Math.random().toString(36).slice(2, 10);
 
 const newLayer = (name, config = defaultConfig()) => ({
-  name, kind: 'clip', track: 0, config, blend: 'override', weight: 1, mask: 'full',
+  id: newId(), name, kind: 'clip', track: 0, config, blend: 'override', weight: 1, mask: 'full',
   customMask: null, enabled: true, muted: false, reference: 'first', wrap: 'clamp', timing: { ...DEFAULT_TIMING },
 });
 
 // Scenes saved before tracks existed: each motion layer on its own track, in stack order.
+// Every clip and anim layer gets an id (anim layers bound to a clip refer to it).
 export function normalizeLayers(layers) {
   let t = 0;
+  const seen = new Set();
   for (const l of layers) {
+    if (!l.id || seen.has(l.id)) l.id = newId();
+    seen.add(l.id);
     if (isKeys(l)) continue;
     l.kind = 'clip';
     if (!Number.isInteger(l.track)) l.track = t;
@@ -97,6 +104,7 @@ export class MotionPanel {
     this.request = 0;
     this.timer = 0;
     this.layers = [newLayer('Clip 1')];
+    this.$('k-scope').addEventListener('change', () => this.setScope(this.$('k-scope').value || null));
     this.active = 0;
 
     for (const [key, p] of Object.entries(PATH_PRESETS)) $('path-preset').append(new Option(p.label, key));
@@ -149,6 +157,7 @@ export class MotionPanel {
       seek: (t) => onSeek?.(t),
       timing: (i, patch, final) => {
         const l = this.layers[i];
+        if (isKeys(l) && this.boundClip(l) >= 0) { if (final) this.status('This anim layer follows its clip: move the clip', true); return; }
         const { track, ...rest } = patch;
         if (track !== undefined && !isKeys(l)) l.track = Math.max(0, track | 0);
         l.timing = { ...timingOf(l), ...rest };
@@ -163,7 +172,17 @@ export class MotionPanel {
       remove: (i) => this.remove(i),
     });
     this.installTimingForm();
-    this.writeForm(this.layers[0].config);
+    // Root motion (Full / In place / Path) per clip, or once for the whole scene (the clips
+    // composed first, then one root motion on the result: e.g. a single path for a sequence).
+    this.rootScope = 'clip';
+    this.sceneRoot = rootOnly(defaultConfig());
+    $('root-scope').addEventListener('change', () => {
+      this.rootScope = $('root-scope').value === 'scene' ? 'scene' : 'clip';
+      this.writeClipForm(this.layers[this.activeClip()]);
+      this.schedule();
+      this.onShown?.();
+    });
+    this.writeClipForm(this.layers[0]);
     this.renderLayers();
   }
 
@@ -196,8 +215,26 @@ export class MotionPanel {
     this.syncVisibility();
   }
 
+  // Form -> the selected clip (source) and the root motion it edits (the clip's or the scene's).
+  storeForm() {
+    const f = this.readForm(), l = this.layers[this.activeClip()];
+    if (this.rootScope === 'scene') {
+      this.sceneRoot = rootOnly(f);
+      l.config = { ...l.config, source: f.source };
+    } else {
+      l.config = f;
+    }
+  }
+  writeClipForm(l) {
+    this.$('root-scope').value = this.rootScope;
+    this.$('root-scope-note').textContent = this.rootScope === 'scene'
+      ? 'Full / In place / Path apply once to the whole scene (all the clips composed); the clips keep their own motion.'
+      : 'Each clip has its own Full / In place / Path.';
+    this.writeForm(this.rootScope === 'scene' ? { ...this.sceneRoot, source: l.config.source } : l.config);
+  }
+
   formChanged() {
-    this.activeLayer.config = this.readForm();
+    this.storeForm();
     this.schedule();
   }
 
@@ -207,7 +244,7 @@ export class MotionPanel {
     this.$('path-points').value = presetText(p);
     this.$('path-interp').value = p.interpolation;
     this.$('path-loop').checked = !!p.loop;
-    this.activeLayer.config = this.readForm();
+    this.storeForm();
     if (apply) this.schedule();
   }
 
@@ -224,7 +261,7 @@ export class MotionPanel {
   select(i, rerender = true) {
     this.active = Math.max(0, Math.min(i, this.layers.length - 1));
     const l = this.activeLayer;
-    if (!isKeys(l)) this.writeForm(l.config);
+    if (!isKeys(l)) this.writeClipForm(l);
     this.$('motion-controls').hidden = isKeys(l);
     this.showMaskEditor();
     if (rerender) this.renderLayers();
@@ -243,6 +280,7 @@ export class MotionPanel {
     this.$('attr-kind').textContent = isKeys(l) ? `Anim layer · ${l.name}` : `Anim clip · ${l.name} · track ${(l.track ?? 0) + 1}`;
     this.attrPanel.render([{ l, i: this.active }], this.active);
     this.$('attr-timing').hidden = isKeys(l);
+    this.renderScope();
     this.writeTiming();
   }
 
@@ -338,8 +376,71 @@ export class MotionPanel {
         eff.set(i, e);
       });
     }
-    for (const [i, l] of this.layers.entries()) if (isKeys(l)) eff.set(i, timingOf(l));
+    for (const [i, l] of this.layers.entries()) {
+      if (!isKeys(l)) continue;
+      const c = this.boundClip(l);
+      if (c < 0) { eff.set(i, timingOf(l)); continue; }
+      // Bound to a clip: keys in the clip's time (start, speed), active only while the clip
+      // plays, blending in / out with it.
+      const ce = eff.get(c) ?? timingOf(this.layers[c]), [s0, e0] = this.extent(c);
+      eff.set(i, { ...DEFAULT_TIMING, start: s0, speed: ce.speed, extend: 'hold', empty_before: true, end: e0,
+        fade_in: ce.fade_in, fade_out: ce.fade_out, ease_fades: ce.ease_fades });
+    }
     return eff;
+  }
+
+  // ----- anim layer scope: the whole timeline, or bound to a clip -------------------------
+  boundClip(l) { return l?.bind ? this.layers.findIndex((c) => !isKeys(c) && c.id === l.bind) : -1; }
+
+  // Key frame (anim layer time) <-> stack frame for the selected anim layer.
+  keyFrame(stackFrame, i = this.active) {
+    const t = this.effective().get(i) ?? DEFAULT_TIMING, fps = this.player.fps;
+    return (stackFrame / fps - t.start) * t.speed * fps;
+  }
+  stackFrame(keyFrame, i = this.active) {
+    const t = this.effective().get(i) ?? DEFAULT_TIMING, fps = this.player.fps;
+    return (keyFrame / fps / t.speed + t.start) * fps;
+  }
+
+  // Re-time the keys of anim layer i so they stay where they are on the timeline.
+  remapKeys(i, map, scale) {
+    const tracks = this.layers[i].keys?.tracks ?? {};
+    for (const ch of Object.values(tracks))
+      for (const keys of Object.values(ch))
+        for (const k of keys) {
+          k.f = Math.round(map(k.f) * 1000) / 1000;
+          if (k.l) k.l = [k.l[0] * scale, k.l[1]];
+          if (k.r) k.r = [k.r[0] * scale, k.r[1]];
+        }
+  }
+
+  setScope(clipId, i = this.active) {
+    const l = this.layers[i];
+    if (!isKeys(l) || (l.bind ?? null) === clipId) return;
+    const fps = this.player.fps;
+    const before = this.effective().get(i);
+    const toStack = (f) => (f / fps / before.speed + before.start) * fps; // with the old scope
+    l.bind = clipId;
+    const after = this.effective().get(i);
+    this.remapKeys(i, (f) => (toStack(f) / fps - after.start) * after.speed * fps, after.speed / before.speed);
+    this.renderLayers();
+    this.schedule();
+    this.onShown?.();
+  }
+
+  renderScope() {
+    const $ = this.$, l = this.activeLayer;
+    $('attr-scope').hidden = !isKeys(l);
+    if (!isKeys(l)) return;
+    const sel = $('k-scope');
+    sel.replaceChildren(new Option('Whole timeline (scene)', ''));
+    for (const [tr, list] of this.tracks())
+      for (const c of list) sel.append(new Option(`Clip: ${this.layers[c].name} (track ${tr + 1})`, this.layers[c].id));
+    const c = this.boundClip(l);
+    sel.value = c >= 0 ? l.bind : '';
+    $('k-scope-info').textContent = c >= 0
+      ? 'Bound: the keys move and stretch with the clip and only act while it plays (blending in / out with it).'
+      : l.bind ? 'The clip this layer was bound to is gone: it now spans the whole timeline.' : 'The keys act on the whole main timeline.';
   }
 
   renderTimeline() {
@@ -347,7 +448,7 @@ export class MotionPanel {
     const joint = this.keyJoint?.();
     const items = this.layers.map((l, i) => ({
       name: l.name, kind: l.kind ?? 'clip', track: l.track ?? 0, duration: this.durationOf(i), enabled: l.enabled, muted: l.muted,
-      timing: timingOf(l), eff: eff.get(i),
+      timing: isKeys(l) ? eff.get(i) : timingOf(l), eff: eff.get(i), bound: isKeys(l) && this.boundClip(l) >= 0,
       keyTimes: isKeys(l) && joint ? keyFrames(l.keys, joint).map((f) => f / fps) : [],
     }));
     let end = this.player.duration;
@@ -360,6 +461,8 @@ export class MotionPanel {
 
   remove(i) {
     if (!this.layers[i] || !this.canRemove(i)) { this.status('The scene needs at least one anim clip', true); return; }
+    const id = this.layers[i].id;
+    for (const [k, l] of this.layers.entries()) if (isKeys(l) && l.bind === id) this.setScope(null, k);
     this.layers.splice(i, 1);
     this.select(Math.min(this.active > i ? this.active - 1 : this.active, this.layers.length - 1));
     this.schedule();
@@ -407,7 +510,7 @@ export class MotionPanel {
   addKeyLayer() {
     const base = this.layers[this.activeClip()];
     const n = this.layers.filter(isKeys).length;
-    const l = { ...newLayer(n ? `Keys ${n + 1}` : 'Keys', { ...base.config }), kind: 'keys', keys: emptyTracks(), blend: 'additive', reference: 'rest' };
+    const l = { ...newLayer(n ? `Keys ${n + 1}` : 'Keys', { ...base.config }), kind: 'keys', bind: null, keys: emptyTracks(), blend: 'additive', reference: 'rest' };
     delete l.track;
     this.layers.push(l);
     this.select(this.layers.length - 1);
@@ -493,6 +596,7 @@ export class MotionPanel {
       return;
     }
     const second = structuredClone(l);
+    second.id = newId();
     second.name = `${l.name} (2)`;
     second.timing = { ...t, trim_in: cut, start: now, fade_in: 0 };
     l.timing = { ...t, trim_out: cut, fade_out: 0 };
@@ -507,6 +611,7 @@ export class MotionPanel {
     const i = this.active, l = this.layers[i], t = timingOf(l);
     if (isKeys(l)) return;
     const copy = structuredClone(l);
+    copy.id = newId();
     copy.name = `${l.name} copy`;
     copy.timing = { ...t, start: this.extent(i)[1], align_root: true };
     this.durations.set(copy, this.durationOf(i));
@@ -517,7 +622,7 @@ export class MotionPanel {
 
   isSimple() {
     const l = this.layers[0];
-    return !this.$('foot-lock').checked && !(this.sceneLength > 0) && this.layers.length === 1 && !isKeys(l) && isDefaultTiming(l) &&
+    return this.rootScope === 'clip' && !this.$('foot-lock').checked && !(this.sceneLength > 0) && this.layers.length === 1 && !isKeys(l) && isDefaultTiming(l) &&
       l.blend === 'override' && l.weight === 1 && l.mask === 'full' && l.enabled && !l.muted;
   }
 
@@ -574,12 +679,15 @@ export class MotionPanel {
     const eff = this.effective();
     return this.stackOrder().map((i) => this.layerRequest(this.layers[i], i, eff.get(i)));
   }
-  stackBody() { return { layers: this.stackRequest(), ...(this.sceneLength > 0 ? { length: this.sceneLength } : {}) }; }
+  stackBody() {
+    return { layers: this.stackRequest(), ...(this.sceneLength > 0 ? { length: this.sceneLength } : {}),
+      ...(this.rootScope === 'scene' ? { scene_root: this.rootMotionRequest({ ...this.sceneRoot, source: '' }) } : {}) };
+  }
 
   layerRequest(l, i, eff = timingOf(l)) {
     const { auto_blend, ...timing } = eff;
     const mask = l.mask === 'custom' ? (l.customMask || { version: 1, name: 'custom', default: 1, weights: {} }) : l.mask;
-    if (isKeys(l)) return { name: l.name || `Keys ${i + 1}`, keys: l.keys, weight: l.weight, mask, enabled: l.enabled, muted: l.muted, wrap: l.wrap, timing };
+    if (isKeys(l)) return { name: l.name || `Keys ${i + 1}`, keys: l.keys, mode: l.blend === 'override' ? 'override' : 'additive', weight: l.weight, mask, enabled: l.enabled, muted: l.muted, wrap: l.wrap, timing };
     return {
       name: l.name || `Clip ${i + 1}`, root_motion: this.rootMotionRequest(l.config), mode: l.blend, weight: l.weight,
       mask, enabled: l.enabled, muted: l.muted, reference: l.reference, wrap: l.wrap, timing,
@@ -603,7 +711,8 @@ export class MotionPanel {
 
   // For the in-viewport path editor: the active layer's path and the current display mapping.
   editablePath() {
-    const c = this.activeLayer.config;
+    const c = this.rootScope === 'scene' ? this.sceneRoot : this.activeLayer.config;
+    if (isKeys(this.activeLayer) && this.rootScope !== 'scene') return null;
     if (c.mode !== 'path') return null;
     try {
       return { points: parsePoints(c.points), interpolation: c.interp, loop: c.loop };
@@ -668,6 +777,7 @@ export class MotionPanel {
     const foot_lock = this.footLockRequest();
     const order = this.stackOrder(), pos = new Map(order.map((i, k) => [i, k]));
     const body = await postJSON('/api/layers', { ...this.stackBody(), ...(rt || {}), ...(foot_lock ? { foot_lock } : {}) });
+    if (body.scene) return this.sceneResult(body, order);
     const base = this.baseIndex();
     // Overlays follow the selected clip, or the base clip when an anim layer is selected.
     const shown = isKeys(this.activeLayer) ? base : this.active;
@@ -695,6 +805,30 @@ export class MotionPanel {
       fps: meta.fps,
       summary: `${clips} clip${clips === 1 ? '' : 's'} on ${this.trackCount} track${this.trackCount === 1 ? '' : 's'}` +
         `${animLayers ? `, ${animLayers} anim layer${animLayers === 1 ? '' : 's'}` : ''}, ${meta.frames} frames${meta.foot_lock ? ', feet locked' : ''}`,
+    };
+  }
+
+  // Scene root motion: body.layers = [the scene (clips composed, then root motion), ...anim layers];
+  // body.scene = the composed clips before the root motion (durations, source root trail).
+  async sceneResult(body, order) {
+    const rm = body.layers[0].root_motion;
+    const [rotations, translations, stackRoot, sceneRoot, sceneRot, samples, sourceRoot] = await Promise.all([
+      f32(body.rotations), f32(body.translations), body.native ? f32(body.root) : null,
+      f32(rm.root), body.native ? null : f32(rm.rotations), rm.path ? f32(rm.path) : null, f32(body.scene.root),
+    ]);
+    const meta = body.meta, clipOrder = order.filter((i) => !isKeys(this.layers[i])), keyOrder = order.filter((i) => isKeys(this.layers[i]));
+    const req = this.rootMotionRequest({ ...this.sceneRoot, source: '' });
+    const clips = clipOrder.length;
+    return {
+      motion: body.native ? { root: stackRoot, rotations } : { root: sceneRoot, rotations: sceneRot },
+      target: body.native ? null : { meta, rotations, translations },
+      overlay: { samples, waypoints: req.path?.points ?? [], sourceRoot, resultRoot: sceneRoot,
+        meta: body.native ? null : JSON.parse(JSON.stringify(body.layers[0].retarget)) },
+      durations: [...body.scene.meta.layers.map((l, k) => [clipOrder[k], l.duration]),
+        ...meta.layers.slice(1).map((l, k) => [keyOrder[k], l.duration])],
+      footLock: meta.foot_lock ?? null,
+      fps: meta.fps,
+      summary: `${clips} clip${clips === 1 ? '' : 's'}, scene root ${req.mode}${keyOrder.length ? `, ${keyOrder.length} anim layer(s)` : ''}, ${meta.frames} frames${meta.foot_lock ? ', feet locked' : ''}`,
     };
   }
 
@@ -732,7 +866,7 @@ export class MotionPanel {
     const travel = (a) => Math.hypot(a[a.length - 3] - a[0], a[a.length - 1] - a[2]);
     this.$('motion-info').textContent =
       `${def.key} · ${this.player.frames} frames @ ${this.player.fps} fps · ${this.player.duration.toFixed(2)} s · ` +
-      `selected clip root travel ${travel(r.overlay.sourceRoot).toFixed(2)} m → ${travel(r.overlay.resultRoot).toFixed(2)} m` +
+      `${this.rootScope === 'scene' ? 'scene' : 'selected clip'} root travel ${travel(r.overlay.sourceRoot).toFixed(2)} m → ${travel(r.overlay.resultRoot).toFixed(2)} m` +
       (fl ? ` · foot lock: ${fl.contacts.length} contacts, slide ${(fl.slide_before * 1000).toFixed(1)} → ${(fl.slide_after * 1000).toFixed(1)} mm` +
             `, hips −${(fl.max_hip_drop * 100).toFixed(1)} cm${fl.unreachable_frames ? `, ${fl.unreachable_frames} frames out of reach` : ''}` : '');
     this.status(`Motion: ${r.summary}${rt ? ' · retargeted' : ''}`);

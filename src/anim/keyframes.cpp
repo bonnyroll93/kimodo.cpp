@@ -172,6 +172,10 @@ std::expected<KeyframeClip, std::string> keyframe_clip(const KeyframeTracks &tra
         if (std::ranges::all_of(curves, [](const Curve &cv) { return cv.keys.empty(); })) continue;
         keyed.emplace_back(static_cast<std::size_t>(j), &curves);
         c.joint_names.push_back(name);
+        unsigned ch = 0;
+        for (int k = 0; k < ChannelCount; ++k)
+            if (!curves[static_cast<std::size_t>(k)].keys.empty()) ch |= k < PosX ? 1U : 2U; // rotation / translation
+        out.channels.emplace(name, ch);
     }
     c.joint_count = keyed.size();
     if (keyed.empty()) {

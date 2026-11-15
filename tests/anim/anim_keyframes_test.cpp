@@ -112,6 +112,29 @@ void layer_tests(const Skeleton &soma, const AnimationClip &walk) {
         for (std::size_t j = 0; j < p.size(); ++j)
             if (j != fa) CHECK(angle_between(p[j].rotation, w[j].rotation) < 1.e-6F);
     }
+    // Override keyframes: keyed rotation replaces the walk (rest * offset); the translation of
+    // a joint keyed only in rotation, and every unkeyed joint, keep the walk.
+    {
+        KeyframeTracks ot;
+        ot.joints["LeftForeArm"][RotX].keys = {key(0, 40)};
+        auto okc = keyframe_clip(ot, soma);
+        CHECK(okc.has_value() && okc->channels.at("LeftForeArm") == ChannelRotation);
+        AnimationStack os(soma);
+        CHECK(os.add_layer({.name = "walk", .clip = walk}).has_value());
+        AnimationLayer ok{.name = "keys", .clip = okc->clip, .mode = BlendMode::Override};
+        ok.channels = okc->channels;
+        CHECK(os.add_layer(ok).has_value());
+        const auto p = os.evaluate(.5F), w = sample_clip(walk, .5F);
+        const Quat expected = soma.joints[fa].rest_local.rotation * euler_xyz_degrees(40.F, 0.F, 0.F);
+        CHECK(angle_between(p[fa].rotation, expected) < 1.e-3F);
+        CHECK(near(p[fa].translation.y, w[fa].translation.y, 1.e-6F));
+        for (std::size_t j = 0; j < p.size(); ++j)
+            if (j != fa) CHECK(angle_between(p[j].rotation, w[j].rotation) < 1.e-6F);
+        // Half weight: half way between the walk and the keyed pose.
+        os.layer(1).weight = .5F;
+        const auto h = os.evaluate(.5F);
+        CHECK(std::fabs(angle_between(h[fa].rotation, w[fa].rotation) - angle_between(expected, w[fa].rotation) / 2.F) < 1.e-3F);
+    }
     // An empty keyframe layer is valid and changes nothing.
     auto none = keyframe_clip(KeyframeTracks{}, soma);
     CHECK(none.has_value());

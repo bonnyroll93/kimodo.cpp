@@ -50,11 +50,17 @@ export class RetargetPanel {
 
   get enabled() { return this.$('retarget-on').checked && !!this.character && this.character.joints.length > 0; }
 
+  // Mappings edited for a character are remembered for the session, so switching rigs back
+  // and forth keeps them.
+  cacheKey() { return this.character ? `${this.characterId ?? this.character.name}|${this.skeletonKey ?? ''}` : null; }
+
   setCharacter(character, { id = null, upload = null } = {}) {
+    this.mappingCache ??= new Map();
+    if (this.mapping && this.cacheKey()) this.mappingCache.set(this.cacheKey(), this.mapping);
     this.character = character;
     this.characterId = id;
     this.upload = upload;
-    this.mapping = null;
+    this.mapping = this.mappingCache.get(this.cacheKey()) ?? null;
     this.diagnostics(null);
     if (character && character.joints.length) this.$('retarget-on').checked = true;
     this.sync();

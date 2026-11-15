@@ -54,6 +54,8 @@ export class SceneFile {
       export_name: $('export-name').value,
       view: Object.fromEntries(TOGGLES.map((id) => [id, $(id).checked])),
       scene_length: motionPanel.sceneLength,
+      root_scope: motionPanel.rootScope,
+      scene_root: structuredClone(motionPanel.sceneRoot),
       playback: { frame: player.frame, loop: player.loop, range: player.range ?? null },
       camera: { position: viewport.camera.position.toArray(), target: viewport.controls.target.toArray() },
     };
@@ -111,6 +113,8 @@ export class SceneFile {
     if (missing.length) warnings.push(`motion source(s) not found on this server: ${[...new Set(missing)].join(', ')}`);
     motionPanel.layers = normalizeLayers(structuredClone(scene.layers));
     motionPanel.sceneLength = Math.max(0, Number(scene.scene_length) || 0);
+    motionPanel.rootScope = scene.root_scope === 'scene' ? 'scene' : 'clip';
+    if (scene.scene_root) motionPanel.sceneRoot = structuredClone(scene.scene_root);
     motionPanel.select(Math.min(Math.max(0, scene.active_layer | 0), motionPanel.layers.length - 1));
 
     // The saved mapping belongs to the base layer's skeleton.

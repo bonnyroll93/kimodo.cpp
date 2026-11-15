@@ -54,6 +54,17 @@ void timing_tests(const Skeleton &soma, const AnimationClip &walk) {
     CHECK(same(single(soma, late).evaluate(.5F), rest(soma)));
     CHECK(same(single(soma, late).evaluate(9.F), sample_clip(walk, D)));
     late.timing.empty_before = false;
+    // end: nothing after it, the stack ends there, and fade_out ends there.
+    {
+        AnimationLayer bounded{.name = "bounded", .clip = walk};
+        bounded.timing.start = .5F;
+        bounded.timing.end = 1.5F;
+        bounded.timing.fade_out = .5F;
+        auto sb = single(soma, bounded);
+        CHECK(near(sb.duration(), 1.5F));
+        CHECK(same(sb.evaluate(.9F), sample_clip(walk, .4F)));
+        CHECK(same(sb.evaluate(1.6F), rest(soma)));
+    }
 
     // Scene length override: shorter cuts, longer holds the end (Extend::Hold).
     {

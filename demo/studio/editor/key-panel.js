@@ -1,9 +1,11 @@
 // Keyframe editing on a keyframe layer: a rotate/translate gizmo on the selected bone of
 // the character, Key / Delete key / Auto key, and the graph editor for its curves.
-// A gizmo edit changes the layer's offset at the current frame: the new rotation offset is
-// R_old * D (D = the bone's local change), the translation offset moves by the bone's
-// change (in scene space for the skeleton root). This is exact while the keyframe layer is
-// the top layer at weight 1 (new keyframe layers are added on top).
+// Additive anim layers: a gizmo edit changes the layer's offset at the current frame: the new
+// rotation offset is R_old * D (D = the bone's local change), the translation offset moves by
+// the bone's change (in scene space for the skeleton root). This is exact while the layer is
+// the top layer at weight 1 (new anim layers are added on top).
+// Override anim layers: the key is the bone's pose itself, relative to its rest pose
+// (rotation rest^-1 * local, translation local - rest), so keying captures what you see.
 import * as THREE from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { CHANNELS, channelsOf, offsetAt, setKey, keyedJoints, keyFrames, quatEuler, eulerQuat } from '../viewer/keyframes.js';
@@ -28,9 +30,9 @@ export class KeyPanel {
     this.graph = new GraphEditor($('graph-editor'), {
       tracks: () => this.tracks(),
       joint: () => this.jointName(),
-      frame: () => this.player.frame,
-      frames: () => this.player.frames || 90,
-      seek: (f) => { this.player.play(false); this.player.setFrame(f); },
+      frame: () => this.kf(),
+      frames: () => Math.max(1, Math.ceil(this.motionPanel.keyFrame(this.player.frames || 90))),
+      seek: (f) => { this.player.play(false); this.player.setFrame(this.motionPanel.stackFrame(f)); },
       changed: (final) => { if (final) this.edited(); },
     });
     $('graph-close').addEventListener('click', () => this.toggleGraph(false));
@@ -50,6 +52,16 @@ export class KeyPanel {
   }
 
   get active() { return this.motionPanel.activeLayer?.kind === 'keys'; }
+  // Current frame in the anim layer's own time (bound layers: the clip's time).
+  kf() { return Math.round(this.motionPanel.keyFrame(this.player.frame)); }
+  get override() { return this.active && this.motionPanel.activeLayer.blend === 'override'; }
+  // Override key values of the joint's current pose (near: the previous Euler, for continuity).
+  poseValues(j, near = { rx: 0, ry: 0, rz: 0 }) {
+    const q = j.rest.q.clone().invert().multiply(j.bone.quaternion);
+    const [rx, ry, rz] = quatEuler(q, [near.rx, near.ry, near.rz]);
+    const t = j.bone.position.clone().sub(j.rest.p);
+    return { rx, ry, rz, tx: t.x, ty: t.y, tz: t.z };
+  }
   tracks() { return this.active ? this.motionPanel.activeLayer.keys : null; }
   joint() { return this.getCharacter()?.joints[this.jointIndex] ?? null; }
   jointName() { return this.joint()?.name ?? null; }
@@ -91,10 +103,10 @@ export class KeyPanel {
     if (!this.retarget.enabled) $('key-joint').textContent = 'Load a character and enable "Retarget onto character" to pose bones.';
     else $('key-joint').textContent = name ? name : 'Select a joint (viewport or hierarchy).';
     const t = this.tracks();
-    const o = name ? offsetAt(t, name, this.player.frame) : null;
+    const o = name ? offsetAt(t, name, this.kf()) : null;
     $('key-values').textContent = o
-      ? `rot ${o.rx.toFixed(1)}° ${o.ry.toFixed(1)}° ${o.rz.toFixed(1)}° · move ${o.tx.toFixed(3)} ${o.ty.toFixed(3)} ${o.tz.toFixed(3)}` +
-        (keyFrames(t, name).includes(this.player.frame) ? ' · keyed' : '') + (this.pending ? ' · unkeyed change: press Key' : '')
+      ? `${this.override ? 'pose (override)' : 'offset'} · rot ${o.rx.toFixed(1)}° ${o.ry.toFixed(1)}° ${o.rz.toFixed(1)}° · move ${o.tx.toFixed(3)} ${o.ty.toFixed(3)} ${o.tz.toFixed(3)}` +
+        (keyFrames(t, name).includes(this.kf()) ? ' · keyed' : '') + (this.pending ? ' · unkeyed change: press Key' : '')
       : '';
     const list = $('key-joints');
     list.replaceChildren();
@@ -127,8 +139,15 @@ export class KeyPanel {
     const delta = j.parent < 0
       ? bone.getWorldPosition(new THREE.Vector3()).sub(this.start.world)
       : bone.position.clone().sub(this.start.p);
-    const name = j.name, f = this.player.frame;
+    const name = j.name, f = this.kf();
     const o = this.pending?.frame === f ? this.pending.values : offsetAt(this.tracks(), name, f);
+    if (this.override) {
+      this.pending = { joint: name, frame: f, values: this.poseValues(j, o), translated: delta.lengthSq() > 1e-12 };
+      this.start = null;
+      if (this.$('key-auto').checked) this.keyCurrent();
+      else this.updateInfo();
+      return;
+    }
     const rot = eulerQuat(o.rx, o.ry, o.rz).multiply(D);
     const [rx, ry, rz] = quatEuler(rot, [o.rx, o.ry, o.rz]);
     this.pending = { joint: name, frame: f, values: { rx, ry, rz, tx: o.tx + delta.x, ty: o.ty + delta.y, tz: o.tz + delta.z },
@@ -142,9 +161,10 @@ export class KeyPanel {
   keyCurrent() {
     const name = this.jointName(), t = this.tracks();
     if (!name || !t) return;
-    const f = this.player.frame;
+    const f = this.kf();
     const p = this.pending && this.pending.joint === name && this.pending.frame === f ? this.pending : null;
-    const values = p ? p.values : offsetAt(t, name, f);
+    // Override: without a gizmo edit, key the pose as shown (what the clips give an unkeyed joint).
+    const values = p ? p.values : this.override && this.joint() ? this.poseValues(this.joint(), offsetAt(t, name, f)) : offsetAt(t, name, f);
     const ch = channelsOf(t, name);
     for (const c of ['rx', 'ry', 'rz']) setKey(ch[c], f, values[c]);
     // Translation is keyed once it is used (moved now, or already animated).
@@ -160,7 +180,7 @@ export class KeyPanel {
     const name = this.jointName(), t = this.tracks();
     const ch = t?.tracks?.[name];
     if (!ch) return;
-    const f = this.player.frame;
+    const f = this.kf();
     for (const c of CHANNELS) if (ch[c]) ch[c] = ch[c].filter((k) => Math.round(k.f) !== f);
     for (const c of CHANNELS) if (!ch[c]?.length) delete ch[c];
     if (!Object.keys(ch).length) delete t.tracks[name];

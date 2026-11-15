@@ -390,7 +390,29 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     blend in / out), so an upper-body clip on Track 2 replaces or adds to Track 1 only
     where it plays.
   - **Anim layers** (keyframes) are applied after all the clips; the *Anim layers* panel
-    lists them, with up / down to reorder.
+    lists them, with up / down to reorder. Each one has a blend mode:
+    - *Additive (offsets)*, the default: keys are offsets added to what the clips give;
+    - *Override (replace)*: keyed joints take the keyed pose (rest pose * key), only in the
+      channels that have keys (a joint keyed in rotation keeps its translation from the
+      clips); with the gizmo, *Key* captures the pose as shown. Switching mode
+      reinterprets the existing keys.
+  - **Scope** of an anim layer (*Applies to* in the attribute editor): the whole main
+    timeline, or **bound to a clip** (⛓ on its row). A bound layer's keys are in the
+    clip's time: they move and stretch with the clip, act only while it plays and blend
+    in / out with it. Changing the scope keeps the keys where they are on the timeline;
+    deleting the clip turns its layers back to the whole timeline.
+  - **Root motion scope** (*Root motion applies to* in the Motion form): *Each clip* (every
+    clip has its own Full / In place / Path) or *Whole scene*: the clips are composed first
+    on the source skeleton, then one root motion applies to the result (e.g. one path for a
+    whole sequence), which is then retargeted and stacked with the anim layers
+    (`scene_root` in `/api/layers` and `/api/export`).
+  - **Changing the character** (Open GLB or Sample rigs) keeps the scene: clips, tracks,
+    timing, root motion, anim layers, masks and options. Keys and custom masks move to the
+    new rig's joints (via the old and new retarget mappings, else by name), rotations are
+    re-expressed through the rest poses like the retargeter does, translations are scaled
+    by the rigs' heights; joints with the same frames keep their curves exactly, others are
+    re-keyed with auto tangents; unmatched joints keep their keys under the old name. Edited
+    mappings are remembered per character for the session. The undo history restarts.
   - Select a clip in the timeline (or an anim layer in its panel or row) and the
     **Attribute editor** shows its settings: the row (enable, name, mute, blend, weight,
     mask, reference, end), the timing fields (Start, Trim in / out, Speed, Repeat, After
@@ -446,7 +468,7 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
   - In text fields, Ctrl+Z stays the field's own undo.
   - Loading a character or opening a scene starts a new history.
 - **Scenes.** *Save scene* downloads the whole studio state as JSON:
-  - the character reference;
+  - the character reference; the root motion scope and the scene root motion;
   - every anim clip (track, timing, source, root motion, path waypoints, blend, weight,
     mask or custom mask, enabled, muted, reference, wrap), every anim layer (keys) and
     the selection; the scene length and the playback range. Scenes saved before tracks
@@ -487,7 +509,7 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     **Ctrl + wheel** over a clip stretches or compresses it in steps.
   - Clip timing is part of the clip (`ClipTiming` in `layers.hpp`; `--start`,
     `--trim-in`, `--trim-out`, `--speed`, `--repeat`, `--extend`, `--fade-in`,
-    `--fade-out`, `--ease-fades`, `--empty-before` and `--align-root` in `kmd-anim
+    `--fade-out`, `--ease-fades`, `--empty-before`, `--end` and `--align-root` in `kmd-anim
     layers`; `timing` in `/api/layers`). It is therefore baked, foot-locked and exported
     like everything else, and saved in scenes.
   - Not yet: root yaw continuation across repeats (only travel), and retiming curves

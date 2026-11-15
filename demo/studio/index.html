@@ -110,7 +110,7 @@
     <div class="panel-head"><h2>Anim layers</h2><span class="button-row"><button id="add-key-layer" class="button small-button" type="button" title="Add an anim layer on top: pose bones with the gizmo and key them">+ Keys</button></span></div>
     <div class="layers-form">
       <div id="layers-list" class="layers-list"></div>
-      <p class="note">Keyframe offsets applied over all the clips (top of the list last). Anim clips live on the Story timeline under the viewport: select one to edit it here.</p>
+      <p class="note">Keys applied over the clips (top of the list last): Additive offsets or Override poses, on the whole timeline or bound to a clip. Anim clips live on the Story timeline: select one to edit it here.</p>
     </div>
     <div class="panel-head"><h2>Attribute editor</h2><span id="attr-kind" class="muted small"></span></div>
     <div class="layers-form">
@@ -128,6 +128,10 @@
         <label class="toggle" title="Ease in / out blends (smoothstep) instead of linear"><input type="checkbox" id="t-ease_fades"> Smooth blends</label>
         <label class="toggle" title="Start where the motion below is at the clip's start (position and heading)"><input type="checkbox" id="t-align_root"> Match root</label>
         <div id="t-info" class="muted small"></div>
+      </div>
+      <div id="attr-scope" class="attr-timing" hidden>
+        <label class="field" title="Whole timeline, or bound to a clip: the keys then move and stretch with it and act only while it plays">Applies to <select id="k-scope"></select></label>
+        <div id="k-scope-info" class="muted small"></div>
       </div>
       <div id="mask-editor" class="mask-editor" hidden>
         <div class="row">
@@ -156,7 +160,7 @@
     <div class="panel-head"><h2>Motion</h2><span class="muted small">source and root motion of the selected clip</span></div>
     <div class="motion-form">
       <div id="key-panel" class="key-panel" hidden>
-        <div class="muted small">Anim layer — keyframe offsets added on top of the clips.</div>
+        <div class="muted small">Anim layer — keys added on top of the clips (Additive) or replacing the keyed channels (Override).</div>
         <div id="key-joint" class="key-joint"></div>
         <div class="button-row">
           <button id="key-rotate" class="button small-button on" type="button" title="Rotate gizmo (E)">Rotate</button>
@@ -176,6 +180,11 @@
         <button id="refresh-sources" class="button small-button" type="button" title="Reload the list (new generations appear here)">↻</button>
         <button id="open-library" class="button small-button" type="button" title="Motion library: animated previews or a list, search, sort, delete">▦ Library</button>
       </div>
+      <div class="row">
+        <label class="field" title="Each clip: every clip has its own root motion. Whole scene: the clips are composed first and one root motion (e.g. a single path) applies to the result">Root motion applies to
+          <select id="root-scope"><option value="clip">Each clip</option><option value="scene">Whole scene</option></select></label>
+      </div>
+      <div id="root-scope-note" class="note"></div>
       <div class="segmented" role="radiogroup" aria-label="Root motion mode">
         <label><input type="radio" name="root-mode" value="full" checked><span>Full</span></label>
         <label><input type="radio" name="root-mode" value="inplace"><span>In place</span></label>

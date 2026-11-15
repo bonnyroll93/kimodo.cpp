@@ -152,6 +152,9 @@ std::expected<AnimationStack::Resolved, std::string> AnimationStack::resolve(Ani
     }
     if (std::ranges::all_of(r.track, [](int t) { return t < 0; }))
         return std::unexpected(label + "clip shares no joint names with the skeleton");
+    r.channels.assign(skeleton_.size(), ChannelAll);
+    for (std::size_t j = 0; j < skeleton_.size(); ++j)
+        if (const auto it = layer.channels.find(skeleton_.joints[j].name); it != layer.channels.end()) r.channels[j] = it->second & ChannelAll;
     r.mask.resize(skeleton_.size());
     for (std::size_t j = 0; j < skeleton_.size(); ++j) r.mask[j] = std::clamp(layer.mask.weight(skeleton_.joints[j].name), 0.F, 1.F);
 
@@ -193,6 +196,7 @@ std::expected<AnimationStack::Resolved, std::string> AnimationStack::resolve(Ani
 
 float AnimationStack::layer_end(const Resolved &r) const {
     const ClipTiming &tm = r.layer.timing;
+    if (tm.end > tm.start) return tm.end;
     return tm.start + r.segment / tm.speed * static_cast<float>(tm.repeat);
 }
 
@@ -204,6 +208,8 @@ bool AnimationStack::sample_layer(std::size_t index, float t, std::vector<Transf
     const float span = r.segment * static_cast<float>(tm.repeat);
     const bool loop = l.wrap == TimeWrap::Loop && r.segment > 0.F;
     weight = 1.F;
+    const bool bounded = tm.end > tm.start;
+    if (bounded && t > tm.end) return false;
     float u;          // clip seconds within the segment
     float cycle = 0.F; // completed cycles (root continuation)
     if (local < 0.F) {
@@ -221,13 +227,13 @@ bool AnimationStack::sample_layer(std::size_t index, float t, std::vector<Transf
         u = 0.F;
     }
     // Fades on the timeline range [start, end].
-    const float tl = t - tm.start, end = span / tm.speed;
+    const float tl = t - tm.start, end = bounded ? tm.end - tm.start : span / tm.speed;
     const auto ramp = [&](float x) {
         x = std::clamp(x, 0.F, 1.F);
         return tm.ease_fades ? x * x * (3.F - 2.F * x) : x;
     };
     if (tm.fade_in > 0.F && tl < tm.fade_in) weight *= ramp(tl / tm.fade_in);
-    if (tm.fade_out > 0.F && !loop && tl > end - tm.fade_out) weight *= ramp((end - tl) / tm.fade_out);
+    if (tm.fade_out > 0.F && (!loop || bounded) && tl > end - tm.fade_out) weight *= ramp((end - tl) / tm.fade_out);
     out = sample_clip(l.clip, r.trim_in + u, TimeWrap::Clamp);
     if (r.track.empty() || r.track[0] < 0) return true;
     Transform &root = out[static_cast<std::size_t>(r.track[0])];
@@ -307,7 +313,15 @@ std::vector<Transform> AnimationStack::evaluate_below(std::size_t index, float t
             if (w <= 0.F) continue;
             const Transform &s = sample[static_cast<std::size_t>(track)];
             if (l.mode == BlendMode::Override) {
-                pose[j] = interpolate(pose[j], s, w);
+                const unsigned ch = r.channels[j];
+                if (ch == ChannelAll) {
+                    pose[j] = interpolate(pose[j], s, w);
+                } else {
+                    const Transform mixed = interpolate(pose[j], s, w);
+                    if (ch & ChannelRotation) pose[j].rotation = mixed.rotation;
+                    if (ch & ChannelTranslation) pose[j].translation = mixed.translation;
+                    if (ch & ChannelScale) pose[j].scale = mixed.scale;
+                }
             } else { // Additive (rotation and translation; scale is not additive)
                 const Transform &ref = r.reference[j];
                 Quat delta = inverse(normalize(ref.rotation)) * normalize(s.rotation);

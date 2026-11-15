@@ -21,7 +21,7 @@ import (
 type layerRequest struct {
 	Name       string            `json:"name"`
 	RootMotion rootMotionRequest `json:"root_motion"`
-	Mode       string            `json:"mode"`              // override (default) | additive
+	Mode       string            `json:"mode"`              // override (default; keyframe layers: additive) | additive
 	Weight     *float64          `json:"weight,omitempty"`  // default 1
 	Mask       json.RawMessage   `json:"mask,omitempty"`    // preset name or custom mask object
 	Enabled    *bool             `json:"enabled,omitempty"` // default true
@@ -46,6 +46,8 @@ type clipTiming struct {
 	// EmptyBefore: nothing before start (set by the studio for clips that follow another
 	// clip on the same track, so they do not cover it before they begin).
 	EmptyBefore bool `json:"empty_before"`
+	// End: > start stops the layer there (anim layers bound to a clip).
+	End float64 `json:"end"`
 }
 
 func timingArgs(t *clipTiming) ([]string, string) {
@@ -95,6 +97,12 @@ func timingArgs(t *clipTiming) ([]string, string) {
 	if t.EmptyBefore {
 		args = append(args, "--empty-before")
 	}
+	if !finite(t.End) || t.End < 0 || t.End > 7200 {
+		return nil, "end out of range"
+	}
+	if t.End > t.Start {
+		args = append(args, "--end", num(t.End))
+	}
 	return args, ""
 }
 
@@ -113,6 +121,42 @@ type layersRequest struct {
 	Layers    []layerRequest   `json:"layers"`
 	FootLock  *footLockRequest `json:"foot_lock,omitempty"`
 	Length    float64          `json:"length,omitempty"` // scene length override in seconds (0: the stack's)
+	// SceneRoot: root motion for the whole scene instead of per clip. The clips (layers
+	// without keys) are baked on their native skeleton first, the root motion runs on that
+	// result, and it is retargeted and stacked with the keyframe layers. Source is ignored.
+	SceneRoot *rootMotionRequest `json:"scene_root,omitempty"`
+}
+
+var stackID = regexp.MustCompile(`^[0-9a-f]{24}$`)
+
+func (c studioConfig) sceneLayers(ctx context.Context, req layersRequest) (layersResult, *httpError) {
+	var clips, keys []layerRequest
+	for _, l := range req.Layers {
+		if len(l.Keys) > 0 && string(l.Keys) != "null" {
+			keys = append(keys, l)
+		} else {
+			l.RootMotion = rootMotionRequest{Source: l.RootMotion.Source, Mode: "full"}
+			clips = append(clips, l)
+		}
+	}
+	if len(clips) == 0 {
+		return layersResult{}, &httpError{http.StatusBadRequest, "scene root motion needs at least one clip"}
+	}
+	stack, herr := c.layers(ctx, layersRequest{Layers: clips, Length: req.Length})
+	if herr != nil {
+		return layersResult{}, herr
+	}
+	scene := *req.SceneRoot
+	scene.Source = "stack:" + stack.id
+	final := req
+	final.SceneRoot = nil
+	final.Layers = append([]layerRequest{{Name: "Scene", RootMotion: scene}}, keys...)
+	res, herr := c.layers(ctx, final)
+	if herr != nil {
+		return layersResult{}, herr
+	}
+	res.body["scene"] = map[string]any{"meta": stack.body["meta"], "root": "/api/layers/" + stack.id + "/root.f32"}
+	return res, nil
 }
 
 // footLockArgs validates the foot-lock options and returns kmd-anim layers flags.
@@ -163,7 +207,11 @@ func (c studioConfig) layerArgs(l layerRequest, index int) ([]string, *httpError
 	}
 	args := []string{"--name", name}
 	switch l.Mode {
-	case "", "override":
+	case "":
+	case "override":
+		if len(l.Keys) > 0 && string(l.Keys) != "null" {
+			args = append(args, "--mode", "override") // keyframe layers default to additive
+		}
 	case "additive":
 		args = append(args, "--mode", "additive")
 	default:
@@ -226,6 +274,9 @@ type layersResult struct {
 // layers runs every layer through root motion (+ retarget with a character) and bakes the
 // stack with kmd-anim layers (all steps cached by request hash).
 func (c studioConfig) layers(ctx context.Context, req layersRequest) (layersResult, *httpError) {
+	if req.SceneRoot != nil && len(req.Layers) > 0 && len(req.Layers) <= 64 {
+		return c.sceneLayers(ctx, req)
+	}
 	if len(req.Layers) == 0 || len(req.Layers) > 64 {
 		return layersResult{}, &httpError{http.StatusBadRequest, "a stack needs 1 to 64 clips and layers"}
 	}

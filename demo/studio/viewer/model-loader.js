@@ -53,7 +53,8 @@ export async function loadCharacter(source, name) {
     const nodeIndex = nodeIndexOf(bone) ?? -1;
     const name = nodeDefs[nodeIndex]?.name || bone.name || `node_${nodeIndex}`;
     joints.push({ bone, index, parent: parentIndex, name, nodeIndex,
-                  deforming: deforming.has(bone), children: [] });
+                  deforming: deforming.has(bone), children: [],
+                  rest: { q: bone.quaternion.clone(), p: bone.position.clone() } }); // glTF node TRS = kmd-anim rest_local
     if (parentIndex >= 0) joints[parentIndex].children.push(index);
     for (const c of children.get(bone)) walk(c, index);
   };

@@ -53,6 +53,8 @@ struct ClipTiming {
     float fade_in = 0.F, fade_out = 0.F; // seconds
     bool ease_fades = false;             // smoothstep instead of linear fade ramps
     bool empty_before = false;           // nothing before `start` even with Extend::Hold (clips later on a track)
+    float end = 0.F;                     // > start: stack time after which the layer contributes nothing
+                                         // (fade_out ends there); e.g. an anim layer bound to a clip
     bool align_root = false;
 };
 
@@ -88,7 +90,12 @@ struct AnimationLayer {
     std::size_t reference_frame = 0; // used with AdditiveReference::Frame
     TimeWrap wrap = TimeWrap::Clamp;
     ClipTiming timing{};
+    // Override only: the channels the layer drives per joint name (ChannelRotation |
+    // ChannelTranslation | ChannelScale); joints not listed: all channels. Keyframe layers in
+    // override mode use it so a joint keyed only in rotation keeps the translation below.
+    std::map<std::string, unsigned, std::less<>> channels;
 };
+inline constexpr unsigned ChannelRotation = 1U, ChannelTranslation = 2U, ChannelScale = 4U, ChannelAll = 7U;
 
 // Samples a clip at time t (seconds): linear/slerp interpolation between frames.
 [[nodiscard]] std::vector<Transform> sample_clip(const AnimationClip &clip, float t, TimeWrap wrap = TimeWrap::Clamp);
@@ -125,6 +132,7 @@ private:
         AnimationLayer layer;
         std::vector<int> track;       // stack joint -> clip track (-1: not driven)
         std::vector<float> mask;      // stack joint -> mask weight
+        std::vector<unsigned> channels; // stack joint -> driven channels (override)
         std::vector<Transform> reference; // stack joint order (additive reference pose)
         float segment = 0.F;          // trimmed segment length in clip seconds
         float trim_in = 0.F;          // effective trim in (clip seconds)

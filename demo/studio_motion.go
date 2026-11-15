@@ -111,6 +111,18 @@ func (c studioConfig) motions() []studioMotion {
 }
 
 func (c studioConfig) findMotion(id string) (studioMotion, bool) {
+	// "stack:<id>": a baked native layer stack (scene-level root motion runs on it).
+	if sid, ok := strings.CutPrefix(id, "stack:"); ok {
+		if !stackID.MatchString(sid) {
+			return studioMotion{}, false
+		}
+		dir := filepath.Join(c.output, "layers", sid)
+		frames, joints, err := motionShape(dir)
+		if err != nil {
+			return studioMotion{}, false
+		}
+		return studioMotion{ID: id, Label: "scene", Kind: "stack", SkeletonKey: skeletonKeyForJoints(joints), Frames: frames, dir: dir}, true
+	}
 	for _, m := range c.motions() {
 		if m.ID == id {
 			return m, true
