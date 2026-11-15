@@ -389,3 +389,6 @@ body {
 .layer.base-layer .note { margin: 0 0 0 6px; }
 .feet-row label { display: inline-flex; align-items: center; gap: 3px; font-size: .7rem; color: var(--muted); }
 .feet-row input { width: 3.4em; border: 1px solid var(--line); border-radius: 5px; background: #0b1015; color: var(--text); font: inherit; font-size: .72rem; padding: 1px 3px; }
+.seamless-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 8px 0 2px; }
+.seamless-row .mini { display: inline-flex; align-items: center; gap: 3px; font-size: .72rem; color: var(--muted); }
+.seamless-row .mini input { width: 3.6em; border: 1px solid var(--line); border-radius: 5px; background: #0b1015; color: var(--text); font: inherit; font-size: .72rem; padding: 1px 3px; }

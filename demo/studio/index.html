@@ -29,6 +29,7 @@
     <label class="toggle"><input type="checkbox" id="show-grid" checked> Grid</label>
     <label class="toggle"><input type="checkbox" id="show-axes" checked> Axes</label>
     <label class="toggle"><input type="checkbox" id="show-path" checked> Path</label>
+    <label class="toggle" title="Show the control rig's controls (IK boxes, poles, hips box, root circle) in the viewport"><input type="checkbox" id="show-rig" checked> Rig</label>
     <span class="sep"></span>
     <button id="frame" class="button" title="Frame the character (F)">Frame</button>
     <span class="sep"></span>
@@ -259,6 +260,13 @@
         <label><input type="radio" name="root-mode" value="inplace"><span>In place</span></label>
         <label><input type="radio" name="root-mode" value="path"><span>Path</span></label>
       </div>
+      <div class="seamless-row">
+        <label class="toggle" title="Make the clip loopable: its last frame ends on its first pose, the difference blended into the clip from both ends (no copied frame, no pop)"><input type="checkbox" id="seamless"> Loopable</label>
+        <label class="mini" title="Frames from each end over which the seam is blended (0: half the clip)">Blend <input id="seamless-blend" type="number" min="0" step="1" value="0"> f</label>
+        <label class="toggle" title="First trim the clip to the frame pair whose poses and motion match best (then blend what is left)"><input type="checkbox" id="seamless-cut"> Best cut</label>
+        <label class="mini" title="The best cut keeps at least this much of the clip">min <input id="seamless-min" type="number" min="10" max="100" step="5" value="50">%</label>
+      </div>
+      <p id="seamless-info" class="note" hidden></p>
       <div id="inplace-opts" class="opts" hidden>
         <label class="field">Remove travel
           <select id="lock"><option value="both">Forward + lateral</option><option value="forward">Forward only</option><option value="lateral">Lateral only</option></select>

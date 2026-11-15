@@ -110,7 +110,7 @@ if(KIMODO_BUILD_ANIM)
     src/anim/types.cpp src/anim/skeleton.cpp src/anim/gltf_import.cpp src/anim/cgltf_impl.cpp
     src/anim/clip.cpp src/anim/root_motion.cpp src/anim/motion_path.cpp
     src/anim/retarget_mapping.cpp src/anim/retarget.cpp src/anim/layers.cpp src/anim/gltf_export.cpp
-    src/anim/ik.cpp src/anim/keyframes.cpp src/anim/control_rig.cpp)
+    src/anim/ik.cpp src/anim/keyframes.cpp src/anim/control_rig.cpp src/anim/loop.cpp)
   add_library(kimodo::anim ALIAS kimodo_anim)
   target_include_directories(kimodo_anim
     PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
@@ -161,6 +161,9 @@ if(BUILD_TESTING AND KIMODO_BUILD_TESTS AND KIMODO_BUILD_ANIM)
   add_executable(kimodo-anim-control-rig-test tests/anim/anim_control_rig_test.cpp)
   target_link_libraries(kimodo-anim-control-rig-test PRIVATE kimodo_anim)
   add_test(NAME kimodo-anim-control-rig-test COMMAND kimodo-anim-control-rig-test "${KIMODO_TEST_WALK}")
+  add_executable(kimodo-anim-loop-test tests/anim/anim_loop_test.cpp)
+  target_link_libraries(kimodo-anim-loop-test PRIVATE kimodo_anim)
+  add_test(NAME kimodo-anim-loop-test COMMAND kimodo-anim-loop-test "${KIMODO_TEST_WALK}")
   add_executable(kimodo-anim-layers-test tests/anim/anim_layers_test.cpp)
   target_link_libraries(kimodo-anim-layers-test PRIVATE kimodo_anim)
   add_test(NAME kimodo-anim-layers-test COMMAND kimodo-anim-layers-test "${KIMODO_TEST_WALK}" "${KIMODO_TEST_RIGS}")

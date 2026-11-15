@@ -60,6 +60,7 @@ const rootOnly = ({ source, ...rest }) => rest;
 const defaultConfig = () => ({
   source: '', mode: 'full', lock: 'both', preset: 'scurve', points: presetText(PATH_PRESETS.scurve),
   interp: 'catmull', loop: false, timing: 'distance', timingValue: 0, orient: true,
+  seamless: false, seamBlend: 0, seamCut: false, seamMin: 50,
 });
 // Where/how a clip plays on the timeline (see ClipTiming in include/kimodo/anim/layers.hpp).
 // auto_blend (studio only): cross-fade from the earlier clips of the same track over the overlap.
@@ -110,7 +111,7 @@ export class MotionPanel {
     for (const [key, p] of Object.entries(PATH_PRESETS)) $('path-preset').append(new Option(p.label, key));
     $('path-preset').append(new Option('Custom', 'custom'));
     $('path-preset').addEventListener('change', () => this.applyPreset());
-    for (const id of ['motion-source', 'lock', 'path-points', 'path-interp', 'path-loop', 'timing', 'timing-value', 'orient'])
+    for (const id of ['motion-source', 'lock', 'path-points', 'path-interp', 'path-loop', 'timing', 'timing-value', 'orient', 'seamless', 'seamless-blend', 'seamless-cut', 'seamless-min'])
       $(id).addEventListener(id === 'path-points' || id === 'timing-value' ? 'input' : 'change', () => {
         if (id === 'path-points' || id === 'path-interp' || id === 'path-loop') $('path-preset').value = 'custom';
         this.formChanged();
@@ -244,6 +245,8 @@ export class MotionPanel {
       source: $('motion-source').value, mode: this.mode, lock: $('lock').value, preset: $('path-preset').value,
       points: $('path-points').value, interp: $('path-interp').value, loop: $('path-loop').checked,
       timing: $('timing').value, timingValue: Number($('timing-value').value) || 0, orient: $('orient').checked,
+      seamless: $('seamless').checked, seamBlend: Math.max(0, Math.round(Number($('seamless-blend').value) || 0)),
+      seamCut: $('seamless-cut').checked, seamMin: Math.min(100, Math.max(10, Number($('seamless-min').value) || 50)),
     };
   }
 
@@ -260,6 +263,10 @@ export class MotionPanel {
     $('timing').value = c.timing;
     $('timing-value').value = c.timingValue;
     $('orient').checked = c.orient;
+    $('seamless').checked = !!c.seamless;
+    $('seamless-blend').value = c.seamBlend ?? 0;
+    $('seamless-cut').checked = !!c.seamCut;
+    $('seamless-min').value = c.seamMin ?? 50;
     this.syncVisibility();
   }
 
@@ -803,6 +810,7 @@ export class MotionPanel {
       if (c.timing === 'speed') req.speed = c.timingValue;
       req.orient = c.orient;
     }
+    if (c.seamless) req.seamless = { ...(c.seamBlend > 0 ? { blend: c.seamBlend } : {}), ...(c.seamCut ? { cut: (c.seamMin ?? 50) / 100 } : {}) };
     return req;
   }
 
@@ -909,7 +917,7 @@ export class MotionPanel {
       motion: { root, rotations }, target: rt ? { meta: body.meta, rotations: tRot, translations: tTrans } : null,
       overlay: { samples, waypoints: req.path?.points ?? [], sourceRoot, resultRoot: root, meta: rt ? body.meta : null },
       durations: [[0, (root.length / 3 - 1) / 30]],
-      summary: `root ${req.mode}`,
+      summary: `root ${req.mode}`, seamless: rm.seamless ?? null,
     };
   }
 
@@ -942,7 +950,7 @@ export class MotionPanel {
         meta: body.native ? null : JSON.parse(JSON.stringify(body.layers[pos.get(base)].retarget)),
       },
       durations: meta.layers.map((l, k) => [order[k], l.duration]),
-      footLock: meta.foot_lock ?? null, controls,
+      footLock: meta.foot_lock ?? null, controls, seamless: act.root_motion.seamless ?? null,
       fps: meta.fps,
       summary: `${clips} clip${clips === 1 ? '' : 's'} on ${this.trackCount} track${this.trackCount === 1 ? '' : 's'}` +
         `${animLayers ? `, ${animLayers} anim layer${animLayers === 1 ? '' : 's'}` : ''}, ${meta.frames} frames${meta.foot_lock ? ', feet locked' : ''}`,
@@ -968,7 +976,7 @@ export class MotionPanel {
         meta: body.native ? null : JSON.parse(JSON.stringify(body.layers[0].retarget)) },
       durations: [...body.scene.meta.layers.map((l, k) => [clipOrder[k], l.duration]),
         ...meta.layers.slice(1).map((l, k) => [keyOrder[k], l.duration])],
-      footLock: meta.foot_lock ?? null, controls,
+      footLock: meta.foot_lock ?? null, controls, seamless: rm.seamless ?? null,
       fps: meta.fps,
       summary: `${clips} clip${clips === 1 ? '' : 's'}, scene root ${req.mode}${keyOrder.length ? `, ${keyOrder.length} anim layer(s)` : ''}, ${meta.frames} frames${meta.foot_lock ? ', feet locked' : ''}`,
     };
@@ -985,6 +993,11 @@ export class MotionPanel {
     const first = !this.shownOnce;
     this.controlsData = r.controls ?? null;
     this.onControls?.();
+    const sm = r.seamless, info = this.$('seamless-info');
+    info.hidden = !sm;
+    if (sm) info.textContent = `Loop: seam ${sm.seam_degrees_before.toFixed(1)}° and ${(sm.seam_root_before * 100).toFixed(1)} cm → ${sm.seam_degrees_after.toFixed(1)}°, ` +
+      `blended over ${sm.blend} frames from each end · source frames ${sm.start}–${sm.end}. ` +
+      'Set the clip to Loop (attribute editor) to repeat it seamlessly.';
     this.shownOnce = true;
     if (this.player.embedded) { // a Motion/Layers result replaces an embedded animation preview
       this.player.setEmbedded(null);

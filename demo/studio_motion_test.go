@@ -24,6 +24,8 @@ func TestRootMotionArgs(t *testing.T) {
 		{rootMotionRequest{Mode: "inplace", Lock: "forward"}, "--mode inplace --lock forward"},
 		{rootMotionRequest{Mode: "path", Path: &rootMotionPath{Points: [][3]float64{{0, 0, 0}, {1.5, 0, -2}}, Interpolation: "polyline", Loop: true}, Timing: "speed", Speed: 1.2, Orient: &no},
 			"--mode path --points 0,0,0;1.5,0,-2 --interp polyline --loop --timing speed --speed 1.2 --no-orient"},
+		{rootMotionRequest{Mode: "full", Seamless: &seamlessRequest{}}, "--mode full --seamless"},
+		{rootMotionRequest{Mode: "inplace", Seamless: &seamlessRequest{Blend: 12, Cut: 0.5}}, "--mode inplace --seamless --seamless-blend 12 --seamless-cut 0.5"},
 	}
 	for _, c := range ok {
 		args, err := rootMotionArgs(c.req)
@@ -41,6 +43,9 @@ func TestRootMotionArgs(t *testing.T) {
 		{Mode: "path", Path: &rootMotionPath{Points: [][3]float64{{0, 0, 0}}, Interpolation: "bezier"}},
 		{Mode: "path", Path: &rootMotionPath{Points: [][3]float64{{0, 0, 0}}}, Timing: "speed", Speed: -1},
 		{Mode: "inplace", Lock: "up"},
+		{Mode: "full", Seamless: &seamlessRequest{Blend: -1}},
+		{Mode: "full", Seamless: &seamlessRequest{Cut: 0.05}},
+		{Mode: "full", Seamless: &seamlessRequest{Cut: 2}},
 	}
 	for _, req := range bad {
 		if _, err := rootMotionArgs(req); err == nil {

@@ -73,7 +73,20 @@ export class ControlRig {
     });
     this.gizmo.addEventListener('objectChange', () => this.preview());
     viewport.onFrame.push(() => this.update());
-    $('show-controls').addEventListener('change', () => this.update());
+    // Controls visibility: the viewport bar's "Rig" and the Rig panel's "Controls" (kept in step,
+    // remembered in this browser).
+    const showBoxes = [$('show-controls'), $('show-rig')].filter(Boolean);
+    let shown = true;
+    try { shown = localStorage.getItem('kimodo-show-rig') !== 'off'; } catch { /* storage unavailable */ }
+    for (const b of showBoxes) {
+      b.checked = shown;
+      b.addEventListener('change', () => {
+        for (const o of showBoxes) o.checked = b.checked;
+        try { localStorage.setItem('kimodo-show-rig', b.checked ? 'on' : 'off'); } catch { /* storage unavailable */ }
+        if (!b.checked && this.picked) this.pick(null); // no gizmo on hidden controls
+        this.update();
+      });
+    }
     $('rig-move').addEventListener('click', () => this.setMode('translate'));
     $('rig-rotate').addEventListener('click', () => this.setMode('rotate'));
     $('rig-key').addEventListener('click', () => this.keyPicked());

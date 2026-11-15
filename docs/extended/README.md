@@ -347,6 +347,18 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
   - Choose Full, In place or Path. Path offers presets (straight, S-curve, corner,
     zig-zag, circle loop) or your own waypoints, with a curve type, a timing mode and
     orientation along the path.
+  - **Loopable** makes the clip seamless: its last frame ends on its first pose. It does
+    not copy a pose (that would pop against the frame before): first and last frames meet
+    on their average pose and the difference fades into the clip from both ends over
+    *Blend* frames (0: half the clip; smoothstep, so no velocity jump), joint by joint;
+    the root keeps its travel (corrected around the straight line from first to last
+    position) so a walk still moves forward. *Best cut* first trims the clip to the frame
+    pair whose poses and motion match best (keeping at least *min* % of it), e.g. one walk
+    cycle. The note under it reports the seam before / after. Set the clip to *Loop*
+    (attribute editor) to repeat it: the stack continues the root travel every cycle.
+    (`kmd-anim root-motion … --seamless [--seamless-blend N] [--seamless-cut MIN]`,
+    `seamless` in the root-motion request, `include/kimodo/anim/loop.hpp`; applied to the
+    source motion before Full / In place / Path.)
   - Every change is processed by `kmd-anim` on the server.
   - The result plays locally on the native skeleton (purple), with play/pause,
     scrubbing and loop. Space toggles play/pause.
@@ -415,7 +427,8 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
   *Picker*. Right column: *Animate* (Rig, Anim layers, Attribute editor, Motion) | *Setup*
   (Character & retarget, foot locking, Export, character stats). The chosen tabs are
   remembered in the browser.
-- **Control rig (IK / FK arms and legs).** *Animate › Rig* lists the left / right arm and
+- **Control rig (IK / FK arms and legs).** (*Rig* in the viewport bar, or *Controls* in the
+  Rig panel, shows / hides its controls.) *Animate › Rig* lists the left / right arm and
   leg (chains found through the retarget mapping). Each is **FK** until its **IK** is
   turned on, for the whole animation (ActionForge's "simple" workflow):
   - IK on draws a **box** at the hand / foot (the IK control) and a **diamond** for the

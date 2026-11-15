@@ -49,6 +49,14 @@ type rootMotionRequest struct {
 	Duration float64         `json:"duration,omitempty"`
 	Speed    float64         `json:"speed,omitempty"`
 	Orient   *bool           `json:"orient,omitempty"`
+	Seamless *seamlessRequest `json:"seamless,omitempty"` // make the clip loopable (loop.hpp) first
+}
+
+// seamlessRequest: blend frames from each end (0: half the clip); cut: the best loop keeping at
+// least this fraction of the clip (0: no cut).
+type seamlessRequest struct {
+	Blend int     `json:"blend,omitempty"`
+	Cut   float64 `json:"cut,omitempty"`
 }
 
 // skeletonKeyForJoints maps a joint count to the native skeleton (22, 30, 34 are unique).
@@ -144,6 +152,28 @@ func num(v float64) string { return strconv.FormatFloat(v, 'g', -1, 32) }
 
 // rootMotionArgs validates a request and turns it into kmd-anim arguments (no shell involved).
 func rootMotionArgs(req rootMotionRequest) ([]string, error) {
+	args, err := rootMotionModeArgs(req)
+	if err != nil || req.Seamless == nil {
+		return args, err
+	}
+	s := req.Seamless
+	if s.Blend < 0 || s.Blend > 100000 {
+		return nil, fmt.Errorf("seamless blend must be 0 or more frames")
+	}
+	if !finite(s.Cut) || (s.Cut != 0 && (s.Cut < 0.1 || s.Cut > 1)) {
+		return nil, fmt.Errorf("seamless cut must be 0 (off) or between 0.1 and 1")
+	}
+	args = append(args, "--seamless")
+	if s.Blend > 0 {
+		args = append(args, "--seamless-blend", strconv.Itoa(s.Blend))
+	}
+	if s.Cut > 0 {
+		args = append(args, "--seamless-cut", num(s.Cut))
+	}
+	return args, nil
+}
+
+func rootMotionModeArgs(req rootMotionRequest) ([]string, error) {
 	args := []string{"--mode"}
 	switch req.Mode {
 	case "full", "inplace", "path":
@@ -373,6 +403,7 @@ type rootMotionResult struct {
 	Root        string `json:"root"`
 	Rotations   string `json:"rotations"`
 	Path        string `json:"path,omitempty"`
+	Seamless    json.RawMessage `json:"seamless,omitempty"` // the loop report (start, end, blend, seam before / after)
 	dir         string
 }
 
@@ -396,6 +427,14 @@ func (c studioConfig) rootMotion(ctx context.Context, req rootMotionRequest) (ro
 		Root: "/api/root-motion/" + id + "/root.f32", Rotations: "/api/root-motion/" + id + "/rotations.f32", dir: dir}
 	if req.Mode == "path" {
 		res.Path = "/api/root-motion/" + id + "/path.f32"
+	}
+	if req.Seamless != nil {
+		if b, err := os.ReadFile(filepath.Join(dir, "seamless.json")); err == nil && json.Valid(b) {
+			res.Seamless = json.RawMessage(bytes.TrimSpace(b))
+		}
+		if frames, _, err := motionShape(dir); err == nil {
+			res.Frames = frames // the best cut trims the clip
+		}
 	}
 	return res, nil
 }

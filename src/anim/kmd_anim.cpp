@@ -20,6 +20,7 @@
 #include <kimodo/anim/keyframes.hpp>
 #include <kimodo/anim/control_rig.hpp>
 #include <kimodo/anim/layers.hpp>
+#include <kimodo/anim/loop.hpp>
 #include <kimodo/anim/retarget.hpp>
 #include <kimodo/anim/root_motion.hpp>
 #include <kimodo/anim/skeleton.hpp>
@@ -94,6 +95,7 @@ int usage() {
                  "       kmd-anim root-motion IN_DIR OUT_DIR --mode full|inplace|path\n"
                  "           [--up X,Y,Z] [--forward X,Y,Z] [--lock both|forward|lateral] [--fps N]\n"
                  "           [--points X,Y,Z;X,Y,Z;...] [--interp catmull|polyline] [--loop]\n"
+                 "           [--seamless [--seamless-blend FRAMES] [--seamless-cut MIN_FRACTION]]   loopable clip\n"
                  "           [--timing distance|duration|speed] [--duration S] [--speed M_PER_S] [--no-orient]\n"
                  "       IN_DIR/OUT_DIR hold root_positions.f32 + local_rotations_xyzw.f32; path mode also\n"
                  "       writes OUT_DIR/path_samples.f32 ([N,3], the evaluated curve for display).\n"
@@ -152,6 +154,7 @@ int root_motion(int argc, char **argv) {
     RootMotionSettings settings;
     float fps = 30.F;
     bool have_mode = false;
+    std::optional<LoopOptions> seamless; // make the clip loopable before the root motion
     auto path_spec = [&]() -> MotionPathSpec & {
         if (!settings.path) settings.path.emplace();
         return *settings.path;
@@ -202,6 +205,17 @@ int root_motion(int argc, char **argv) {
             settings.follow.speed = std::stof(std::string(value()));
         } else if (arg == "--no-orient") {
             settings.follow.orient_to_path = false;
+        } else if (arg == "--seamless") {
+            if (!seamless) seamless.emplace();
+        } else if (arg == "--seamless-blend") {
+            if (!seamless) seamless.emplace();
+            const int b = std::stoi(std::string(value()));
+            if (b < 0 || b > 100000) throw std::runtime_error("--seamless-blend must be 0 or more frames");
+            seamless->blend = static_cast<std::size_t>(b);
+        } else if (arg == "--seamless-cut") {
+            if (!seamless) seamless.emplace();
+            seamless->cut = true;
+            seamless->min_length = std::stof(std::string(value()));
         } else {
             throw std::runtime_error("unknown option '" + std::string(arg) + "'");
         }
@@ -215,8 +229,21 @@ int root_motion(int argc, char **argv) {
     if (!skeleton) throw std::runtime_error(skeleton.error());
     auto clip = clip_from_motion(*skeleton, *motion, fps);
     if (!clip) throw std::runtime_error(clip.error());
+    std::string loop_meta;
+    if (seamless) {
+        auto r = make_loopable(*clip, *skeleton, *seamless);
+        if (!r) throw std::runtime_error(r.error());
+        loop_meta = ",\"seamless\":{\"start\":" + std::to_string(r->start) + ",\"end\":" + std::to_string(r->end) +
+                    ",\"blend\":" + std::to_string(r->blend) + ",\"seam_degrees_before\":" + num(r->seam_degrees_before) +
+                    ",\"seam_root_before\":" + num(r->seam_root_before) + ",\"seam_degrees_after\":" + num(r->seam_degrees_after) + "}";
+    }
     if (auto ok = apply_root_motion(*clip, settings); !ok) throw std::runtime_error(ok.error());
     if (auto ok = write_motion_dir(out, clip_to_motion(*clip)); !ok) throw std::runtime_error(ok.error());
+    if (!loop_meta.empty()) { // the loop report for editors (without the leading comma and key)
+        std::ofstream f(out / "seamless.json", std::ios::binary | std::ios::trunc);
+        f << loop_meta.substr(std::string(",\"seamless\":").size()) << "\n";
+        if (!f) throw std::runtime_error("cannot write seamless.json");
+    }
     if (settings.mode == RootMotionMode::CustomPath) {
         auto path = MotionPath::build(*settings.path, settings.axes); // built successfully above
         const auto samples = path->sample(256);
@@ -227,8 +254,8 @@ int root_motion(int argc, char **argv) {
         }
         if (!f) throw std::runtime_error("cannot write path_samples.f32");
     }
-    std::cout << "{\"frames\":" << motion->frames << ",\"joints\":" << motion->joints
-              << ",\"skeleton\":" << quote(skeleton->source) << "}\n";
+    std::cout << "{\"frames\":" << clip->frames() << ",\"joints\":" << motion->joints
+              << ",\"skeleton\":" << quote(skeleton->source) << loop_meta << "}\n";
     return 0;
 }
 std::string string_list(const std::vector<std::string> &items) {
