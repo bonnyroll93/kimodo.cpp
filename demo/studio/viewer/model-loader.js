@@ -68,8 +68,28 @@ export async function loadCharacter(source, name) {
   for (const m of meshes) for (const mat of [].concat(m.material)) materials.add(mat);
 
   const warnings = [];
+  const notes = [];
   if (skinned.length === 0) warnings.push('No skinned mesh: Kimodo Extended needs a rigged character.');
-  if (roots.length > 1) warnings.push(`Skeleton has ${roots.length} root joints; retargeting needs exactly one.`);
+  // Several root joints (e.g. Blender rig helpers next to Hips): like the C++ importer, the
+  // skeleton is the root subtree with the most deforming joints; the others stay at rest.
+  let mainRoot = -1;
+  if (roots.length) {
+    const stats = roots.map((r) => {
+      let deform = 0, count = 0;
+      const visit = (bone) => { count++; if (deforming.has(bone)) deform++; for (const c of children.get(bone)) visit(c); };
+      visit(r);
+      return { r, deform, count };
+    });
+    const best = stats.reduce((a, b) => (b.deform > a.deform || (b.deform === a.deform && b.count > a.count) ? b : a));
+    mainRoot = joints.findIndex((j) => j.bone === best.r);
+    if (roots.length > 1) {
+      const others = stats.filter((s) => s !== best);
+      const ignoredDeform = others.reduce((n, s) => n + s.deform, 0);
+      notes.push(`${roots.length} root joints: using "${joints[mainRoot].name}"; ` +
+        `${others.map((s) => joints.find((j) => j.bone === s.r).name).join(', ')} (${others.reduce((n, s) => n + s.count, 0)} joints) stay at rest.`);
+      if (ignoredDeform) warnings.push(`${ignoredDeform} deforming joints outside "${joints[mainRoot].name}" will not be animated.`);
+    }
+  }
   const names = new Set();
   for (const j of joints) {
     if (names.has(j.name)) { warnings.push(`Duplicate joint name "${j.name}".`); break; }
@@ -78,7 +98,7 @@ export async function loadCharacter(source, name) {
 
   return {
     name, gltf, root, joints, roots: roots.map((r) => joints.findIndex((j) => j.bone === r)),
-    warnings,
+    mainRoot, warnings, notes,
     stats: {
       meshes: meshes.length,
       skinnedMeshes: skinned.length,

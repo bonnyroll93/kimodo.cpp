@@ -109,7 +109,8 @@ async function open(source, name, serverId = null) {
     $('joint-count').textContent = character.joints.length ? `${character.joints.length} joints` : '';
     const s = character.stats;
     const msg = `${name}: ${s.joints} joints, ${s.skinnedMeshes} skinned mesh${s.skinnedMeshes === 1 ? '' : 'es'}, ${s.triangles.toLocaleString()} triangles`;
-    status(character.warnings.length ? `${msg} — ${character.warnings.join(' ')}` : msg, character.warnings.length > 0);
+    const extra = [...character.warnings, ...character.notes];
+    status(extra.length ? `${msg} — ${extra.join(' ')}` : msg, character.warnings.length > 0);
   } catch (err) {
     console.error(err);
     status(`Could not load ${name}: ${err.message || err}`, true);

@@ -314,8 +314,18 @@ func (c studioConfig) runCached(ctx context.Context, dir, marker string, build f
 	return nil
 }
 
+// toolVersion identifies the kmd-anim binary (size and modification time). It is part of
+// every cache key, so results computed by an older build are never reused after a rebuild.
+var toolVersion string
+
+func setToolVersion(anim string) {
+	if info, err := os.Stat(anim); err == nil {
+		toolVersion = fmt.Sprintf("%d-%d", info.Size(), info.ModTime().UnixNano())
+	}
+}
+
 func hashID(parts ...string) string {
-	key := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	key := sha256.Sum256([]byte(toolVersion + "\x00" + strings.Join(parts, "\x00")))
 	return hex.EncodeToString(key[:12])
 }
 

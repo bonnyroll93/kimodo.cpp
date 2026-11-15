@@ -13,7 +13,8 @@
 namespace kimodo::anim {
 
 struct GltfImportOptions {
-    int skin = 0; // which skin defines the skeleton
+    int skin = 0;          // which skin defines the skeleton
+    std::string root_joint; // with several root joints: the one to use (empty = automatic)
 };
 
 struct GltfCharacter {
@@ -27,6 +28,14 @@ struct GltfCharacter {
     std::size_t materials = 0;
     std::size_t skins = 0;
     std::vector<std::string> animations;
+    // Joints of the skin left out of the skeleton: when the skin has several root joints
+    // (e.g. Blender rig helpers such as "Controls" or "RigBuilder" next to "Hips"), the
+    // skeleton is the root subtree with the most deforming joints (ties: most joints) or
+    // options.root_joint; the other subtrees stay in the file at rest and are not animated.
+    std::vector<std::string> ignored_roots;
+    std::size_t ignored_joints = 0;
+    std::size_t ignored_deforming_joints = 0;
+    std::vector<std::string> warnings;
 };
 
 [[nodiscard]] std::expected<GltfCharacter, std::string> load_gltf_character(

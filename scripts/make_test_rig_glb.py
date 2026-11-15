@@ -11,7 +11,10 @@ Standard library only. Writes, into OUTPUT_DIR (default tests/data/rigs):
   test_rig_mixamo_apose.glb
                    the skinned rig with "mixamorig:" joint names and arms in an A-pose;
   test_rig_embedded.gltf
-                   test_rig as JSON glTF with a base64 data-URI buffer.
+                   test_rig as JSON glTF with a base64 data-URI buffer;
+  test_rig_helpers.glb
+                   test_rig plus non-deforming control joints (Controls, RigBuilder/COG) as
+                   extra skin roots, like Blender control rigs.
 """
 import base64
 import json
@@ -145,8 +148,9 @@ class Bin:
         return len(self.accessors) - 1
 
 
-def build(skinned, prefix="", arm_deg=90.0):
-    """prefix: namespace for node names (e.g. "mixamorig:"); arm_deg: 90 = T-pose, 135 = A-pose."""
+def build(skinned, prefix="", arm_deg=90.0, helpers=False):
+    """prefix: namespace for node names (e.g. "mixamorig:"); arm_deg: 90 = T-pose, 135 = A-pose;
+    helpers: add non-deforming control joints as extra skin roots (Blender control rigs)."""
     joints = [(n, p, t, ((0, 0, 1), -arm_deg) if n == "LeftArm" else ((0, 0, 1), arm_deg) if n == "RightArm" else r)
               for n, p, t, r in JOINTS]
     names = [j[0] for j in joints]
@@ -169,13 +173,25 @@ def build(skinned, prefix="", arm_deg=90.0):
         if children[n]:
             node["children"] = [node_of[c] for c in children[n]]
         nodes.append(node)
+    helper_nodes = {}
+    if helpers:  # Controls, RigBuilder -> COG: joints of the skin that influence no vertex
+        for name, t in (("Controls", (0.0, 0.0, 0.0)), ("RigBuilder", (0.0, 0.0, 0.0)), ("COG", (0.0, 1.0, 0.0))):
+            helper_nodes[name] = len(nodes)
+            nodes.append({"name": prefix + name, "translation": list(t)})
+        nodes[helper_nodes["RigBuilder"]]["children"] = [helper_nodes["COG"]]
+        world["Controls"] = mat_mul(armature, trs_matrix((0.0, 0.0, 0.0), quat(None)))
+        world["RigBuilder"] = world["Controls"]
+        world["COG"] = mat_mul(armature, trs_matrix((0.0, 1.0, 0.0), quat(None)))
     armature_node = len(nodes)
     nodes.append({"name": "Armature", "translation": list(ARMATURE_T), "rotation": list(quat(ARMATURE_R)),
-                  "children": [node_of["Hips"]]})
+                  "children": [helper_nodes["Controls"], node_of["Hips"], helper_nodes["RigBuilder"]] if helpers else [node_of["Hips"]]})
 
     # Mesh: one rigid box per deforming joint, skinned to that joint only.
     skin_joints = order  # skin joint list follows node order
     skin_index = {n: i for i, n in enumerate(skin_joints)}
+    for name in helper_nodes:  # helpers go last in the skin (no vertex references them)
+        node_of[name] = helper_nodes[name]
+    skin_joints = order + list(helper_nodes)
     pos, nrm, jnt, wts, idx = [], [], [], [], []
     for n in names:
         if n in NON_DEFORMING:
@@ -242,6 +258,7 @@ def main():
     write_glb(out / "test_rig.glb", *build(skinned=True))
     write_glb(out / "test_noskin.glb", *build(skinned=False))
     write_glb(out / "test_rig_mixamo_apose.glb", *build(skinned=True, prefix="mixamorig:", arm_deg=135.0))
+    write_glb(out / "test_rig_helpers.glb", *build(skinned=True, helpers=True))
     gltf, binary = build(skinned=True)
     gltf["buffers"][0]["uri"] = "data:application/octet-stream;base64," + base64.b64encode(binary).decode()
     (out / "test_rig_embedded.gltf").write_text(json.dumps(gltf, separators=(",", ":")), encoding="utf-8")

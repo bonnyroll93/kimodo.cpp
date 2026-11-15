@@ -129,7 +129,7 @@ std::expected<Analysis, std::string> analyse(const AnimationClip &input, const S
     a.ankle.resize(frames);
     a.toe.resize(frames);
     a.lateral.resize(frames);
-    a.ground = 1.e30F;
+    float lowest = 1.e30F;
     for (std::size_t f = 0; f < frames; ++f) {
         const auto g = forward_kinematics(s, a.clip.frame(f));
         const Vec3 lr = g[static_cast<std::size_t>(a.legs[0].thigh)].translation - g[static_cast<std::size_t>(a.legs[1].thigh)].translation;
@@ -138,18 +138,36 @@ std::expected<Analysis, std::string> analyse(const AnimationClip &input, const S
             a.ankle[f][k] = g[static_cast<std::size_t>(l.foot)].translation;
             a.toe[f][k] = l.toe >= 0 ? g[static_cast<std::size_t>(l.toe)].translation : a.ankle[f][k];
             a.lateral[f][k] = -normalize(lr);
-            a.ground = std::min({a.ground, height(a.ankle[f][k], o.up), height(a.toe[f][k], o.up)});
+            lowest = std::min({lowest, height(a.ankle[f][k], o.up), height(a.toe[f][k], o.up)});
         }
     }
-    for (int k = 0; k < 2; ++k) {
-        std::vector<bool> on(frames, false);
-        for (std::size_t f = 0; f < frames; ++f) {
-            const std::size_t f0 = f > 0 ? f - 1 : f, f1 = f + 1 < frames ? f + 1 : f;
-            const float dt = static_cast<float>(f1 - f0) / a.clip.fps;
-            const float speed = dt > 0.F ? length(flat(a.ankle[f1][k] - a.ankle[f0][k], o.up)) / dt : 0.F;
-            const float low = std::min(height(a.ankle[f][k], o.up), height(a.toe[f][k], o.up)) - a.ground;
-            on[f] = low < a.h && speed < a.v;
+    // Horizontal ankle speed (central differences) and foot height (lower of ankle and toe).
+    std::vector<std::array<float, 2>> speed(frames), low(frames);
+    for (std::size_t f = 0; f < frames; ++f) {
+        const std::size_t f0 = f > 0 ? f - 1 : f, f1 = f + 1 < frames ? f + 1 : f;
+        const float dt = static_cast<float>(f1 - f0) / a.clip.fps;
+        for (std::size_t k = 0; k < 2; ++k) {
+            speed[f][k] = dt > 0.F ? length(flat(a.ankle[f1][k] - a.ankle[f0][k], o.up)) / dt : 0.F;
+            low[f][k] = std::min(height(a.ankle[f][k], o.up), height(a.toe[f][k], o.up));
         }
+    }
+    // Ground: the median foot height while a foot is (nearly) still, i.e. during stances.
+    // Robust to brief dips below the floor (e.g. a long retargeted toe pitching down at
+    // toe-off), which would put the clip's lowest point far below the real floor.
+    std::vector<float> planted;
+    for (std::size_t f = 0; f < frames; ++f)
+        for (std::size_t k = 0; k < 2; ++k)
+            if (speed[f][k] < a.v) planted.push_back(low[f][k]);
+    if (planted.empty()) {
+        a.ground = lowest;
+    } else {
+        std::ranges::nth_element(planted, planted.begin() + static_cast<std::ptrdiff_t>(planted.size() / 2));
+        a.ground = planted[planted.size() / 2];
+    }
+    for (int k = 0; k < 2; ++k) {
+        const auto uk = static_cast<std::size_t>(k);
+        std::vector<bool> on(frames, false);
+        for (std::size_t f = 0; f < frames; ++f) on[f] = low[f][uk] - a.ground < a.h && speed[f][uk] < a.v;
         // Close short gaps, then drop short contacts.
         for (std::size_t f = 0; f < frames;) {
             if (on[f]) { ++f; continue; }

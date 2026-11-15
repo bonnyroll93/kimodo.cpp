@@ -2,6 +2,7 @@
 
 #include "cgltf_impl.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <unordered_map>
@@ -105,69 +106,13 @@ std::expected<GltfCharacter, std::string> load_gltf_character(const std::filesys
     const cgltf_skin *skin = &data->skins[options.skin];
     if (skin->joints_count == 0) return std::unexpected("skin has no joints");
 
-    std::unordered_map<const cgltf_node *, int> skin_index; // node -> index in skin->joints
-    for (std::size_t i = 0; i < skin->joints_count; ++i) skin_index.emplace(skin->joints[i], static_cast<int>(i));
-
-    // Nearest ancestor that is a joint of this skin.
-    auto joint_parent = [&](const cgltf_node *n) -> const cgltf_node * {
-        for (const cgltf_node *p = n->parent; p != nullptr; p = p->parent)
-            if (skin_index.contains(p)) return p;
-        return nullptr;
-    };
-
-    std::vector<const cgltf_node *> roots;
-    std::unordered_map<const cgltf_node *, std::vector<const cgltf_node *>> kids;
-    for (std::size_t i = 0; i < skin->joints_count; ++i) {
-        const cgltf_node *n = skin->joints[i];
-        if (const cgltf_node *p = joint_parent(n)) kids[p].push_back(n);
-        else roots.push_back(n);
-    }
-    if (roots.size() != 1) {
-        std::string names;
-        for (const cgltf_node *r : roots) names += (names.empty() ? "" : ", ") + node_name(data.get(), r);
-        return std::unexpected("skin has " + std::to_string(roots.size()) +
-                               " root joints (" + names + "); exactly one is required");
-    }
-
-    GltfCharacter out;
-    Skeleton &s = out.skeleton;
-    s.source = file;
-    std::unordered_map<const cgltf_node *, int> order; // node -> skeleton index
-    // Depth-first, children in skin order: parents always precede children.
-    std::vector<std::pair<const cgltf_node *, int>> stack{{roots.front(), -1}};
-    while (!stack.empty()) {
-        auto [n, parent] = stack.back();
-        stack.pop_back();
-        Joint j;
-        j.name = node_name(data.get(), n);
-        j.parent = parent;
-        j.source_node = static_cast<int>(n - data->nodes);
-        j.skin_joint = skin_index.at(n);
-        j.deforming = false;
-        // Root: bake every non-joint ancestor (Armature, scene roots) into it.
-        // Other joints: compose any non-joint nodes between the joint and its parent joint.
-        const cgltf_node *stop =
-            parent < 0 ? nullptr : data->nodes + s.joints[static_cast<std::size_t>(parent)].source_node;
-        j.rest_local = compose_up_to(n, stop);
-        const int index = static_cast<int>(s.joints.size());
-        order.emplace(n, index);
-        s.joints.push_back(std::move(j));
-        if (auto it = kids.find(n); it != kids.end())
-            for (auto c = it->second.rbegin(); c != it->second.rend(); ++c) stack.emplace_back(*c, index);
-    }
-
-    // Deforming flags and stats from the meshes bound to this skin.
-    out.meshes = data->meshes_count;
-    out.materials = data->materials_count;
-    out.skins = data->skins_count;
-    for (std::size_t a = 0; a < data->animations_count; ++a)
-        out.animations.emplace_back(data->animations[a].name != nullptr ? data->animations[a].name
-                                                                        : "animation_" + std::to_string(a));
+    // Which skin joints influence vertices of the meshes bound to this skin.
+    std::size_t skinned_meshes = 0;
     std::vector<bool> deforming(skin->joints_count, false);
     for (std::size_t ni = 0; ni < data->nodes_count; ++ni) {
         const cgltf_node &node = data->nodes[ni];
         if (node.mesh == nullptr || node.skin != skin) continue;
-        ++out.skinned_meshes;
+        ++skinned_meshes;
         for (std::size_t pi = 0; pi < node.mesh->primitives_count; ++pi) {
             const cgltf_primitive &prim = node.mesh->primitives[pi];
             for (std::size_t ai = 0; ai < prim.attributes_count; ++ai) {
@@ -190,6 +135,101 @@ std::expected<GltfCharacter, std::string> load_gltf_character(const std::filesys
             }
         }
     }
+
+    std::unordered_map<const cgltf_node *, int> skin_index; // node -> index in skin->joints
+    for (std::size_t i = 0; i < skin->joints_count; ++i) skin_index.emplace(skin->joints[i], static_cast<int>(i));
+
+    // Nearest ancestor that is a joint of this skin.
+    auto joint_parent = [&](const cgltf_node *n) -> const cgltf_node * {
+        for (const cgltf_node *p = n->parent; p != nullptr; p = p->parent)
+            if (skin_index.contains(p)) return p;
+        return nullptr;
+    };
+
+    std::vector<const cgltf_node *> roots;
+    std::unordered_map<const cgltf_node *, std::vector<const cgltf_node *>> kids;
+    for (std::size_t i = 0; i < skin->joints_count; ++i) {
+        const cgltf_node *n = skin->joints[i];
+        if (const cgltf_node *p = joint_parent(n)) kids[p].push_back(n);
+        else roots.push_back(n);
+    }
+    // Several root joints: keep one subtree as the skeleton (see GltfCharacter::ignored_roots).
+    auto subtree_stats = [&](const cgltf_node *r) {
+        std::size_t joints = 0, deform = 0;
+        std::vector<const cgltf_node *> todo{r};
+        while (!todo.empty()) {
+            const cgltf_node *n = todo.back();
+            todo.pop_back();
+            ++joints;
+            if (deforming[static_cast<std::size_t>(skin_index.at(n))]) ++deform;
+            if (auto it = kids.find(n); it != kids.end()) todo.insert(todo.end(), it->second.begin(), it->second.end());
+        }
+        return std::pair{deform, joints};
+    };
+    const cgltf_node *chosen = roots.front();
+    if (!options.root_joint.empty()) {
+        const auto it = std::ranges::find_if(roots, [&](const cgltf_node *r) { return node_name(data.get(), r) == options.root_joint; });
+        if (it == roots.end()) {
+            std::string names;
+            for (const cgltf_node *r : roots) names += (names.empty() ? "" : ", ") + node_name(data.get(), r);
+            return std::unexpected("root joint '" + options.root_joint + "' is not a root of the skin (roots: " + names + ")");
+        }
+        chosen = *it;
+    } else {
+        for (const cgltf_node *r : roots)
+            if (subtree_stats(r) > subtree_stats(chosen)) chosen = r;
+    }
+
+    GltfCharacter out;
+    out.skinned_meshes = skinned_meshes;
+    for (const cgltf_node *r : roots) {
+        if (r == chosen) continue;
+        const auto [deform, joints] = subtree_stats(r);
+        out.ignored_roots.push_back(node_name(data.get(), r));
+        out.ignored_joints += joints;
+        out.ignored_deforming_joints += deform;
+    }
+    if (!out.ignored_roots.empty()) {
+        std::string names;
+        for (const auto &n : out.ignored_roots) names += (names.empty() ? "" : ", ") + n;
+        out.warnings.push_back("skin has " + std::to_string(roots.size()) + " root joints; using '" + node_name(data.get(), chosen) +
+                               "' and leaving " + names + " (" + std::to_string(out.ignored_joints) + " joints) at rest");
+        if (out.ignored_deforming_joints > 0)
+            out.warnings.push_back(std::to_string(out.ignored_deforming_joints) +
+                                   " of the ignored joints deform the mesh and will not be animated");
+    }
+    Skeleton &s = out.skeleton;
+    s.source = file;
+    std::unordered_map<const cgltf_node *, int> order; // node -> skeleton index
+    // Depth-first, children in skin order: parents always precede children.
+    std::vector<std::pair<const cgltf_node *, int>> stack{{chosen, -1}};
+    while (!stack.empty()) {
+        auto [n, parent] = stack.back();
+        stack.pop_back();
+        Joint j;
+        j.name = node_name(data.get(), n);
+        j.parent = parent;
+        j.source_node = static_cast<int>(n - data->nodes);
+        j.skin_joint = skin_index.at(n);
+        j.deforming = false;
+        // Root: bake every non-joint ancestor (Armature, scene roots) into it.
+        // Other joints: compose any non-joint nodes between the joint and its parent joint.
+        const cgltf_node *stop =
+            parent < 0 ? nullptr : data->nodes + s.joints[static_cast<std::size_t>(parent)].source_node;
+        j.rest_local = compose_up_to(n, stop);
+        const int index = static_cast<int>(s.joints.size());
+        order.emplace(n, index);
+        s.joints.push_back(std::move(j));
+        if (auto it = kids.find(n); it != kids.end())
+            for (auto c = it->second.rbegin(); c != it->second.rend(); ++c) stack.emplace_back(*c, index);
+    }
+
+    out.meshes = data->meshes_count;
+    out.materials = data->materials_count;
+    out.skins = data->skins_count;
+    for (std::size_t a = 0; a < data->animations_count; ++a)
+        out.animations.emplace_back(data->animations[a].name != nullptr ? data->animations[a].name
+                                                                        : "animation_" + std::to_string(a));
     for (Joint &j : s.joints) j.deforming = deforming[static_cast<std::size_t>(j.skin_joint)];
 
     if (auto ok = s.validate(); !ok) return std::unexpected("'" + file + "': " + ok.error());

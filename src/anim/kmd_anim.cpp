@@ -257,7 +257,8 @@ int map_command(int argc, char **argv) {
     } else {
         mapping = auto_map(*source, character->skeleton);
     }
-    const auto d = check_mapping(mapping, *source, character->skeleton);
+    auto d = check_mapping(mapping, *source, character->skeleton);
+    d.warnings.insert(d.warnings.begin(), character->warnings.begin(), character->warnings.end());
     std::cout << "{\"mapping\":" << compact_mapping_json(mapping) << "," << diagnostics_json(d) << "}\n";
     return d.ok() ? 0 : 1;
 }
@@ -306,6 +307,7 @@ int retarget_command(int argc, char **argv) {
         if (auto ok = save_mapping(*save_file, mapping); !ok) throw std::runtime_error(ok.error());
     auto result = retarget(*clip, *source, target, mapping, options);
     if (!result) throw std::runtime_error(result.error());
+    result->diagnostics.warnings.insert(result->diagnostics.warnings.begin(), character->warnings.begin(), character->warnings.end());
 
     std::error_code ec;
     std::filesystem::create_directories(out, ec);
@@ -599,7 +601,8 @@ int main(int argc, char **argv) try {
     else if (argc != 3) return usage();
     auto c = load_gltf_character(argv[2], options);
     if (!c) { std::cerr << c.error() << '\n'; return 1; }
-    std::cout << "{\"meshes\":" << c->meshes << ",\"skinned_meshes\":" << c->skinned_meshes
+    std::cout << "{\"warnings\":" << string_list(c->warnings) << ",\"ignored_roots\":" << string_list(c->ignored_roots)
+              << ",\"meshes\":" << c->meshes << ",\"skinned_meshes\":" << c->skinned_meshes
               << ",\"materials\":" << c->materials << ",\"skins\":" << c->skins << ",\"animations\":[";
     for (std::size_t i = 0; i < c->animations.size(); ++i) std::cout << (i ? "," : "") << quote(c->animations[i]);
     std::cout << "],\"skeleton\":" << skeleton_json(c->skeleton) << "}\n";

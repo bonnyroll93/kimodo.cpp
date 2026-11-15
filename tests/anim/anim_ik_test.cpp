@@ -206,6 +206,21 @@ int main(int argc, char **argv) {
     CHECK(apply_root_motion(fast, path).has_value());
     walk_tests(soma, fast, "soma30 fast path");
     synthetic_slide_test(soma);
+
+    // Toes that dip below the floor for a few frames (long retargeted feet pitching at
+    // toe-off) must not drag the ground estimate down and hide every contact.
+    {
+        AnimationClip dip = walk;
+        const auto lf = static_cast<std::size_t>(soma.find("LeftFoot"));
+        for (std::size_t f = 36; f < 42; ++f)
+            dip.at(f, lf).rotation = normalize(dip.at(f, lf).rotation * Quat::from_axis_angle({1, 0, 0}, 1.2F));
+        const auto base = detect_foot_contacts(walk, soma).value();
+        const auto with_dip = detect_foot_contacts(dip, soma).value();
+        CHECK(with_dip.size() + 1 >= base.size()); // at most the dipping step changes
+        const auto rl = foot_lock(walk, soma).value(), rd = foot_lock(dip, soma).value();
+        CHECK(std::fabs(rd.ground - rl.ground) < .01F);
+        CHECK(rd.slide_after < 1.e-3F);
+    }
     if (failures != 0) {
         std::cerr << failures << " check(s) failed\n";
         return 1;

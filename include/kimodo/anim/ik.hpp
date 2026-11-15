@@ -57,7 +57,7 @@ struct FootContact {
 struct FootLockResult {
     AnimationClip clip;
     std::vector<FootContact> contacts;
-    float ground = 0.F;           // detected ground height along up
+    float ground = 0.F;           // estimated ground height along up (see detect_foot_contacts)
     float leg_length = 0.F;
     float height_threshold = 0.F, speed_threshold = 0.F;
     float slide_before = 0.F;     // max horizontal ankle drift inside contacts, before / after
@@ -66,7 +66,9 @@ struct FootLockResult {
     float max_hip_drop = 0.F;     // largest root lowering applied by adjust_hips
 };
 
-// Contacts only (no modification). The ground is the lowest ankle/toe height of the clip.
+// Contacts only (no modification). The ground is the median foot height (lower of ankle and
+// toe) over frames where the ankle is slower than the speed threshold (the clip's lowest
+// point if no such frame exists).
 [[nodiscard]] std::expected<std::vector<FootContact>, std::string> detect_foot_contacts(
     const AnimationClip &clip, const Skeleton &skeleton, const FootLockOptions &options = {});
 

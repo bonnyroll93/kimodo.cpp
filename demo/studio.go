@@ -29,6 +29,7 @@ type studioConfig struct {
 // under /studio/samples/, and the step 2 motion and root-motion endpoints.
 func registerStudio(mux *http.ServeMux, c studioConfig) {
 	sampleRigs := c.sampleRigs
+	setToolVersion(c.anim)
 	registerRootMotion(mux, c)
 	registerRetarget(mux, c)
 	registerLayers(mux, c)

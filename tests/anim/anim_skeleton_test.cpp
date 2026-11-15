@@ -157,6 +157,26 @@ void gltf_tests(const std::filesystem::path &rigs) {
     GltfImportOptions bad_skin;
     bad_skin.skin = 3;
     CHECK(!load_gltf_character(rig_path, bad_skin).has_value());
+
+    // Several root joints (control-rig helpers): the deforming "Hips" subtree is the skeleton.
+    auto helpers = load_gltf_character(rigs / "test_rig_helpers.glb");
+    if (!helpers) std::cerr << helpers.error() << '\n';
+    CHECK(helpers.has_value());
+    if (helpers) {
+        CHECK(helpers->skeleton.size() == 20 && helpers->skeleton.joints[0].name == "Hips");
+        CHECK(helpers->ignored_roots == (std::vector<std::string>{"Controls", "RigBuilder"}));
+        CHECK(helpers->ignored_joints == 3 && helpers->ignored_deforming_joints == 0);
+        CHECK(helpers->warnings.size() == 1);
+        for (std::size_t j = 0; j < helpers->skeleton.size(); ++j)
+            CHECK(helpers->skeleton.joints[j].name == s.joints[j].name &&
+                  near(helpers->skeleton.joints[j].rest_local, s.joints[j].rest_local, 1.e-6F));
+        GltfImportOptions pick;
+        pick.root_joint = "RigBuilder";
+        auto forced = load_gltf_character(rigs / "test_rig_helpers.glb", pick);
+        CHECK(forced && forced->skeleton.size() == 2 && forced->skeleton.joints[1].name == "COG");
+        pick.root_joint = "Nope";
+        CHECK(!load_gltf_character(rigs / "test_rig_helpers.glb", pick).has_value());
+    }
 }
 } // namespace
 
