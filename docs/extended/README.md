@@ -449,16 +449,25 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     gizmo edit. *Delete key* removes the keys at the current frame.
   - Keyed joints are listed, and their keys appear as diamonds on the layer's timeline row.
   - **Graph editor**: the curves of the selected joint. rx/ry/rz are rotation offsets in
-    degrees (Euler XYZ); tx/ty/tz are translation offsets in parent units.
-    - Drag keys (frames snap; Alt: free), drag bezier handles (manual tangents, aligned;
-      Alt breaks them), double-click to add a key, Delete to remove.
+    degrees (Euler XYZ); tx/ty/tz are translation offsets in parent units. Maya-style:
+    - selection: click a key; Shift toggles, Ctrl removes, Ctrl+Shift adds; drag on
+      empty space for a rectangle selection with the same modifiers; a click on empty
+      space deselects and seeks;
+    - move: drag a selected key, or middle-drag anywhere (frames snap; Alt: free time;
+      hold Shift to constrain to time or value); drag bezier handles (manual tangents,
+      aligned; Alt breaks them); double-click adds a key, Delete removes;
+    - navigation: Alt+middle drag (or right drag) pans, Alt+right drag zooms (horizontal:
+      time, vertical: values), the wheel zooms both (Shift: time, Ctrl: values), F frames
+      the selection (all keys without one), A frames all; drag in the frame ruler to scrub;
     - Constant / Linear / Bezier / Auto tangents apply to the selected keys.
-    - Wheel zooms time (Shift: values), right-drag pans, a click seeks.
   - The curves are evaluated by the same rules in the graph editor (`viewer/keyframes.js`)
     and in `kmd-anim` (`include/kimodo/anim/keyframes.hpp`), so the bake and the export
     match what you see.
   - Gizmo edits are exact when the keyframe layer is the top layer at weight 1, which is
     how *+ Keys* adds it.
+  - Additive gizmo edits are relative to the pose on screen, so keys set in quick
+    succession (before the previous result arrives) land where you put them; results that
+    are already outdated by a newer edit are not shown, and never while the gizmo drags.
 - **Undo / redo.** Ctrl+Z undoes, and Ctrl+Y or Ctrl+Shift+Z redoes; ↶ and ↷ are in the
   toolbar. The history keeps the last 100 states of everything you edit: clips, tracks,
   anim layers and their sources, the scene length, root motion and paths (including viewport edits), keyframes (gizmo and graph

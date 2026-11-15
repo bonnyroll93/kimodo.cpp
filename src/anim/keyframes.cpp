@@ -183,6 +183,7 @@ std::expected<KeyframeClip, std::string> keyframe_clip(const KeyframeTracks &tra
         c.joint_count = 1;
         c.joint_names = {skeleton.joints.front().name};
         c.locals = {skeleton.joints.front().rest_local};
+        out.channels.emplace(skeleton.joints.front().name, 0U); // drives no channel (inert in override mode too)
         return out;
     }
     if (frames == 0) frames = static_cast<std::size_t>(std::ceil(tracks.last_frame())) + 1;

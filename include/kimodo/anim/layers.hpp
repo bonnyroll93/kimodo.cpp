@@ -91,7 +91,7 @@ struct AnimationLayer {
     TimeWrap wrap = TimeWrap::Clamp;
     ClipTiming timing{};
     // Override only: the channels the layer drives per joint name (ChannelRotation |
-    // ChannelTranslation | ChannelScale); joints not listed: all channels. Keyframe layers in
+    // ChannelTranslation | ChannelScale; 0: none); joints not listed: all channels. Keyframe layers in
     // override mode use it so a joint keyed only in rotation keeps the translation below.
     std::map<std::string, unsigned, std::less<>> channels;
 };

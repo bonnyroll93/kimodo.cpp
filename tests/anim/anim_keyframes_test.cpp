@@ -130,6 +130,18 @@ void layer_tests(const Skeleton &soma, const AnimationClip &walk) {
         CHECK(near(p[fa].translation.y, w[fa].translation.y, 1.e-6F));
         for (std::size_t j = 0; j < p.size(); ++j)
             if (j != fa) CHECK(angle_between(p[j].rotation, w[j].rotation) < 1.e-6F);
+        // An override keyframe layer without keys changes nothing (the root is not forced to rest).
+        auto empty_kc = keyframe_clip(KeyframeTracks{}, soma);
+        AnimationStack es(soma);
+        CHECK(es.add_layer({.name = "walk", .clip = walk}).has_value());
+        AnimationLayer eo{.name = "empty override", .clip = empty_kc->clip, .mode = BlendMode::Override};
+        eo.channels = empty_kc->channels;
+        CHECK(es.add_layer(eo).has_value());
+        const auto pe = es.evaluate(.5F);
+        for (std::size_t j = 0; j < pe.size(); ++j) {
+            CHECK(angle_between(pe[j].rotation, w[j].rotation) < 1.e-6F);
+            CHECK(near(pe[j].translation.y, w[j].translation.y, 1.e-6F));
+        }
         // Half weight: half way between the walk and the keyed pose.
         os.layer(1).weight = .5F;
         const auto h = os.evaluate(.5F);

@@ -1,6 +1,7 @@
 // Loads a glTF/GLB character and extracts its bone hierarchy.
 // Mirrors kimodo::anim::load_gltf_character: the skeleton is the joint set of one skin,
 // parents come from the nearest ancestor that is also a joint.
+import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const loader = new GLTFLoader();
@@ -53,8 +54,7 @@ export async function loadCharacter(source, name) {
     const nodeIndex = nodeIndexOf(bone) ?? -1;
     const name = nodeDefs[nodeIndex]?.name || bone.name || `node_${nodeIndex}`;
     joints.push({ bone, index, parent: parentIndex, name, nodeIndex,
-                  deforming: deforming.has(bone), children: [],
-                  rest: { q: bone.quaternion.clone(), p: bone.position.clone() } }); // glTF node TRS = kmd-anim rest_local
+                  deforming: deforming.has(bone), children: [] });
     if (parentIndex >= 0) joints[parentIndex].children.push(index);
     for (const c of children.get(bone)) walk(c, index);
   };
@@ -97,6 +97,11 @@ export async function loadCharacter(source, name) {
     names.add(j.name);
   }
 
+  // Rest pose in kmd-anim's joint space (see skeletonLocal), read before anything poses the bones.
+  root.updateMatrixWorld(true);
+  const character0 = { root, joints };
+  for (const j of joints) j.rest = skeletonLocal(character0, j);
+
   return {
     name, gltf, root, joints, roots: roots.map((r) => joints.findIndex((j) => j.bone === r)),
     mainRoot, warnings, notes,
@@ -110,6 +115,17 @@ export async function loadCharacter(source, name) {
       animations: gltf.animations.map((a) => a.name || 'unnamed'),
     },
   };
+}
+
+// A joint's local transform as kmd-anim defines it: relative to its parent joint, or to the
+// character root for the skeleton root (non-joint ancestors such as an Armature baked in).
+// Equal to the bone's three.js local transform when its parent is the parent joint's bone.
+export function skeletonLocal(character, j) {
+  const parent = j.parent >= 0 ? character.joints[j.parent].bone : character.root;
+  const m = new THREE.Matrix4().copy(parent.matrixWorld).invert().multiply(j.bone.matrixWorld);
+  const p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+  m.decompose(p, q, s);
+  return { p, q };
 }
 
 export function disposeCharacter(character) {

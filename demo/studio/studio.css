@@ -206,7 +206,7 @@ body {
 .source-row { align-items: end; }
 .source-row .field { flex: 1; min-width: 0; }
 .graph-editor {
-  position: absolute; left: 12px; right: 12px; bottom: 150px; height: 42%; display: grid; grid-template-rows: auto 1fr auto;
+  position: absolute; left: 12px; right: 12px; top: 12px; height: 46%; display: grid; grid-template-rows: auto 1fr auto;
   border: 1px solid var(--line); border-radius: 10px; background: #10151bf0; overflow: hidden; z-index: 3;
 }
 .graph-toolbar { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 5px 8px; border-bottom: 1px solid var(--line); font-size: .78rem; }

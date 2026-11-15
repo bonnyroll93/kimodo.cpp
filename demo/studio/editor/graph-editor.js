@@ -1,9 +1,19 @@
 // Graph editor for keyframe curves of the selected joint in the active keyframe layer.
 // x = frame, y = value (degrees for rx/ry/rz, parent units for tx/ty/tz).
-//   click a key: select (Shift: add) · drag a key: move it (frames snap; Alt: free)
+// Selection (Maya style):
+//   click a key: select · Shift+click: toggle · Ctrl+click: remove · Ctrl+Shift+click: add
+//   drag on empty space: rectangle (marquee) selection, same modifiers
+//   click empty space: deselect and seek
+// Editing:
+//   drag a selected key (LMB), or middle-drag anywhere: move the selection (frames snap;
+//   Alt+LMB: free time); hold Shift while moving to constrain to time or value
 //   drag a bezier handle: manual tangent (the opposite handle stays aligned; Alt: broken)
 //   double-click empty space: add a key on the nearest visible channel · Delete: remove
-//   wheel: zoom time (Shift: values) · right/middle drag: pan · click empty: seek
+// Navigation (Maya style):
+//   Alt+middle drag (or right drag): pan · Alt+right drag: zoom (horizontal = time,
+//   vertical = values) · wheel: zoom both (Shift: time only, Ctrl: values only)
+//   F: frame the selection (all keys without one) · A: frame all
+//   drag in the frame ruler (bottom strip): scrub
 import { CHANNELS, evaluate, handles, sortKeys } from '../viewer/keyframes.js';
 
 const COLORS = { rx: '#ff6b6b', ry: '#5ee6be', rz: '#6ba6ff', tx: '#ffb3b3', ty: '#b3f5e3', tz: '#b3d0ff' };
@@ -47,7 +57,13 @@ export class GraphEditor {
     window.addEventListener('keydown', (e) => {
       if (this.root.hidden || e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if ((e.key === 'Delete' || e.key === 'Backspace') && this.selected.length) { e.preventDefault(); this.deleteSelected(); }
-    });
+      // F / A frame only while the pointer is over the graph (F frames the 3D view elsewhere).
+      if (!this.hover || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key === 'f' || e.key === 'F') { e.preventDefault(); e.stopImmediatePropagation(); this.frameKeys(this.selected.length ? this.selected : null); }
+      if (e.key === 'a' || e.key === 'A') { e.preventDefault(); e.stopImmediatePropagation(); this.frameKeys(null); }
+    }, true);
+    c.addEventListener('pointerenter', () => { this.hover = true; });
+    c.addEventListener('pointerleave', () => { this.hover = false; });
     new ResizeObserver(() => this.draw()).observe(this.canvas);
   }
 
@@ -83,6 +99,18 @@ export class GraphEditor {
     if (!Number.isFinite(lo)) { lo = -10; hi = 10; }
     const pad = Math.max((hi - lo) * 0.15, 1);
     this.view = { f0: -2, f1: Math.max(frames, last + 5), v0: lo - pad, v1: hi + pad };
+    this.draw();
+  }
+
+  // Frame the given keys ([{c, k}]; null: every visible key), handles included.
+  frameKeys(sel) {
+    const ch = this.channels();
+    const list = sel ?? [...this.visible].flatMap((c) => (ch?.[c] ?? []).map((k) => ({ c, k })));
+    if (!list.length) { this.fit(); return; }
+    let f0 = Infinity, f1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+    for (const { k } of list) { f0 = Math.min(f0, k.f); f1 = Math.max(f1, k.f); v0 = Math.min(v0, k.v); v1 = Math.max(v1, k.v); }
+    const pf = Math.max((f1 - f0) * 0.1, 3), pv = Math.max((v1 - v0) * 0.15, 1);
+    this.view = { f0: f0 - pf, f1: f1 + pf, v0: v0 - pv, v1: v1 + pv };
     this.draw();
   }
 
@@ -157,6 +185,16 @@ export class GraphEditor {
         g.fill(); g.stroke();
       });
     }
+    const m = this.drag?.marquee ? this.drag : null;
+    if (m && m.q) {
+      g.setLineDash([4, 3]);
+      g.strokeStyle = '#e6edf3';
+      g.fillStyle = '#5ee6be22';
+      const x = Math.min(m.p.x, m.q.x), y = Math.min(m.p.y, m.q.y), rw = Math.abs(m.q.x - m.p.x), rh = Math.abs(m.q.y - m.p.y);
+      g.fillRect(x, y, rw, rh);
+      g.strokeRect(x, y, rw, rh);
+      g.setLineDash([]);
+    }
   }
 
   // ---- hit testing -------------------------------------------------------------------
@@ -187,10 +225,47 @@ export class GraphEditor {
   }
 
   // ---- interaction -------------------------------------------------------------------
+  // Maya selection modifiers: Shift toggles, Ctrl removes, Ctrl+Shift adds, none replaces.
+  applySelection(hits, e) {
+    const has = (k) => this.selected.some((s) => s.k === k);
+    const ctrl = e.ctrlKey || e.metaKey;
+    if (ctrl && e.shiftKey) { for (const h of hits) if (!has(h.k)) this.selected.push(h); }
+    else if (ctrl) this.selected = this.selected.filter((s) => !hits.some((h) => h.k === s.k));
+    else if (e.shiftKey) {
+      for (const h of hits) {
+        if (has(h.k)) this.selected = this.selected.filter((s) => s.k !== h.k);
+        else this.selected.push(h);
+      }
+    } else this.selected = [...hits];
+  }
+
+  keysIn(a, b) {
+    const ch = this.channels();
+    const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+    const hits = [];
+    for (const c of CHANNELS) {
+      if (!this.visible.has(c)) continue;
+      for (const k of ch?.[c] ?? []) {
+        const x = this.fx(k.f), y = this.vy(k.v);
+        if (x >= x0 && x <= x1 && y >= y0 && y <= y1) hits.push({ c, k });
+      }
+    }
+    return hits;
+  }
+
+  startMove(p) {
+    this.drag = { keys: this.selected.map((s) => ({ ...s, f: s.k.f, v: s.k.v })), p, moved: false };
+  }
+
   down(e) {
     const p = this.pos(e);
     this.canvas.setPointerCapture(e.pointerId);
-    if (e.button === 1 || e.button === 2) { this.drag = { pan: true, p, view: { ...this.view } }; return; }
+    const { h } = this.size();
+    if (e.altKey && e.button === 2) { this.drag = { zoom: true, p, last: p }; return; }        // Alt+RMB: zoom
+    if ((e.altKey && e.button === 1) || e.button === 2) { this.drag = { pan: true, p, view: { ...this.view } }; return; } // Alt+MMB / RMB: pan
+    if (e.button === 1) { if (this.selected.length) this.startMove(p); return; }                 // MMB: move the selection
+    if (e.button !== 0) return;
+    if (p.y > h - 18) { this.drag = { scrub: true }; this.host.seek(Math.max(0, Math.round(this.xf(p.x)))); return; }
     const hnd = this.hitHandle(p);
     if (hnd) {
       const [l, r] = handles(hnd.keys, hnd.i);
@@ -200,21 +275,31 @@ export class GraphEditor {
     }
     const hit = this.hitKey(p);
     if (hit) {
-      if (e.shiftKey) {
-        if (!this.selected.some((s) => s.k === hit.k)) this.selected.push(hit);
-      } else if (!this.selected.some((s) => s.k === hit.k)) this.selected = [hit];
-      this.drag = { keys: this.selected.map((s) => ({ ...s, f: s.k.f, v: s.k.v })), p, moved: false };
+      const plain = !e.shiftKey && !(e.ctrlKey || e.metaKey);
+      if (plain && this.selected.some((s) => s.k === hit.k)) { this.startMove(p); this.draw(); return; } // drag the selection
+      this.applySelection([hit], e);
+      if (this.selected.some((s) => s.k === hit.k)) this.startMove(p);
       this.draw();
       return;
     }
-    this.drag = { seek: true, p };
+    this.drag = { marquee: true, p, q: null, e: { shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey } };
   }
 
   move(e) {
     if (!this.drag) return;
     const p = this.pos(e);
     const d = this.drag;
-    if (d.pan) {
+    if (d.scrub) { this.host.seek(Math.max(0, Math.round(this.xf(p.x)))); return; }
+    if (d.marquee) {
+      if (!d.q && Math.hypot(p.x - d.p.x, p.y - d.p.y) < 4) return;
+      d.q = p;
+    } else if (d.zoom) {
+      // Alt+RMB: drag right / up zooms in, around the press point.
+      const zx = Math.exp(-(p.x - d.last.x) * 0.006), zy = Math.exp((p.y - d.last.y) * 0.006);
+      const f = this.xf(d.p.x), v = this.yv(d.p.y);
+      this.view = { f0: f + (this.view.f0 - f) * zx, f1: f + (this.view.f1 - f) * zx, v0: v + (this.view.v0 - v) * zy, v1: v + (this.view.v1 - v) * zy };
+      d.last = p;
+    } else if (d.pan) {
       const df = this.xf(d.p.x) - this.xf(p.x), dv = this.yv(d.p.y) - this.yv(p.y);
       this.view = { f0: d.view.f0 + df, f1: d.view.f1 + df, v0: d.view.v0 + dv, v1: d.view.v1 + dv };
       d.p = p; d.view = { ...this.view };
@@ -231,8 +316,14 @@ export class GraphEditor {
       }
       this.changed(false);
     } else if (d.keys) {
+      if (!d.moved && Math.hypot(p.x - d.p.x, p.y - d.p.y) < 3) return;
       d.moved = true;
-      const df = this.xf(p.x) - this.xf(d.p.x), dv = this.yv(p.y) - this.yv(d.p.y);
+      let dx = p.x - d.p.x, dy = p.y - d.p.y;
+      if (e.shiftKey) { // constrain to the dominant direction (decided once)
+        d.axis ??= Math.abs(dx) >= Math.abs(dy) ? 'time' : 'value';
+        if (d.axis === 'time') dy = 0; else dx = 0;
+      }
+      const df = this.xf(d.p.x + dx) - this.xf(d.p.x), dv = this.yv(d.p.y + dy) - this.yv(d.p.y);
       for (const s of d.keys) {
         s.k.f = Math.max(0, e.altKey ? s.f + df : Math.round(s.f + df));
         s.k.v = s.v + dv;
@@ -247,10 +338,14 @@ export class GraphEditor {
     const d = this.drag;
     this.drag = null;
     if (!d) return;
-    if (d.seek && Math.hypot(this.pos(e).x - d.p.x, this.pos(e).y - d.p.y) < 4) {
-      this.selected = [];
-      this.host.seek(Math.max(0, Math.round(this.xf(d.p.x))));
+    if (d.marquee) {
+      if (d.q) this.applySelection(this.keysIn(d.p, d.q), d.e);
+      else { // a click on empty space: deselect (no modifier) and seek
+        if (!d.e.shiftKey && !d.e.ctrlKey && !d.e.metaKey) this.selected = [];
+        this.host.seek(Math.max(0, Math.round(this.xf(d.p.x))));
+      }
       this.draw();
+      return;
     }
     if ((d.keys && d.moved) || d.handle) this.changed(true);
   }
@@ -279,18 +374,21 @@ export class GraphEditor {
     this.changed(true);
   }
 
+  // Wheel: zoom both axes around the cursor (Shift: time only, Ctrl: values only).
   wheel(e) {
     e.preventDefault();
     const p = this.pos(e);
     const z = Math.exp(e.deltaY * 0.0015);
-    if (e.shiftKey) {
-      const v = this.yv(p.y);
-      this.view.v0 = v + (this.view.v0 - v) * z;
-      this.view.v1 = v + (this.view.v1 - v) * z;
-    } else {
+    const ctrl = e.ctrlKey || e.metaKey;
+    if (!ctrl) {
       const f = this.xf(p.x);
       this.view.f0 = f + (this.view.f0 - f) * z;
       this.view.f1 = f + (this.view.f1 - f) * z;
+    }
+    if (!e.shiftKey) {
+      const v = this.yv(p.y);
+      this.view.v0 = v + (this.view.v0 - v) * z;
+      this.view.v1 = v + (this.view.v1 - v) * z;
     }
     this.draw();
   }

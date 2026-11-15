@@ -10,6 +10,7 @@ import * as THREE from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { CHANNELS, channelsOf, offsetAt, setKey, keyedJoints, keyFrames, quatEuler, eulerQuat } from '../viewer/keyframes.js';
 import { GraphEditor } from './graph-editor.js';
+import { skeletonLocal } from '../viewer/model-loader.js';
 
 export class KeyPanel {
   constructor({ $, viewport, player, status, motionPanel, retarget, getCharacter, onSelectJoint }) {
@@ -57,9 +58,12 @@ export class KeyPanel {
   get override() { return this.active && this.motionPanel.activeLayer.blend === 'override'; }
   // Override key values of the joint's current pose (near: the previous Euler, for continuity).
   poseValues(j, near = { rx: 0, ry: 0, rz: 0 }) {
-    const q = j.rest.q.clone().invert().multiply(j.bone.quaternion);
+    const character = this.getCharacter();
+    character.root.updateMatrixWorld(true);
+    const local = skeletonLocal(character, j); // kmd-anim joint space (the root includes its Armature)
+    const q = j.rest.q.clone().invert().multiply(local.q);
     const [rx, ry, rz] = quatEuler(q, [near.rx, near.ry, near.rz]);
-    const t = j.bone.position.clone().sub(j.rest.p);
+    const t = local.p.clone().sub(j.rest.p);
     return { rx, ry, rz, tx: t.x, ty: t.y, tz: t.z };
   }
   tracks() { return this.active ? this.motionPanel.activeLayer.keys : null; }
@@ -148,9 +152,14 @@ export class KeyPanel {
       else this.updateInfo();
       return;
     }
-    const rot = eulerQuat(o.rx, o.ry, o.rz).multiply(D);
-    const [rx, ry, rz] = quatEuler(rot, [o.rx, o.ry, o.rz]);
-    this.pending = { joint: name, frame: f, values: { rx, ry, rz, tx: o.tx + delta.x, ty: o.ty + delta.y, tz: o.tz + delta.z },
+    // Additive: the gizmo moved the bone from the pose on screen, so the new offset is the offset
+    // that pose was computed with (keys as shown, which may be older than the edited keys while
+    // a result is on its way) times the change.
+    const shown = this.pending?.frame === f ? null : this.motionPanel.shownKeysOf(this.motionPanel.activeLayer);
+    const base = shown ? offsetAt(shown, name, f) : o;
+    const rot = eulerQuat(base.rx, base.ry, base.rz).multiply(D);
+    const [rx, ry, rz] = quatEuler(rot, [base.rx, base.ry, base.rz]);
+    this.pending = { joint: name, frame: f, values: { rx, ry, rz, tx: base.tx + delta.x, ty: base.ty + delta.y, tz: base.tz + delta.z },
       translated: delta.lengthSq() > 1e-12 };
     this.start = null;
     if (this.$('key-auto').checked) this.keyCurrent();

@@ -576,6 +576,9 @@ export class MotionPanel {
     };
   }
 
+  // The keys of anim layer l as in the result on screen (null: not shown yet).
+  shownKeysOf(l) { return this.shownKeys?.get(l?.id) ?? null; }
+
   // Frames keyed on any joint of anim layer l.
   allKeyFrames(l) {
     const set = new Set();
@@ -683,6 +686,7 @@ export class MotionPanel {
 
   schedule() {
     this.syncVisibility();
+    this.editSeq = (this.editSeq ?? 0) + 1; // results requested before this edit are stale
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.apply(), 200);
   }
@@ -773,7 +777,9 @@ export class MotionPanel {
   }
 
   async apply() {
-    const ticket = ++this.request;
+    const ticket = ++this.request, seq = this.editSeq;
+    // The anim layers' keys this result is computed from (the gizmo works relative to them).
+    const keysSent = new Map(this.layers.filter(isKeys).map((l) => [l.id, structuredClone(l.keys)]));
     this.renderTimeline();
     const missing = this.layers.find((l) => !isKeys(l) && !l.config.source);
     if (missing) {
@@ -789,6 +795,10 @@ export class MotionPanel {
       const rt = this.retarget ? await this.retarget.request() : null;
       const result = this.isSimple() ? await this.applySimple(rt) : await this.applyStack(rt);
       if (ticket !== this.request) return; // a newer request superseded this one
+      // Never move a bone under the gizmo while it is dragged; the drag ends with a new edit.
+      while (this.isDragging?.()) await new Promise((r) => setTimeout(r, 50));
+      if (ticket !== this.request || seq !== this.editSeq) return; // edited since: a newer result follows
+      this.shownKeys = keysSent;
       this.show(def, rt, result);
     } catch (err) {
       if (ticket !== this.request) return;

@@ -275,6 +275,7 @@ const keyPanel = new KeyPanel({
 });
 motionPanel.keyJoint = () => keyPanel.jointName();
 motionPanel.graphOpen = () => keyPanel.graph.open;
+motionPanel.isDragging = () => !!viewport.gizmoDragging;
 motionPanel.onKeysEdited = () => { keyPanel.updateInfo(); if (keyPanel.graph.open) keyPanel.graph.draw(); };
 const syncKeys = () => keyPanel.sync();
 const previousShown = motionPanel.onShown;
@@ -468,3 +469,6 @@ if (params.get('load')) {
     if (joint && character) select(character.joints.findIndex((j) => j.name === joint));
   });
 }
+
+// Debug hook for automated checks: /studio/?debug=1 exposes the main objects.
+if (new URLSearchParams(location.search).get('debug') === '1') window.__studio = { THREE, player, motionPanel, keyPanel, retargetPanel, getCharacter: () => character, select };
