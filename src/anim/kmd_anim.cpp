@@ -7,8 +7,11 @@
 //                                               automatic (or given) joint mapping + diagnostics
 //   kmd-anim retarget MOTION_DIR TARGET.glb OUT_DIR [options]
 //                                               retarget a native motion onto a rigged character
+//   kmd-anim layers OUT_DIR (--native KEY | --character FILE.glb) --layer DIR [layer options]...
+//                                               compose and bake an animation layer stack
 #include <kimodo/anim/clip.hpp>
 #include <kimodo/anim/gltf.hpp>
+#include <kimodo/anim/layers.hpp>
 #include <kimodo/anim/retarget.hpp>
 #include <kimodo/anim/root_motion.hpp>
 #include <kimodo/anim/skeleton.hpp>
@@ -89,7 +92,14 @@ int usage() {
                  "       kmd-anim retarget MOTION_DIR TARGET.glb OUT_DIR [--mapping FILE] [--save-mapping FILE]\n"
                  "           [--root-scale S] [--yaw DEG] [--no-auto-facing] [--align-rest] [--skin N] [--fps N]\n"
                  "       retarget writes OUT_DIR/retarget.json, local_rotations_xyzw.f32 [T,J,4] and\n"
-                 "       local_translations.f32 [T,J,3] in the target's joint order.\n";
+                 "       local_translations.f32 [T,J,3] in the target's joint order.\n"
+                 "       kmd-anim layers OUT_DIR (--native KEY | --character FILE.glb [--skin N]) [--fps N]\n"
+                 "           --layer DIR [--name S] [--mode override|additive] [--weight W]\n"
+                 "                       [--mask full|upper|lower|MASK.json] [--disabled] [--muted]\n"
+                 "                       [--reference first|rest|FRAME] [--wrap clamp|loop]  (repeat per layer)\n"
+                 "       DIR is a clip directory (clip.json/retarget.json) or a native motion directory;\n"
+                 "       layers are applied bottom to top in command-line order. OUT_DIR gets clip.json,\n"
+                 "       local_rotations_xyzw.f32, local_translations.f32 (+ root_positions.f32 if --native).\n";
     return 2;
 }
 
@@ -321,12 +331,142 @@ int retarget_command(int argc, char **argv) {
     std::cout << meta.str();
     return 0;
 }
+// Reads a layer input: a clip directory (clip.json / retarget.json) or a native motion directory.
+std::expected<AnimationClip, std::string> read_layer_input(const std::filesystem::path &dir, float fps) {
+    if (std::filesystem::exists(dir / "clip.json") || std::filesystem::exists(dir / "retarget.json")) return read_clip_dir(dir);
+    auto motion = read_motion_dir(dir);
+    if (!motion) return std::unexpected(motion.error());
+    auto skeleton = native_skeleton_for_joint_count(motion->joints);
+    if (!skeleton) return std::unexpected(skeleton.error());
+    return clip_from_motion(*skeleton, *motion, fps);
+}
+
+int layers_command(int argc, char **argv) {
+    if (argc < 3) return usage();
+    const std::filesystem::path out = argv[2];
+    std::optional<Skeleton> skeleton;
+    bool native = false;
+    float fps = 0.F, input_fps = 30.F;
+    struct Pending {
+        AnimationLayer layer;
+        std::filesystem::path dir;
+        std::string mask = "full";
+        std::string reference = "first";
+    };
+    std::vector<Pending> pending;
+    GltfImportOptions import;
+    std::optional<std::filesystem::path> character;
+    for (int i = 3; i < argc; ++i) {
+        const std::string_view arg = argv[i];
+        auto value = [&]() -> std::string {
+            if (i + 1 >= argc) throw std::runtime_error(std::string(arg) + " needs a value");
+            return argv[++i];
+        };
+        auto current = [&]() -> Pending & {
+            if (pending.empty()) throw std::runtime_error(std::string(arg) + " must follow --layer");
+            return pending.back();
+        };
+        if (arg == "--native") {
+            auto s = native_skeleton(value());
+            if (!s) throw std::runtime_error(s.error());
+            skeleton = std::move(*s);
+            native = true;
+        } else if (arg == "--character") {
+            character = value();
+        } else if (arg == "--skin") {
+            import.skin = std::stoi(value());
+        } else if (arg == "--fps") {
+            fps = std::stof(value());
+        } else if (arg == "--input-fps") {
+            input_fps = std::stof(value());
+        } else if (arg == "--layer") {
+            Pending p;
+            p.dir = value();
+            p.layer.name = "layer " + std::to_string(pending.size() + 1);
+            pending.push_back(std::move(p));
+        } else if (arg == "--name") {
+            current().layer.name = value();
+        } else if (arg == "--mode") {
+            const std::string m = value();
+            if (m == "override") current().layer.mode = BlendMode::Override;
+            else if (m == "additive") current().layer.mode = BlendMode::Additive;
+            else throw std::runtime_error("unknown blend mode '" + m + "'");
+        } else if (arg == "--weight") {
+            current().layer.weight = std::stof(value());
+        } else if (arg == "--mask") {
+            current().mask = value();
+        } else if (arg == "--disabled") {
+            current().layer.enabled = false;
+        } else if (arg == "--muted") {
+            current().layer.muted = true;
+        } else if (arg == "--reference") {
+            current().reference = value();
+        } else if (arg == "--wrap") {
+            const std::string w = value();
+            if (w == "clamp") current().layer.wrap = TimeWrap::Clamp;
+            else if (w == "loop") current().layer.wrap = TimeWrap::Loop;
+            else throw std::runtime_error("unknown wrap '" + w + "'");
+        } else {
+            throw std::runtime_error("unknown option '" + std::string(arg) + "'");
+        }
+    }
+    if (character) {
+        auto c = load_gltf_character(*character, import);
+        if (!c) throw std::runtime_error(c.error());
+        skeleton = std::move(c->skeleton);
+        native = false;
+    }
+    if (!skeleton) throw std::runtime_error("--native KEY or --character FILE.glb is required");
+    if (pending.empty()) throw std::runtime_error("at least one --layer is required");
+
+    AnimationStack stack(*skeleton);
+    std::ostringstream summary;
+    summary << "[";
+    for (std::size_t i = 0; i < pending.size(); ++i) {
+        Pending &p = pending[i];
+        auto clip = read_layer_input(p.dir, input_fps);
+        if (!clip) throw std::runtime_error(p.layer.name + ": " + clip.error());
+        p.layer.clip = std::move(*clip);
+        if (p.mask == "full") p.layer.mask = full_body_mask();
+        else if (p.mask == "upper") p.layer.mask = upper_body_mask(*skeleton);
+        else if (p.mask == "lower") p.layer.mask = lower_body_mask(*skeleton);
+        else {
+            auto m = load_mask(p.mask);
+            if (!m) throw std::runtime_error(p.layer.name + ": " + m.error());
+            p.layer.mask = std::move(*m);
+        }
+        if (p.reference == "first") p.layer.reference = AdditiveReference::FirstFrame;
+        else if (p.reference == "rest") p.layer.reference = AdditiveReference::RestPose;
+        else {
+            p.layer.reference = AdditiveReference::Frame;
+            p.layer.reference_frame = static_cast<std::size_t>(std::stoul(p.reference));
+        }
+        const AnimationLayer &l = p.layer;
+        summary << (i ? "," : "") << "{\"name\":" << quote(l.name) << ",\"frames\":" << l.clip.frames()
+                << ",\"fps\":" << num(l.clip.fps) << ",\"duration\":" << num(l.clip.duration()) << ",\"mode\":\""
+                << (l.mode == BlendMode::Override ? "override" : "additive") << "\",\"weight\":" << num(l.weight)
+                << ",\"enabled\":" << (l.enabled ? "true" : "false") << ",\"muted\":" << (l.muted ? "true" : "false")
+                << ",\"mask\":" << quote(l.mask.name) << "}";
+        if (auto ok = stack.add_layer(std::move(p.layer)); !ok) throw std::runtime_error(ok.error());
+    }
+    summary << "]";
+    AnimationClip baked = stack.bake(fps);
+    const std::string extra = "{\"skeleton\":" + quote(skeleton->source) + ",\"duration\":" + num(stack.duration()) +
+                              ",\"layers\":" + summary.str() + "}";
+    if (auto ok = write_clip_dir(out, baked, *skeleton, extra); !ok) throw std::runtime_error(ok.error());
+    if (native) // also the kmd-generate layout, so native results play like any generated motion
+        if (auto ok = write_motion_dir(out, clip_to_motion(baked)); !ok) throw std::runtime_error(ok.error());
+    std::ifstream meta(out / "clip.json", std::ios::binary);
+    std::cout << meta.rdbuf();
+    return 0;
+}
 } // namespace
 
 int main(int argc, char **argv) try {
     if (argc >= 2 && std::string_view(argv[1]) == "root-motion") return root_motion(argc, argv);
     if (argc >= 2 && std::string_view(argv[1]) == "map") return map_command(argc, argv);
     if (argc >= 2 && std::string_view(argv[1]) == "retarget") return retarget_command(argc, argv);
+    if (argc >= 2 && std::string_view(argv[1]) == "layers") return layers_command(argc, argv);
     if (argc < 3 || std::string_view(argv[1]) != "inspect") return usage();
     if (std::string_view(argv[2]) == "--native") {
         if (argc != 4) return usage();

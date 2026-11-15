@@ -47,6 +47,7 @@
       <p class="muted">or use <em>Open GLB</em> / <em>Sample rigs</em>. Orbit: left-drag · Pan: right-drag · Zoom: wheel · Select: click a joint</p>
     </div>
     <div id="drop" class="drop" hidden>Drop to load</div>
+    <div id="timeline" class="timeline" hidden></div>
     <div id="playbar" class="playbar" hidden>
       <button id="play" class="button" title="Play / pause (Space)">Play</button>
       <input id="scrub" type="range" min="0" max="0" value="0" step="1" aria-label="Frame">
@@ -55,7 +56,22 @@
     </div>
   </section>
   <aside class="panel" aria-label="Motion and inspector">
-    <div class="panel-head"><h2>Motion</h2></div>
+    <div class="panel-head"><h2>Layers</h2><button id="add-layer" class="button small-button" type="button" title="Add a layer on top (copies the active layer's motion)">+ Layer</button></div>
+    <div class="layers-form">
+      <div id="layers-list" class="layers-list"></div>
+      <p class="note">Top of the list is applied last. Off removes a layer from the stack; M (mute) keeps it on the timeline but silences it.</p>
+      <div id="mask-editor" class="mask-editor" hidden>
+        <div class="row"><label class="field">Custom mask <input id="mask-name" maxlength="60"></label></div>
+        <div class="button-row">
+          <button id="mask-all" class="button small-button" type="button">All 1</button>
+          <button id="mask-none" class="button small-button" type="button">All 0</button>
+          <button id="mask-save" class="button small-button" type="button">Save</button>
+          <label class="button small-button">Load<input id="mask-load" type="file" accept=".json,application/json" hidden></label>
+        </div>
+        <div class="mapping-editor"><div class="map-head"><span>Joint</span><span>Weight</span></div><div id="mask-rows" class="mask-rows"></div></div>
+      </div>
+    </div>
+    <div class="panel-head"><h2>Motion</h2><span id="motion-layer-name" class="muted small"></span></div>
     <div class="motion-form">
       <label class="field">Source <select id="motion-source"><option value="">Loading…</option></select></label>
       <div class="segmented" role="radiogroup" aria-label="Root motion mode">

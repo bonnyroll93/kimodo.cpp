@@ -48,7 +48,8 @@ player.onChange((p) => {
   $('play').textContent = p.playing ? 'Pause' : 'Play';
   $('scrub').max = Math.max(p.frames - 1, 0);
   $('scrub').value = p.frame;
-  $('frame-label').textContent = `${p.frame + 1} / ${p.frames} · ${p.time.toFixed(2)} s`;
+  $('frame-label').textContent = `${p.frame + 1} / ${p.frames} · ${p.time.toFixed(2)} / ${p.duration.toFixed(2)} s · ${p.fps} fps`;
+  motionPanel?.timeline.update(p.time);
 });
 $('play').addEventListener('click', () => player.play());
 $('scrub').addEventListener('input', (e) => { player.play(false); player.setFrame(Number(e.target.value)); });
@@ -56,6 +57,7 @@ $('loop').addEventListener('change', (e) => { player.loop = e.target.checked; })
 const retargetPanel = new RetargetPanel({ $, status, onChange: () => motionPanel.schedule() });
 const motionPanel = new MotionPanel({
   $, player, pathView, status, retarget: retargetPanel,
+  onSeek: (t) => { player.play(false); player.setFrame(t * player.fps); },
   onLoaded: (first) => {
     $('empty').hidden = true;
     applyVisibility();
@@ -127,7 +129,7 @@ function frameMotion(side = false) {
   }
   const box = new THREE.Box3();
   const p = new THREE.Vector3();
-  for (const arr of [m.root, motionPanel.sourceRoot, motionPanel.samples])
+  for (const arr of [m.root, motionPanel.sourceRootShown, motionPanel.samples])
     if (arr) for (let i = 0; i < arr.length; i += 3) box.expandByPoint(p.set(arr[i], arr[i + 1], arr[i + 2]));
   box.min.y = Math.min(box.min.y, 0);
   box.max.y = Math.max(box.max.y + 0.9, 1.9); // root is at the hips
@@ -200,6 +202,17 @@ motionPanel.loadSources().then(() => {
   if (params.get('timing')) $('timing').value = params.get('timing');
   if (params.get('align') === '1') $('align-rest').checked = true;
   $('motion-source').value = motion;
+  motionPanel.activeLayer.config = motionPanel.readForm();
+  // stack=demo: a second, additive upper-body layer (in place) at half weight; mask=... overrides its mask.
+  if (params.get('stack') === 'demo') {
+    $('add-layer').click();
+    clearTimeout(motionPanel.timer);
+    const top = motionPanel.activeLayer;
+    top.name = 'Upper additive';
+    top.config = { ...top.config, mode: 'inplace' };
+    if (['full', 'upper', 'lower', 'custom'].includes(params.get('mask'))) top.mask = params.get('mask');
+    motionPanel.select(motionPanel.layers.length - 1);
+  }
   motionPanel.syncVisibility();
   motionPanel.apply().then(() => {
     if (params.get('frame')) { player.play(false); player.setFrame(Number(params.get('frame'))); }

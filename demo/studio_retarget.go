@@ -67,16 +67,17 @@ func (c studioConfig) runJSON(ctx context.Context, args ...string) (json.RawMess
 	return nil, &httpError{http.StatusUnprocessableEntity, "kmd-anim: " + message}
 }
 
-// storeMapping writes a client mapping (validated JSON) under a content hash and returns its path.
-func (c studioConfig) storeMapping(mapping json.RawMessage) (string, *httpError) {
-	if len(mapping) == 0 || !json.Valid(mapping) {
-		return "", &httpError{http.StatusBadRequest, "mapping must be a JSON object"}
+// storeJSON writes client JSON (validated, compacted) under <output>/<kind>/<hash>.json and
+// returns its path; identical content is stored once.
+func (c studioConfig) storeJSON(kind string, raw json.RawMessage) (string, *httpError) {
+	if len(raw) == 0 || !json.Valid(raw) {
+		return "", &httpError{http.StatusBadRequest, kind + " must be valid JSON"}
 	}
 	var compact bytes.Buffer
-	if err := json.Compact(&compact, mapping); err != nil {
+	if err := json.Compact(&compact, raw); err != nil {
 		return "", &httpError{http.StatusBadRequest, err.Error()}
 	}
-	dir := filepath.Join(c.output, "retarget", "mappings")
+	dir := filepath.Join(c.output, filepath.FromSlash(kind))
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", &httpError{http.StatusInternalServerError, err.Error()}
 	}
@@ -87,6 +88,64 @@ func (c studioConfig) storeMapping(mapping json.RawMessage) (string, *httpError)
 		}
 	}
 	return path, nil
+}
+
+func (c studioConfig) storeMapping(mapping json.RawMessage) (string, *httpError) {
+	return c.storeJSON("retarget/mappings", mapping)
+}
+
+type retargetResult struct {
+	ID           string           `json:"id"`
+	Meta         json.RawMessage  `json:"meta"`
+	RootMotion   rootMotionResult `json:"root_motion"`
+	Rotations    string           `json:"rotations"`
+	Translations string           `json:"translations"`
+	dir          string
+}
+
+// retarget applies the root motion step, then retargets onto the character (both cached).
+func (c studioConfig) retarget(ctx context.Context, req retargetRequest) (retargetResult, *httpError) {
+	character, ok := c.characterPath(req.Character)
+	if !ok {
+		return retargetResult{}, &httpError{http.StatusNotFound, "unknown character"}
+	}
+	if !finite(req.RootScale, req.Yaw) || req.RootScale < 0 || req.RootScale > 100 || math.Abs(req.Yaw) > 360 {
+		return retargetResult{}, &httpError{http.StatusBadRequest, "root_scale must be 0..100 and yaw -360..360"}
+	}
+	motion, herr := c.rootMotion(ctx, req.RootMotion)
+	if herr != nil {
+		return retargetResult{}, herr
+	}
+	var extra []string
+	if len(req.Mapping) > 0 && string(req.Mapping) != "null" {
+		mappingPath, herr := c.storeMapping(req.Mapping)
+		if herr != nil {
+			return retargetResult{}, herr
+		}
+		extra = append(extra, "--mapping", mappingPath)
+	}
+	if req.AlignRest {
+		extra = append(extra, "--align-rest")
+	}
+	if req.RootScale > 0 {
+		extra = append(extra, "--root-scale", num(req.RootScale))
+	}
+	if req.Yaw != 0 {
+		extra = append(extra, "--yaw", num(req.Yaw))
+	}
+	id := hashID(append([]string{motion.ID, req.Character}, extra...)...)
+	dir := filepath.Join(c.output, "retarget", id)
+	if herr := c.runCached(ctx, dir, "retarget.json", func(out string) []string {
+		return append([]string{"retarget", motion.dir, character, out}, extra...)
+	}); herr != nil {
+		return retargetResult{}, herr
+	}
+	meta, err := os.ReadFile(filepath.Join(dir, "retarget.json"))
+	if err != nil || !json.Valid(meta) {
+		return retargetResult{}, &httpError{http.StatusInternalServerError, "invalid retarget result"}
+	}
+	return retargetResult{ID: id, Meta: meta, RootMotion: motion, dir: dir,
+		Rotations: "/api/retarget/" + id + "/rotations.f32", Translations: "/api/retarget/" + id + "/translations.f32"}, nil
 }
 
 type retargetRequest struct {
@@ -187,57 +246,13 @@ func registerRetarget(mux *http.ServeMux, c studioConfig) {
 			writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 			return
 		}
-		character, ok := c.characterPath(req.Character)
-		if !ok {
-			writeError(w, http.StatusNotFound, "unknown character")
-			return
-		}
-		if !finite(req.RootScale, req.Yaw) || req.RootScale < 0 || req.RootScale > 100 || math.Abs(req.Yaw) > 360 {
-			writeError(w, http.StatusBadRequest, "root_scale must be 0..100 and yaw -360..360")
-			return
-		}
-		motion, herr := c.rootMotion(r.Context(), req.RootMotion)
+		res, herr := c.retarget(r.Context(), req)
 		if herr != nil {
 			writeError(w, herr.status, herr.message)
 			return
 		}
-		var extra []string
-		if len(req.Mapping) > 0 && string(req.Mapping) != "null" {
-			mappingPath, herr := c.storeMapping(req.Mapping)
-			if herr != nil {
-				writeError(w, herr.status, herr.message)
-				return
-			}
-			extra = append(extra, "--mapping", mappingPath)
-		}
-		if req.AlignRest {
-			extra = append(extra, "--align-rest")
-		}
-		if req.RootScale > 0 {
-			extra = append(extra, "--root-scale", num(req.RootScale))
-		}
-		if req.Yaw != 0 {
-			extra = append(extra, "--yaw", num(req.Yaw))
-		}
-		id := hashID(append([]string{motion.ID, req.Character}, extra...)...)
-		dir := filepath.Join(c.output, "retarget", id)
-		if herr := c.runCached(r.Context(), dir, "retarget.json", func(out string) []string {
-			return append([]string{"retarget", motion.dir, character, out}, extra...)
-		}); herr != nil {
-			writeError(w, herr.status, herr.message)
-			return
-		}
-		meta, err := os.ReadFile(filepath.Join(dir, "retarget.json"))
-		if err != nil || !json.Valid(meta) {
-			writeError(w, http.StatusInternalServerError, "invalid retarget result")
-			return
-		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id": id, "meta": json.RawMessage(meta), "root_motion": motion,
-			"rotations":    "/api/retarget/" + id + "/rotations.f32",
-			"translations": "/api/retarget/" + id + "/translations.f32",
-		})
+		_ = json.NewEncoder(w).Encode(res)
 	})
 
 	mux.HandleFunc("/api/retarget/", func(w http.ResponseWriter, r *http.Request) {

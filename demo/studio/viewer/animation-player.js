@@ -20,7 +20,8 @@ export class AnimationPlayer {
     this.listeners = [];
   }
 
-  get frames() { return this.motion ? this.motion.frames : 0; }
+  // Timeline length: the source motion or the character track (a layer stack may be longer).
+  get frames() { return this.motion ? Math.max(this.motion.frames, this.target?.frames ?? 0) : 0; }
   get fps() { return this.motion ? this.motion.fps : 30; }
   get duration() { return this.frames > 1 ? (this.frames - 1) / this.fps : 0; }
 
@@ -137,10 +138,11 @@ export class AnimationPlayer {
     const { root, rotations, joints } = this.motion;
     this.frame = Math.max(0, Math.min(this.frames - 1, Math.round(f)));
     this.time = this.frame / this.fps;
-    const r = this.frame * 3;
+    const mf = Math.min(this.frame, this.motion.frames - 1); // source motion holds its last frame
+    const r = mf * 3;
     this.joints[0].bone.position.set(root[r], root[r + 1], root[r + 2]);
     for (let j = 0; j < joints; j++) {
-      const q = (this.frame * joints + j) * 4;
+      const q = (mf * joints + j) * 4;
       this.joints[j].bone.quaternion.set(rotations[q], rotations[q + 1], rotations[q + 2], rotations[q + 3]);
     }
     this.group.updateMatrixWorld(true);

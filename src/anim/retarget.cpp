@@ -117,6 +117,7 @@ std::expected<RetargetResult, std::string> retarget(const AnimationClip &source_
     out.name = source_clip.name;
     out.fps = source_clip.fps;
     out.joint_count = nt;
+    for (const Joint &j : target.joints) out.joint_names.push_back(j.name);
     out.locals.resize(source_clip.frames() * nt);
     std::vector<Transform> tgt_global(nt);
     for (std::size_t f = 0; f < source_clip.frames(); ++f) {

@@ -15,7 +15,7 @@ The original generation path is unchanged; `tests/data/baseline/` guards it bit 
 | 1 | skeleton runtime, GLB import, Three.js studio viewer | done |
 | 2 | root motion (Full / InPlace) and MotionPath, studio playback | done |
 | 3 | retargeting (role-based mapping, JSON mappings, studio preview on the character) | done |
-| 4 | animation layers, timeline | — |
+| 4 | animation layers (Override/Additive, masks, enable/mute), layer timeline | done |
 | 5 | GLB export, regression | — |
 
 ## Layout
@@ -152,6 +152,46 @@ A-pose Mixamo character driven by T-pose SOMA.
 Only humanoid rigs that are compatible with the source skeleton are supported. Arbitrary
 rigs (quadrupeds, robots) are out of scope for the MVP.
 
+## Step 4 API: animation layers
+
+```cpp
+#include <kimodo/anim/layers.hpp>
+
+kimodo::anim::AnimationStack stack(character->skeleton);
+kimodo::anim::AnimationLayer base{.name = "walk", .clip = walk_clip};
+kimodo::anim::AnimationLayer arms{.name = "arms", .clip = wave_clip,
+                                  .mode = kimodo::anim::BlendMode::Additive, .weight = 0.5F};
+arms.mask = kimodo::anim::upper_body_mask(character->skeleton);   // or load_mask("m.json")
+arms.reference = kimodo::anim::AdditiveReference::RestPose;      // FirstFrame | RestPose | Frame
+stack.add_layer(base);
+stack.add_layer(arms);
+auto pose = stack.evaluate(1.25F);       // local pose at t = 1.25 s
+auto clip = stack.bake();                // [0, duration] at the first layer's fps
+```
+
+**Semantics.**
+- Evaluation starts from the rest pose and applies the layers bottom to top. Each joint
+  gets the weight `clamp(layer weight × mask(joint), 0, 1)`.
+- **Override** slerps the rotation along the shortest arc and lerps translation and
+  scale; at weight 1 it copies the layer exactly.
+- **Additive** applies the layer's change from its reference pose, scaled by the weight:
+  `current · slerp(I, ref⁻¹·layer, w)` for rotation and `+ w·(layer − ref)` for
+  translation. Scale is not additive. The reference pose is explicit: the first frame,
+  the rest pose, or a frame index.
+- **Enabled vs muted.** A disabled layer is bypassed completely and does not count
+  towards the stack duration. A muted layer keeps its place on the timeline and in the
+  duration, but adds nothing to the pose. Weight 0 equals muted for the pose.
+- **Joint identity.** Layers address joints by name (`AnimationClip::joint_names`), so a
+  clip can drive a subset of the skeleton.
+- **Frame rates and durations.** Clips with different frame rates and durations are
+  sampled at the same time `t`, with interpolation between frames. Past its end a clip
+  holds its last frame (`Clamp`) or loops (`Loop`).
+- **Masks.** Built-in presets are Full, Upper body (the first spine joint and everything
+  below it) and Lower body (hips and legs). A custom mask is JSON:
+  `{"version":1,"name":..,"default":0,"weights":{"Joint":0..1}}`.
+
+Not in the MVP: `Multiply` and procedural layers, weight curves, keyframe editing.
+
 ## Tools
 
 ```sh
@@ -165,6 +205,18 @@ kmd-anim map soma30 character.glb [--mapping m.json]      # auto (or given) mapp
 kmd-anim retarget MOTION_DIR character.glb OUT_DIR \
     [--mapping m.json] [--save-mapping m.json] [--align-rest] [--root-scale S] [--yaw DEG] [--no-auto-facing]
 ```
+
+```sh
+kmd-anim layers OUT_DIR (--native soma30 | --character character.glb) [--fps N] \
+    --layer DIR [--name S] [--mode override|additive] [--weight W] [--mask full|upper|lower|m.json] \
+                [--disabled] [--muted] [--reference first|rest|FRAME] [--wrap clamp|loop] \
+    --layer DIR ...
+```
+
+`layers` takes each `DIR` from either a clip directory (`kmd-anim retarget`/`layers` output)
+or a native motion directory. It writes `clip.json`, `local_rotations_xyzw.f32` and
+`local_translations.f32`; with `--native` it also writes `root_positions.f32`, so the
+result reads like any generated motion.
 
 `retarget` writes three files to `OUT_DIR`:
 - `local_rotations_xyzw.f32` (`[T,J,4]`) and `local_translations.f32` (`[T,J,3]`), in the
@@ -211,10 +263,26 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
   - *Auto* recomputes the mapping. *Save* and *Load* exchange mapping JSON files.
   - Locally opened `.glb` files are uploaded once, on demand. Bones are matched by glTF
     node index, because three.js rewrites names such as `mixamorig:Hips`.
+- **Layers.** The *Layers* panel lists the stack, with the top of the list applied last.
+  - Each layer has an enable checkbox, mute (M), a name, a blend mode, a weight slider
+    and a mask (Full / Upper / Lower / Custom…).
+  - Additive layers also choose a reference pose (first frame / rest / frame N).
+  - Each layer chooses whether to hold its end or loop, and can be moved or removed.
+  - *+ Layer* adds an additive upper-body layer on top.
+  - The *Motion* form edits the active layer's source and root motion.
+  - *Custom…* opens a per-joint weight editor with Save and Load for mask JSON files.
+  - A single default layer behaves exactly as before. A real stack is baked on the
+    server, on the character's skeleton when retargeting, otherwise on the native
+    skeleton.
+- **Timeline.** It shows one bar per layer (clip length on the stack's time axis), the
+  active layer, disabled and muted states, and a playhead.
+  - Click a row label to make that layer active; click or drag on the bars to seek.
+  - The play bar shows the frame, the time, the duration and the fps.
 - **Deep links:**
   - `/studio/?load=samples/test_rig.glb&joint=LeftArm`
   - `/studio/?motion=sample:soma30-walk-s42&mode=path&preset=scurve&frame=45`
   - `/studio/?load=samples/test_rig_mixamo_apose.glb&motion=sample:soma30-walk-s42&mode=inplace&align=1&mapping=open`
+  - `/studio/?load=samples/test_rig.glb&motion=sample:soma30-walk-s42&stack=demo&mask=custom` (a demo two-layer stack)
 
 | Endpoint | Purpose |
 |---|---|
@@ -228,6 +296,8 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
 | `POST /api/retarget/check` | `{character, skeleton, mapping}` → diagnostics |
 | `POST /api/retarget` | `{root_motion:{…}, character, mapping?, align_rest?, root_scale?, yaw?}` |
 | `GET /api/retarget/<id>/{retarget.json,rotations.f32,translations.f32}` | result, cached by request hash |
+| `POST /api/layers` | `{character?, mapping?, align_rest?, layers:[{name, root_motion, mode, weight, mask, enabled, muted, reference, wrap}]}` (1–16 layers) |
+| `GET /api/layers/<id>/{clip.json,rotations.f32,translations.f32,root.f32}` | baked stack, cached by request hash |
 
 The demo finds `kmd-anim` next to `-generator`; override that location with `-anim`.
 

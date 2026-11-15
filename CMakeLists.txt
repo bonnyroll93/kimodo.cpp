@@ -106,7 +106,7 @@ if(KIMODO_BUILD_ANIM)
   add_library(kimodo_anim STATIC
     src/anim/types.cpp src/anim/skeleton.cpp src/anim/gltf_import.cpp src/anim/cgltf_impl.cpp
     src/anim/clip.cpp src/anim/root_motion.cpp src/anim/motion_path.cpp
-    src/anim/retarget_mapping.cpp src/anim/retarget.cpp)
+    src/anim/retarget_mapping.cpp src/anim/retarget.cpp src/anim/layers.cpp)
   add_library(kimodo::anim ALIAS kimodo_anim)
   target_include_directories(kimodo_anim
     PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
@@ -151,6 +151,14 @@ if(BUILD_TESTING AND KIMODO_BUILD_TESTS AND KIMODO_BUILD_ANIM)
   add_test(NAME kimodo-anim-retarget-cli
     COMMAND kmd-anim retarget "${KIMODO_TEST_WALK}" "${KIMODO_TEST_RIGS}/test_rig.glb" "${CMAKE_CURRENT_BINARY_DIR}/anim-test-out/retarget")
   set_tests_properties(kimodo-anim-retarget-cli PROPERTIES PASS_REGULAR_EXPRESSION "\"translation_joint\":0,")
+  add_executable(kimodo-anim-layers-test tests/anim/anim_layers_test.cpp)
+  target_link_libraries(kimodo-anim-layers-test PRIVATE kimodo_anim)
+  add_test(NAME kimodo-anim-layers-test COMMAND kimodo-anim-layers-test "${KIMODO_TEST_WALK}" "${KIMODO_TEST_RIGS}")
+  add_test(NAME kimodo-anim-layers-cli
+    COMMAND kmd-anim layers "${CMAKE_CURRENT_BINARY_DIR}/anim-test-out/layers" --native soma30
+            --layer "${KIMODO_TEST_WALK}" --name base
+            --layer "${KIMODO_TEST_WALK}" --mode additive --weight 0.5 --mask upper --reference rest)
+  set_tests_properties(kimodo-anim-layers-cli PROPERTIES PASS_REGULAR_EXPRESSION "\"mask\":\"upper\"")
   add_test(NAME kimodo-anim-map-cli COMMAND kmd-anim map soma30 "${KIMODO_TEST_RIGS}/test_rig.glb")
   set_tests_properties(kimodo-anim-map-cli PROPERTIES PASS_REGULAR_EXPRESSION "\"target\": \"LeftLeg\",[ \r\n]*\"source\": \"LeftShin\"")
 endif()

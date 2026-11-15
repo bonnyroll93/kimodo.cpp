@@ -1,6 +1,9 @@
 #include <kimodo/anim/clip.hpp>
 
+#include <nlohmann/json.hpp>
+
 #include <fstream>
+#include <sstream>
 
 namespace kimodo::anim {
 namespace {
@@ -37,6 +40,7 @@ std::expected<AnimationClip, std::string> clip_from_motion(const Skeleton &skele
     AnimationClip clip;
     clip.fps = fps;
     clip.joint_count = motion.joints;
+    for (const Joint &j : skeleton.joints) clip.joint_names.push_back(j.name);
     clip.locals.resize(motion.frames * motion.joints);
     for (std::size_t f = 0; f < motion.frames; ++f)
         for (std::size_t j = 0; j < motion.joints; ++j) {
@@ -83,6 +87,80 @@ std::expected<MotionArrays, std::string> read_motion_dir(const std::filesystem::
     m.root_positions = std::move(*root);
     m.rotations_xyzw = std::move(*rot);
     return m;
+}
+
+std::expected<AnimationClip, std::string> read_clip_dir(const std::filesystem::path &dir) {
+    std::filesystem::path meta_path = dir / "clip.json";
+    if (!std::filesystem::exists(meta_path)) meta_path = dir / "retarget.json";
+    std::ifstream in(meta_path, std::ios::binary);
+    if (!in) return std::unexpected("no clip.json or retarget.json in " + dir.string());
+    std::stringstream text;
+    text << in.rdbuf();
+    AnimationClip clip;
+    std::vector<Vec3> scales;
+    try {
+        const auto meta = nlohmann::json::parse(text.str());
+        clip.fps = meta.value("fps", 30.F);
+        clip.name = meta.value("name", dir.filename().string());
+        for (const auto &j : meta.at("joints")) {
+            clip.joint_names.push_back(j.at("name").get<std::string>());
+            Vec3 s{1.F, 1.F, 1.F};
+            if (j.contains("scale")) s = {j["scale"][0].get<float>(), j["scale"][1].get<float>(), j["scale"][2].get<float>()};
+            scales.push_back(s);
+        }
+    } catch (const nlohmann::json::exception &e) {
+        return std::unexpected("invalid " + meta_path.string() + ": " + e.what());
+    }
+    if (!(clip.fps > 0.F)) return std::unexpected("clip fps must be positive");
+    clip.joint_count = clip.joint_names.size();
+    auto rot = read_f32(dir / "local_rotations_xyzw.f32");
+    if (!rot) return std::unexpected(rot.error());
+    auto trans = read_f32(dir / "local_translations.f32");
+    if (!trans) return std::unexpected(trans.error());
+    const std::size_t j = clip.joint_count;
+    if (j == 0 || rot->size() % (j * 4) != 0 || trans->size() != rot->size() / 4 * 3)
+        return std::unexpected("clip arrays in " + dir.string() + " do not match " + std::to_string(j) + " joints");
+    const std::size_t frames = rot->size() / (j * 4);
+    clip.locals.resize(frames * j);
+    for (std::size_t i = 0; i < frames * j; ++i) {
+        const float *q = rot->data() + i * 4, *t = trans->data() + i * 3;
+        clip.locals[i] = {{t[0], t[1], t[2]}, {q[0], q[1], q[2], q[3]}, scales[i % j]};
+    }
+    return clip;
+}
+
+std::expected<void, std::string> write_clip_dir(const std::filesystem::path &dir, const AnimationClip &clip,
+                                                const Skeleton &skeleton, std::string_view extra_json) {
+    if (clip.joint_count != skeleton.size()) return std::unexpected("clip and skeleton joint counts differ");
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    if (ec) return std::unexpected("cannot create " + dir.string() + ": " + ec.message());
+    std::vector<float> rot, trans;
+    rot.reserve(clip.locals.size() * 4);
+    trans.reserve(clip.locals.size() * 3);
+    for (const Transform &t : clip.locals) {
+        rot.insert(rot.end(), {t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w});
+        trans.insert(trans.end(), {t.translation.x, t.translation.y, t.translation.z});
+    }
+    if (auto ok = write_f32(dir / "local_rotations_xyzw.f32", rot); !ok) return ok;
+    if (auto ok = write_f32(dir / "local_translations.f32", trans); !ok) return ok;
+    nlohmann::ordered_json meta;
+    try {
+        if (!extra_json.empty()) meta = nlohmann::ordered_json::parse(extra_json);
+    } catch (const nlohmann::json::exception &e) {
+        return std::unexpected(std::string("invalid extra clip metadata: ") + e.what());
+    }
+    meta["name"] = clip.name;
+    meta["frames"] = clip.frames();
+    meta["fps"] = clip.fps;
+    meta["joints"] = nlohmann::ordered_json::array();
+    for (const Joint &j : skeleton.joints)
+        meta["joints"].push_back({{"name", j.name}, {"parent", j.parent}, {"source_node", j.source_node},
+                                  {"scale", {j.rest_local.scale.x, j.rest_local.scale.y, j.rest_local.scale.z}}});
+    std::ofstream out(dir / "clip.json", std::ios::binary | std::ios::trunc);
+    out << meta.dump() << '\n';
+    if (!out) return std::unexpected("cannot write clip.json");
+    return {};
 }
 
 std::expected<void, std::string> write_motion_dir(const std::filesystem::path &dir, const MotionArrays &motion) {
