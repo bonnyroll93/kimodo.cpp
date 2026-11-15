@@ -91,16 +91,47 @@
       <input id="scrub" type="range" min="0" max="0" value="0" step="1" aria-label="Frame">
       <span id="frame-label" class="frame-label">0 / 0</span>
       <label class="toggle"><input type="checkbox" id="loop" checked> Loop</label>
+      <div class="frame-controls">
+        <button id="frame-first" class="icon-button" type="button" title="First frame of the range (Home)">|◀</button>
+        <button id="frame-prev" class="icon-button" type="button" title="Previous frame (←)">◀</button>
+        <label class="pb-field" title="Current frame (0-based)">Frame <input id="frame-input" type="number" min="0" step="1" value="0"></label>
+        <button id="frame-next" class="icon-button" type="button" title="Next frame (→)">▶</button>
+        <button id="frame-last" class="icon-button" type="button" title="Last frame of the range (End)">▶|</button>
+        <label class="pb-field" title="Playback range start frame: play and loop stay inside the range">In <input id="range-in" type="number" min="0" step="1" value="0"></label>
+        <label class="pb-field" title="Playback range end frame">Out <input id="range-out" type="number" min="0" step="1" value="0"></label>
+        <button id="range-set-in" class="icon-button" type="button" title="Set In at the current frame (I)">[</button>
+        <button id="range-set-out" class="icon-button" type="button" title="Set Out at the current frame (O)">]</button>
+        <button id="range-reset" class="icon-button" type="button" title="Play the whole timeline">⟷</button>
+        <label class="pb-field" title="Scene length in seconds: shorter cuts the result, longer holds the clips' ends (0 = the end of the last clip). Exported too.">Length <input id="scene-length" type="number" min="0" step="0.1" value="0"> s</label>
+      </div>
     </div>
   </section>
   <aside class="panel" aria-label="Motion and inspector">
-    <div class="panel-head"><h2>Layers</h2><span class="button-row"><button id="add-layer" class="button small-button" type="button" title="Add a motion layer on top (copies the active layer's motion)">+ Layer</button><button id="add-key-layer" class="button small-button" type="button" title="Add a keyframe layer on top: pose bones with the gizmo and key them">+ Keys</button></span></div>
+    <div class="panel-head"><h2>Anim layers</h2><span class="button-row"><button id="add-key-layer" class="button small-button" type="button" title="Add an anim layer on top: pose bones with the gizmo and key them">+ Keys</button></span></div>
     <div class="layers-form">
       <div id="layers-list" class="layers-list"></div>
-      <p class="note">Top of the list is applied last. Off removes a layer from the stack; M (mute) keeps it on the timeline but silences it.</p>
+      <p class="note">Keyframe offsets applied over all the clips (top of the list last). Anim clips live on the Story timeline under the viewport: select one to edit it here.</p>
+    </div>
+    <div class="panel-head"><h2>Attribute editor</h2><span id="attr-kind" class="muted small"></span></div>
+    <div class="layers-form">
+      <div id="attr-row" class="layers-list"></div>
+      <div id="attr-timing" class="attr-timing">
+        <label class="field" title="Where the clip starts on the timeline (s)">Start <input id="t-start" type="number" step="0.0333"></label>
+        <label class="field" title="Seconds cut from the clip's beginning">Trim in <input id="t-trim_in" type="number" min="0" step="0.0333"></label>
+        <label class="field" title="Clip time where it ends (0 = its end)">Trim out <input id="t-trim_out" type="number" min="0" step="0.0333"></label>
+        <label class="field" title="Playback speed (2 = twice as fast)">Speed <input id="t-speed" type="number" min="0.05" max="20" step="0.05"></label>
+        <label class="field" title="Cycles; the root continues from one to the next">Repeat <input id="t-repeat" type="number" min="1" max="100" step="1"></label>
+        <label class="field" title="After its end: hold the last frame or nothing (the tracks below show)">After end <select id="t-extend"><option value="hold">Hold</option><option value="none">Nothing</option></select></label>
+        <label class="field" title="Blend in from what plays below / before (s)">Blend in <input id="t-fade_in" type="number" min="0" step="0.05"></label>
+        <label class="field" title="Blend out to what plays below (s)">Blend out <input id="t-fade_out" type="number" min="0" step="0.05"></label>
+        <label class="toggle" title="Cross-fade from the earlier clips of the track over the time they overlap"><input type="checkbox" id="t-auto_blend"> Auto blend overlaps</label>
+        <label class="toggle" title="Ease in / out blends (smoothstep) instead of linear"><input type="checkbox" id="t-ease_fades"> Smooth blends</label>
+        <label class="toggle" title="Start where the motion below is at the clip's start (position and heading)"><input type="checkbox" id="t-align_root"> Match root</label>
+        <div id="t-info" class="muted small"></div>
+      </div>
       <div id="mask-editor" class="mask-editor" hidden>
         <div class="row">
-          <label class="field">Joint mask of the active layer <input id="mask-name" maxlength="60"></label>
+          <label class="field">Joint mask <input id="mask-name" maxlength="60"></label>
         </div>
         <div class="button-row">
           <button id="mask-all" class="button small-button" type="button" title="Include every joint">All</button>
@@ -122,10 +153,10 @@
         <p class="note">Checked joints are driven by this layer; unchecked joints keep the layers below. Weights between 0 and 1 blend partially. In the viewport, included joints are coloured.</p>
       </div>
     </div>
-    <div class="panel-head"><h2>Motion</h2><span id="motion-layer-name" class="muted small"></span></div>
+    <div class="panel-head"><h2>Motion</h2><span class="muted small">source and root motion of the selected clip</span></div>
     <div class="motion-form">
       <div id="key-panel" class="key-panel" hidden>
-        <div class="muted small">Keyframe layer — offsets added on top of the layers below.</div>
+        <div class="muted small">Anim layer — keyframe offsets added on top of the clips.</div>
         <div id="key-joint" class="key-joint"></div>
         <div class="button-row">
           <button id="key-rotate" class="button small-button on" type="button" title="Rotate gizmo (E)">Rotate</button>

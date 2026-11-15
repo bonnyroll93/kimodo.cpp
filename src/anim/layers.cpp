@@ -207,7 +207,7 @@ bool AnimationStack::sample_layer(std::size_t index, float t, std::vector<Transf
     float u;          // clip seconds within the segment
     float cycle = 0.F; // completed cycles (root continuation)
     if (local < 0.F) {
-        if (tm.extend == Extend::None) return false;
+        if (tm.extend == Extend::None || tm.empty_before) return false;
         u = 0.F;
     } else if (!loop && local > span) {
         if (tm.extend == Extend::None) return false;
@@ -222,8 +222,12 @@ bool AnimationStack::sample_layer(std::size_t index, float t, std::vector<Transf
     }
     // Fades on the timeline range [start, end].
     const float tl = t - tm.start, end = span / tm.speed;
-    if (tm.fade_in > 0.F && tl < tm.fade_in) weight *= std::clamp(tl / tm.fade_in, 0.F, 1.F);
-    if (tm.fade_out > 0.F && !loop && tl > end - tm.fade_out) weight *= std::clamp((end - tl) / tm.fade_out, 0.F, 1.F);
+    const auto ramp = [&](float x) {
+        x = std::clamp(x, 0.F, 1.F);
+        return tm.ease_fades ? x * x * (3.F - 2.F * x) : x;
+    };
+    if (tm.fade_in > 0.F && tl < tm.fade_in) weight *= ramp(tl / tm.fade_in);
+    if (tm.fade_out > 0.F && !loop && tl > end - tm.fade_out) weight *= ramp((end - tl) / tm.fade_out);
     out = sample_clip(l.clip, r.trim_in + u, TimeWrap::Clamp);
     if (r.track.empty() || r.track[0] < 0) return true;
     Transform &root = out[static_cast<std::size_t>(r.track[0])];
@@ -316,7 +320,7 @@ std::vector<Transform> AnimationStack::evaluate_below(std::size_t index, float t
     return pose;
 }
 
-AnimationClip AnimationStack::bake(float fps) const {
+AnimationClip AnimationStack::bake(float fps, float length) const {
     if (!(fps > 0.F)) {
         fps = 30.F;
         for (const Resolved &r : layers_)
@@ -327,7 +331,7 @@ AnimationClip AnimationStack::bake(float fps) const {
     out.fps = fps;
     out.joint_count = skeleton_.size();
     for (const Joint &j : skeleton_.joints) out.joint_names.push_back(j.name);
-    const auto frames = static_cast<std::size_t>(std::lround(duration() * fps)) + 1;
+    const auto frames = static_cast<std::size_t>(std::lround((length > 0.F ? length : duration()) * fps)) + 1;
     out.locals.reserve(frames * out.joint_count);
     for (std::size_t f = 0; f < frames; ++f) {
         const auto pose = evaluate(static_cast<float>(f) / fps);

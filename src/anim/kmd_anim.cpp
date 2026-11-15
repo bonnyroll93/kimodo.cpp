@@ -100,13 +100,13 @@ int usage() {
                  "           [--root-scale S] [--yaw DEG] [--no-auto-facing] [--align-rest] [--skin N] [--fps N]\n"
                  "       retarget writes OUT_DIR/retarget.json, local_rotations_xyzw.f32 [T,J,4] and\n"
                  "       local_translations.f32 [T,J,3] in the target's joint order.\n"
-                 "       kmd-anim layers OUT_DIR (--native KEY | --character FILE.glb [--skin N]) [--fps N]\n"
+                 "       kmd-anim layers OUT_DIR (--native KEY | --character FILE.glb [--skin N]) [--fps N] [--length S]\n"
                  "           --layer DIR [--name S] [--mode override|additive] [--weight W]\n"
                  "                       [--mask full|upper|lower|MASK.json] [--disabled] [--muted]\n"
                  "                       [--reference first|rest|FRAME] [--wrap clamp|loop]  (repeat per layer)\n"
                  "           --key-layer KEYS.json [same layer options]   keyframe offset layer (additive)\n"
                  "           clip timing per layer: [--start S] [--trim-in S] [--trim-out S] [--speed X] [--repeat N]\n"
-                 "                       [--extend hold|none] [--fade-in S] [--fade-out S] [--align-root]\n"
+                 "                       [--extend hold|none] [--fade-in S] [--fade-out S] [--ease-fades] [--empty-before] [--align-root]\n"
                  "       DIR is a clip directory (clip.json/retarget.json) or a native motion directory;\n"
                  "       layers are applied bottom to top in command-line order. OUT_DIR gets clip.json,\n"
                  "       local_rotations_xyzw.f32, local_translations.f32 (+ root_positions.f32 if --native).\n"
@@ -396,7 +396,7 @@ int layers_command(int argc, char **argv) {
     const std::filesystem::path out = argv[2];
     std::optional<Skeleton> skeleton;
     bool native = false;
-    float fps = 0.F, input_fps = 30.F;
+    float fps = 0.F, input_fps = 30.F, length = 0.F;
     struct Pending {
         AnimationLayer layer;
         std::filesystem::path dir;
@@ -434,6 +434,9 @@ int layers_command(int argc, char **argv) {
             fps = std::stof(value());
         } else if (arg == "--input-fps") {
             input_fps = std::stof(value());
+        } else if (arg == "--length") {
+            length = std::stof(value());
+            if (!(length >= 0.F) || length > 3600.F) throw std::runtime_error("--length must be in [0, 3600] seconds");
         } else if (arg == "--layer" || arg == "--key-layer") {
             Pending p;
             (arg == "--layer" ? p.dir : p.keys) = value();
@@ -482,6 +485,10 @@ int layers_command(int argc, char **argv) {
             current().layer.timing.fade_out = std::stof(value());
         } else if (arg == "--align-root") {
             current().layer.timing.align_root = true;
+        } else if (arg == "--ease-fades") {
+            current().layer.timing.ease_fades = true;
+        } else if (arg == "--empty-before") {
+            current().layer.timing.empty_before = true;
         } else {
             throw std::runtime_error("unknown option '" + std::string(arg) + "'");
         }
@@ -543,7 +550,7 @@ int layers_command(int argc, char **argv) {
         if (auto ok = stack.add_layer(std::move(p.layer)); !ok) throw std::runtime_error(ok.error());
     }
     summary << "]";
-    AnimationClip baked = stack.bake(fps);
+    AnimationClip baked = stack.bake(fps, length);
     std::string foot_meta;
     if (lock_feet) {
         auto locked = foot_lock(baked, *skeleton, foot);
@@ -551,7 +558,7 @@ int layers_command(int argc, char **argv) {
         baked = std::move(locked->clip);
         foot_meta = ",\"foot_lock\":" + foot_lock_json(*locked);
     }
-    const std::string extra = "{\"skeleton\":" + quote(skeleton->source) + ",\"duration\":" + num(stack.duration()) +
+    const std::string extra = "{\"skeleton\":" + quote(skeleton->source) + ",\"duration\":" + num(stack.duration()) + ",\"length\":" + num(length) +
                               ",\"layers\":" + summary.str() + foot_meta + "}";
     if (auto ok = write_clip_dir(out, baked, *skeleton, extra); !ok) throw std::runtime_error(ok.error());
     if (native) // also the kmd-generate layout, so native results play like any generated motion

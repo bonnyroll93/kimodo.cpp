@@ -66,11 +66,46 @@ player.onChange((p) => {
   $('scrub').max = Math.max(p.frames - 1, 0);
   $('scrub').value = p.frame;
   $('frame-label').textContent = `${p.frame + 1} / ${p.frames} · ${p.time.toFixed(2)} / ${p.duration.toFixed(2)} s · ${p.fps} fps`;
+  const [a, b] = p.rangeFrames, last = Math.max(p.frames - 1, 0);
+  for (const [id, v] of [['frame-input', p.frame], ['range-in', a], ['range-out', b]]) {
+    $(id).max = last;
+    if (document.activeElement !== $(id)) $(id).value = v;
+  }
+  $('range-reset').disabled = !p.range;
+  if (motionPanel && document.activeElement !== $('scene-length')) $('scene-length').value = motionPanel.sceneLength;
   motionPanel?.timeline.update(p.time);
 });
 $('play').addEventListener('click', () => player.play());
 $('scrub').addEventListener('input', (e) => { player.play(false); player.setFrame(Number(e.target.value)); });
 $('loop').addEventListener('change', (e) => { player.loop = e.target.checked; });
+
+// Main timeline frame controls: current frame, step, playback range (In / Out), scene length.
+const goFrame = (f) => { player.play(false); player.setFrame(f); };
+const setRange = (a, b) => {
+  const last = Math.max(player.frames - 1, 0);
+  a = Math.max(0, Math.min(last, Math.round(a)));
+  b = Math.max(0, Math.min(last, Math.round(b)));
+  if (b < a) [a, b] = [b, a];
+  player.setRange(a === 0 && b === last ? null : [a, b]);
+  if (player.frame < a || player.frame > b) player.setFrame(a);
+  motionPanel.renderTimeline();
+};
+$('frame-input').addEventListener('change', (e) => goFrame(Number(e.target.value) || 0));
+$('frame-prev').addEventListener('click', () => goFrame(player.frame - 1));
+$('frame-next').addEventListener('click', () => goFrame(player.frame + 1));
+$('frame-first').addEventListener('click', () => goFrame(player.rangeFrames[0]));
+$('frame-last').addEventListener('click', () => goFrame(player.rangeFrames[1]));
+$('range-in').addEventListener('change', (e) => setRange(Number(e.target.value) || 0, player.rangeFrames[1]));
+$('range-out').addEventListener('change', (e) => setRange(player.rangeFrames[0], Number(e.target.value) || 0));
+$('range-set-in').addEventListener('click', () => setRange(player.frame, Math.max(player.frame, player.rangeFrames[1])));
+$('range-set-out').addEventListener('click', () => setRange(Math.min(player.frame, player.rangeFrames[0]), player.frame));
+$('range-reset').addEventListener('click', () => setRange(0, player.frames - 1));
+$('scene-length').addEventListener('change', (e) => {
+  const v = Number(e.target.value);
+  motionPanel.sceneLength = Number.isFinite(v) && v > 0 ? Math.min(3600, Math.round(v * 30) / 30) : 0;
+  e.target.value = motionPanel.sceneLength;
+  motionPanel.schedule();
+});
 const retargetPanel = new RetargetPanel({ $, status, onChange: () => { exportPanel.sync(); motionPanel.schedule(); } });
 const motionPanel = new MotionPanel({
   $, player, pathView, status, retarget: retargetPanel,
@@ -299,6 +334,13 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'f' || e.key === 'F') frameAll();
   if (e.key === 'Escape') select(-1);
   if (e.key === ' ' && player.motion) { e.preventDefault(); player.play(); }
+  if (!player.frames || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === 'ArrowLeft') { e.preventDefault(); goFrame(player.frame - (e.shiftKey ? 10 : 1)); }
+  if (e.key === 'ArrowRight') { e.preventDefault(); goFrame(player.frame + (e.shiftKey ? 10 : 1)); }
+  if (e.key === 'Home') { e.preventDefault(); goFrame(player.rangeFrames[0]); }
+  if (e.key === 'End') { e.preventDefault(); goFrame(player.rangeFrames[1]); }
+  if (e.key === 'i' || e.key === 'I') $('range-set-in').click();
+  if (e.key === 'o' || e.key === 'O') $('range-set-out').click();
 });
 
 // Drag and drop onto the stage.
@@ -368,10 +410,14 @@ motionPanel.loadSources().then(() => {
   motionPanel.activeLayer.config = motionPanel.readForm();
   // stack=demo: a second, additive upper-body layer (in place) at half weight; mask=... overrides its mask.
   if (params.get('stack') === 'demo') {
-    $('add-layer').click();
+    motionPanel.addTrack();
     clearTimeout(motionPanel.timer);
     const top = motionPanel.activeLayer;
     top.name = 'Upper additive';
+    top.blend = 'additive';
+    top.mask = 'upper';
+    top.weight = 0.5;
+    top.timing = { ...top.timing, start: 0, extend: 'hold', fade_in: 0, fade_out: 0, align_root: false };
     top.config = { ...top.config, mode: 'inplace' };
     if (['full', 'upper', 'lower', 'custom'].includes(params.get('mask'))) top.mask = params.get('mask');
     motionPanel.select(motionPanel.layers.length - 1);

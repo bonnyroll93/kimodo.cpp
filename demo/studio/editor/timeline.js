@@ -1,18 +1,16 @@
-// Layer timeline as a clip editor (non-linear editing). Each layer is a clip bar placed at
-// its start, as long as its trimmed segment / speed x repeat:
-//   drag the bar: move it in time · drag the left edge: trim the start · drag the right
-//   edge: trim the end (Alt: stretch, i.e. change the speed) · click a label: make the
-//   layer active · click/drag empty track space: seek.
-// Ctrl (or Alt) + drag stretches / compresses a clip (changes its speed): body or right edge
-// keep the start, the left edge keeps the end; Ctrl + wheel over a clip does the same in steps.
-// The toolbar edits the active clip: split at the playhead, duplicate after it, speed,
-// repeat (cycles continue the root), fades, outside-range behaviour and root alignment.
+// Story-style timeline: anim clips on tracks, anim layers (keyframes) below them.
+//   drag a clip: move it (drop on another track row to change track) · drag its left / right
+//   edge: trim · Ctrl (Cmd, Alt) + drag or Ctrl + wheel: stretch / compress (change speed;
+//   body and right edge keep the start, left edge keeps the end) · click a clip or a layer
+//   row: select it (the attribute editor shows its settings) · click empty space: seek.
+// Overlapping clips on the same track cross-fade over the overlap (shown as a gradient).
 // Times snap to frames (Shift: free).
 
 const EDGE = 6; // px grab zone for trimming
 
 export class Timeline {
-  // cb: select(i), seek(seconds), timing(i, patch, final), split(), duplicate()
+  // cb: select(i), seek(seconds), timing(i, patch, final), addClip(), addTrack(), split(),
+  //     duplicate(), remove(i)
   constructor(container, cb) {
     this.container = container;
     this.cb = cb;
@@ -26,21 +24,22 @@ export class Timeline {
     container.addEventListener('pointermove', (e) => this.move(e));
     container.addEventListener('pointerup', () => this.up());
     container.addEventListener('wheel', (e) => this.wheel(e), { passive: false });
-    // Holding Ctrl / Cmd / Alt shows the stretch cursor on the clips.
-    const mod = (e) => this.setStretchCursor(e.ctrlKey || e.metaKey || e.altKey);
+    const mod = (e) => this.container.classList.toggle('stretching', e.ctrlKey || e.metaKey || e.altKey);
     window.addEventListener('keydown', mod);
     window.addEventListener('keyup', mod);
-    window.addEventListener('blur', () => this.setStretchCursor(false));
+    window.addEventListener('blur', () => this.container.classList.remove('stretching'));
   }
 
-  // layers: [{name, duration (clip seconds), enabled, muted, timing, keyTimes, kind}],
-  // duration: stack seconds, active: index, contacts: optional foot contacts in seconds.
-  set({ layers, duration, active, contacts = null, fps = 30 }) {
+  // layers: per MotionPanel.layers index {name, kind, track, duration (clip s), enabled, muted,
+  // timing, eff (effective timing incl. auto blends), keyTimes}; duration: stack seconds.
+  set({ layers, duration, active, contacts = null, fps = 30, tracks = 1, range = null }) {
+    this.range = range;
     this.layers = layers;
     this.duration = Math.max(duration, 1e-3);
     this.fps = fps;
     this.active = active;
     this.contacts = contacts;
+    this.trackCount = Math.max(tracks, 1 + Math.max(0, ...layers.filter((l) => l && l.kind !== 'keys').map((l) => l.track ?? 0)));
     this.render();
   }
 
@@ -53,8 +52,11 @@ export class Timeline {
     const tin = Math.min(t.trim_in, d), tout = t.trim_out > tin ? Math.min(t.trim_out, d) : d;
     return Math.max(tout - tin, 0);
   }
-  extent(i) { const t = this.timingOf(i); return [t.start, t.start + (this.segment(i) / t.speed) * t.repeat]; }
-
+  extent(i) {
+    const t = this.timingOf(i);
+    if (this.layers[i]?.kind === 'keys') return [t.start, Math.max(this.duration, t.start)]; // offsets apply to the whole scene
+    return [t.start, t.start + (this.segment(i) / t.speed) * t.repeat];
+  }
   pct(seconds) { return `${(seconds / this.duration) * 100}%`; }
 
   render() {
@@ -68,54 +70,41 @@ export class Timeline {
     const tracks = document.createElement('div');
     tracks.className = 'tl-tracks';
     this.tracksEl = tracks;
-    // Top row = top of the stack, like the layer list.
-    [...this.layers.keys()].reverse().forEach((i) => {
+    // Anim layers (applied last) on top, then tracks from the highest down.
+    const keyLayers = [...this.layers.keys()].filter((i) => this.layers[i]?.kind === 'keys').reverse();
+    for (const i of keyLayers) {
       const l = this.layers[i];
-      const state = `${i === this.active ? ' active' : ''}${l.enabled ? '' : ' disabled'}${l.muted ? ' muted' : ''}`;
       const label = document.createElement('button');
       label.type = 'button';
-      label.className = `tl-label${state}`;
-      label.textContent = `${i + 1}. ${l.name}${l.muted ? ' (muted)' : ''}${l.enabled ? '' : ' (off)'}`;
-      label.title = 'Select layer';
+      label.className = `tl-label keys${i === this.active ? ' active' : ''}${l.enabled ? '' : ' disabled'}${l.muted ? ' muted' : ''}`;
+      label.textContent = `◆ ${l.name}`;
+      label.title = 'Anim layer (keyframes) — click to edit it in the attribute editor';
       label.addEventListener('click', () => this.cb.select(i));
       const track = document.createElement('div');
-      track.className = `tl-track${state}`;
-      const t = this.timingOf(i);
-      const [s, e] = this.extent(i);
-      const bar = document.createElement('div');
-      bar.className = `tl-bar${l.kind === 'keys' ? ' keys' : ''}`;
-      bar.dataset.layer = i;
-      bar.style.left = this.pct(s);
-      bar.style.width = this.pct(Math.max(e - s, 1 / this.fps));
-      bar.title = `${l.name}: ${s.toFixed(2)}–${e.toFixed(2)} s · speed ${t.speed.toFixed(2)}× · ${t.repeat} cycle(s)` +
-        ' · drag: move · edges: trim · Ctrl + drag or Ctrl + wheel: stretch / compress';
-      for (let k = 1; k < t.repeat; k++) {
-        const sep = document.createElement('div');
-        sep.className = 'tl-cycle';
-        sep.style.left = `${(k / t.repeat) * 100}%`;
-        bar.append(sep);
-      }
-      for (const [side, len] of [['in', t.fade_in], ['out', t.fade_out]]) {
-        if (!(len > 0)) continue;
-        const f = document.createElement('div');
-        f.className = `tl-fade ${side}`;
-        f.style.width = `${Math.min(100, (len / Math.max(e - s, 1e-3)) * 100)}%`;
-        bar.append(f);
-      }
-      const tag = document.createElement('span');
-      tag.className = 'tl-tag';
-      tag.textContent = [t.speed !== 1 ? `${+t.speed.toFixed(2)}×` : '', t.repeat > 1 ? `↻${t.repeat}` : '', t.align_root ? '⇢' : ''].filter(Boolean).join(' ');
-      bar.append(tag);
-      track.append(bar);
-      for (const k of l.keyTimes ?? []) { // keys of the selected joint on keyframe layers
+      track.className = `tl-track keys-row${i === this.active ? ' active' : ''}`;
+      track.append(this.bar(i));
+      for (const k of l.keyTimes ?? []) {
         const tick = document.createElement('div');
         tick.className = 'tl-key';
-        tick.style.left = this.pct(t.start + k / t.speed);
+        tick.style.left = this.pct(this.timingOf(i).start + k / this.timingOf(i).speed);
         track.append(tick);
       }
       labels.append(label);
       tracks.append(track);
-    });
+    }
+    for (let tr = this.trackCount - 1; tr >= 0; tr--) {
+      const label = document.createElement('div');
+      label.className = 'tl-label track';
+      label.textContent = `Track ${tr + 1}`;
+      label.title = 'Clips on a track play in sequence and cross-fade where they overlap; higher tracks apply over lower ones';
+      const track = document.createElement('div');
+      track.className = 'tl-track clip-track';
+      track.dataset.track = tr;
+      for (const [i, l] of this.layers.entries())
+        if (l && l.kind !== 'keys' && (l.track ?? 0) === tr) track.append(this.bar(i));
+      labels.append(label);
+      tracks.append(track);
+    }
     if (this.contacts) {
       for (const foot of ['left', 'right']) {
         const label = document.createElement('div');
@@ -124,15 +113,25 @@ export class Timeline {
         const track = document.createElement('div');
         track.className = `tl-track foot ${foot}`;
         for (const ct of this.contacts.filter((x) => x.foot === foot)) {
-          const bar = document.createElement('div');
-          bar.className = 'tl-contact';
-          bar.style.left = this.pct(ct.start);
-          bar.style.width = this.pct(Math.max(ct.end - ct.start, 0.01));
-          bar.title = `${foot} foot pinned ${ct.start.toFixed(2)}–${ct.end.toFixed(2)} s`;
-          track.append(bar);
+          const b = document.createElement('div');
+          b.className = 'tl-contact';
+          b.style.left = this.pct(ct.start);
+          b.style.width = this.pct(Math.max(ct.end - ct.start, 0.01));
+          track.append(b);
         }
         labels.append(label);
         tracks.append(track);
+      }
+    }
+    if (this.range) { // dim what is outside the playback range
+      const [a, b] = this.range;
+      for (const [l, w] of [[0, a], [b, this.duration - b]]) {
+        if (!(w > 1e-6)) continue;
+        const shade = document.createElement('div');
+        shade.className = 'tl-out-range';
+        shade.style.left = this.pct(l);
+        shade.style.width = this.pct(w);
+        tracks.append(shade);
       }
     }
     tracks.append(this.playhead);
@@ -140,62 +139,66 @@ export class Timeline {
     this.update(this.time ?? 0);
   }
 
+  bar(i) {
+    const l = this.layers[i], t = this.timingOf(i), eff = { ...t, ...(l.eff ?? {}) };
+    const [s, e] = this.extent(i);
+    const bar = document.createElement('div');
+    bar.className = `tl-bar${l.kind === 'keys' ? ' keys' : ''}${i === this.active ? ' selected' : ''}${l.enabled ? '' : ' disabled'}${l.muted ? ' muted' : ''}`;
+    bar.dataset.layer = i;
+    bar.style.left = this.pct(s);
+    bar.style.width = this.pct(Math.max(e - s, 1 / this.fps));
+    bar.title = `${l.name}: ${s.toFixed(2)}–${e.toFixed(2)} s · ${t.speed.toFixed(2)}× · ${t.repeat} cycle(s)` +
+      ' · drag: move (also to another track) · edges: trim · Ctrl + drag / Ctrl + wheel: stretch';
+    for (let k = 1; k < t.repeat; k++) {
+      const sep = document.createElement('div');
+      sep.className = 'tl-cycle';
+      sep.style.left = `${(k / t.repeat) * 100}%`;
+      bar.append(sep);
+    }
+    for (const [side, len] of [['in', eff.fade_in], ['out', eff.fade_out]]) {
+      if (!(len > 0)) continue;
+      const f = document.createElement('div');
+      f.className = `tl-fade ${side}`;
+      f.style.width = `${Math.min(100, (len / Math.max(e - s, 1e-3)) * 100)}%`;
+      f.title = side === 'in' ? `blend in ${len.toFixed(2)} s` : `blend out ${len.toFixed(2)} s`;
+      bar.append(f);
+    }
+    const name = document.createElement('span');
+    name.className = 'tl-name';
+    name.textContent = l.name;
+    const tag = document.createElement('span');
+    tag.className = 'tl-tag';
+    tag.textContent = [t.speed !== 1 ? `${+t.speed.toFixed(2)}×` : '', t.repeat > 1 ? `↻${t.repeat}` : '', t.align_root ? '⇢' : ''].filter(Boolean).join(' ');
+    bar.append(name, tag);
+    return bar;
+  }
+
   toolbar() {
-    const i = this.active, t = this.timingOf(i);
     const bar = document.createElement('div');
     bar.className = 'tl-toolbar';
-    const btn = (text, title, fn) => {
+    const btn = (text, title, fn, disabled = false) => {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'icon-button';
       b.textContent = text;
       b.title = title;
+      b.disabled = disabled;
       b.addEventListener('click', fn);
       return b;
     };
-    const field = (label, key, step, min, max, title) => {
-      const wrap = document.createElement('label');
-      wrap.className = 'tl-field';
-      wrap.title = title;
-      const input = document.createElement('input');
-      input.type = 'number';
-      input.step = step;
-      input.min = min;
-      input.max = max;
-      input.value = +(+t[key]).toFixed(3);
-      input.addEventListener('change', () => {
-        let v = Number(input.value);
-        if (!Number.isFinite(v)) return;
-        v = Math.min(max, Math.max(min, key === 'repeat' ? Math.round(v) : v));
-        this.cb.timing(i, { [key]: v }, true);
-      });
-      wrap.append(label, input);
-      return wrap;
-    };
     const strong = document.createElement('strong');
-    strong.textContent = `Clip ${i + 1}`;
-    const extend = document.createElement('select');
-    extend.title = 'Outside its range the clip holds its end poses, or contributes nothing';
-    extend.append(new Option('Hold ends', 'hold'), new Option('Empty outside', 'none'));
-    extend.value = t.extend;
-    extend.addEventListener('change', () => this.cb.timing(i, { extend: extend.value }, true));
-    const align = document.createElement('label');
-    align.className = 'toggle';
-    align.title = 'Start the clip where the layers below put the root (position and facing): sequences continue instead of jumping back';
-    const check = document.createElement('input');
-    check.type = 'checkbox';
-    check.checked = !!t.align_root;
-    check.addEventListener('change', () => this.cb.timing(i, { align_root: check.checked }, true));
-    align.append(check, ' Align root');
+    strong.textContent = 'Story';
+    const activeIsClip = this.layers[this.active]?.kind !== 'keys';
     bar.append(strong,
-      btn('Split', 'Split the active clip at the playhead into two clips', () => this.cb.split()),
-      btn('Duplicate', 'Duplicate the active clip right after itself (root aligned)', () => this.cb.duplicate()),
-      field('Start', 'start', 1 / this.fps, -3600, 3600, 'Start on the timeline (s)'),
-      field('Speed', 'speed', 0.05, 0.05, 20, 'Playback speed: 2 = twice as fast, 0.5 = stretched to twice as long'),
-      field('Repeat', 'repeat', 1, 1, 100, 'Cycles of the trimmed segment (the root continues)'),
-      field('Fade in', 'fade_in', 0.05, 0, 60, 'Fade-in (s)'),
-      field('Fade out', 'fade_out', 0.05, 0, 60, 'Fade-out (s)'),
-      extend, align);
+      btn('+ Clip', 'Add a clip on the selected clip\'s track, after its last clip (same source)', () => this.cb.addClip()),
+      btn('+ Track', 'Add a track above with a new clip at the playhead', () => this.cb.addTrack()),
+      btn('Split', 'Split the selected clip at the playhead', () => this.cb.split(), !activeIsClip),
+      btn('Duplicate', 'Duplicate the selected clip right after itself (root aligned)', () => this.cb.duplicate(), !activeIsClip),
+      btn('Delete', 'Delete the selected clip or anim layer', () => this.cb.remove(this.active)));
+    const hint = document.createElement('span');
+    hint.className = 'muted small';
+    hint.textContent = 'Drag: move · edges: trim · Ctrl+drag / Ctrl+wheel: stretch · overlaps cross-fade';
+    bar.append(hint);
     return bar;
   }
 
@@ -205,6 +208,10 @@ export class Timeline {
     return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * this.duration;
   }
   snap(t, e) { return e.shiftKey ? t : Math.round(t * this.fps) / this.fps; }
+  trackAt(e) {
+    const row = document.elementsFromPoint(e.clientX, e.clientY).find((n) => n.classList?.contains('clip-track'));
+    return row ? Number(row.dataset.track) : null;
+  }
 
   down(e) {
     if (!this.tracksEl || !e.target.closest('.tl-track')) return;
@@ -218,15 +225,13 @@ export class Timeline {
     const i = Number(bar.dataset.layer);
     const r = bar.getBoundingClientRect();
     let zone = e.clientX - r.left < EDGE ? 'left' : r.right - e.clientX < EDGE ? 'right' : 'body';
-    // Ctrl (Cmd on macOS) or Alt: stretch / compress instead of moving or trimming. On the
-    // body and the right edge the start stays put; on the left edge the end stays put.
     const stretch = e.ctrlKey || e.metaKey || e.altKey;
     if (stretch && zone === 'body') zone = 'right';
     if (i !== this.active) this.cb.select(i);
-    this.drag = { i, zone, t0: this.timeAt(e), timing: this.timingOf(i), segment: this.segment(i), stretch };
+    this.drag = { i, zone, t0: this.timeAt(e), timing: this.timingOf(i), segment: this.segment(i), stretch,
+      track: this.layers[i].track ?? 0 };
   }
 
-  // Ctrl + wheel over a clip: compress (wheel up) / stretch (wheel down) around its start.
   wheel(e) {
     if (!(e.ctrlKey || e.metaKey)) return;
     const bar = e.target.closest?.('.tl-bar');
@@ -234,14 +239,11 @@ export class Timeline {
     e.preventDefault(); // not the browser's page zoom
     const i = Number(bar.dataset.layer);
     if (i !== this.active) this.cb.select(i);
-    const t = this.timingOf(i);
-    const speed = Math.min(20, Math.max(0.05, t.speed * Math.exp(-e.deltaY * 0.0015)));
+    const speed = Math.min(20, Math.max(0.05, this.timingOf(i).speed * Math.exp(-e.deltaY * 0.0015)));
     this.cb.timing(i, { speed }, false);
     clearTimeout(this.wheelTimer);
     this.wheelTimer = setTimeout(() => this.cb.timing(i, { speed: this.timingOf(i).speed }, true), 300);
   }
-
-  setStretchCursor(on) { this.container.classList.toggle('stretching', on); }
 
   move(e) {
     if (!this.drag) {
@@ -260,21 +262,19 @@ export class Timeline {
     const speedFor = (newLen) => Math.min(20, Math.max(0.05, (d.segment * t.repeat) / Math.max(1 / this.fps, newLen)));
     let patch;
     if (d.stretch && d.zone === 'left') {
-      // Stretch keeping the end: the start follows the pointer.
       const end = t.start + len;
       const speed = speedFor(len - dt);
       patch = { speed, start: end - (d.segment * t.repeat) / speed };
     } else if (d.stretch) {
-      // Stretch keeping the start: the end follows the pointer.
       patch = { speed: speedFor(len + dt) };
     } else if (d.zone === 'body') {
       patch = { start: this.snap(t.start + dt, e) };
+      const tr = this.layers[d.i].kind === 'keys' ? null : this.trackAt(e);
+      if (tr !== null && tr !== d.track) patch.track = tr;
     } else if (d.zone === 'left') {
-      // Trim the start: the content stays in place, the clip begins later/earlier.
       const clipDt = Math.max(-t.trim_in, Math.min(dt * t.speed, d.segment - 1 / this.fps));
       patch = { trim_in: t.trim_in + clipDt, start: this.snap(t.start + clipDt / t.speed, e) };
     } else {
-      // Trim the end (of each cycle).
       const full = this.layers[d.i].duration ?? 0;
       const tin = t.trim_in, tout = t.trim_out > tin ? t.trim_out : full;
       const nextOut = Math.min(full, Math.max(tin + 1 / this.fps, tout + (dt * t.speed) / t.repeat));

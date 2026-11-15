@@ -1,8 +1,13 @@
-// Motion layers + root motion controls. Each layer has its own motion source and root
-// motion settings (Full / InPlace / CustomPath, edited in the Motion form for the active
-// layer) plus blend mode, weight, mask, enable/mute, additive reference and time wrap.
-// A single default layer goes through /api/root-motion (or /api/retarget); a real stack
-// is baked by /api/layers. Results are played back locally.
+// Story-style scene: anim clips on tracks plus anim layers (keyframes) on top.
+// - Anim clips (kind 'clip'): each has its own motion source and root motion (Full / InPlace /
+//   CustomPath), blend mode, weight, mask, enable/mute, additive reference, time wrap and clip
+//   timing; they sit on tracks in the timeline. Clips on a track play in sequence and, with
+//   auto blend, cross-fade over the time they overlap; higher tracks apply over lower ones.
+// - Anim layers (kind 'keys'): keyframe offsets, applied after every clip, listed in their panel.
+// The selected item's settings are shown in the attribute editor. this.layers holds both kinds;
+// the stack sent to kmd-anim is ordered tracks bottom to top (clips by start), then anim layers.
+// A single default clip goes through /api/root-motion (or /api/retarget); anything else is
+// baked by /api/layers. Results are played back locally.
 import { LayerPanel } from './layer-panel.js';
 import { MaskEditor } from './animation-mask.js';
 import { Timeline } from './timeline.js';
@@ -54,15 +59,30 @@ const defaultConfig = () => ({
   source: '', mode: 'full', lock: 'both', preset: 'scurve', points: presetText(PATH_PRESETS.scurve),
   interp: 'catmull', loop: false, timing: 'distance', timingValue: 0, orient: true,
 });
-// Where/how a layer's clip plays on the timeline (see ClipTiming in include/kimodo/anim/layers.hpp).
-export const DEFAULT_TIMING = { start: 0, trim_in: 0, trim_out: 0, speed: 1, repeat: 1, extend: 'hold', fade_in: 0, fade_out: 0, align_root: false };
+// Where/how a clip plays on the timeline (see ClipTiming in include/kimodo/anim/layers.hpp).
+// auto_blend (studio only): cross-fade from the earlier clips of the same track over the overlap.
+export const DEFAULT_TIMING = { start: 0, trim_in: 0, trim_out: 0, speed: 1, repeat: 1, extend: 'hold', fade_in: 0, fade_out: 0,
+  align_root: false, ease_fades: true, auto_blend: true };
 const timingOf = (l) => ({ ...DEFAULT_TIMING, ...(l.timing ?? {}) });
 const isDefaultTiming = (l) => Object.entries(DEFAULT_TIMING).every(([k, v]) => timingOf(l)[k] === v);
+const isKeys = (l) => l?.kind === 'keys';
 
-const newLayer = (i, config = defaultConfig()) => ({
-  name: i === 0 ? 'Base' : `Layer ${i + 1}`, config, blend: 'override', weight: 1, mask: 'full',
+const newLayer = (name, config = defaultConfig()) => ({
+  name, kind: 'clip', track: 0, config, blend: 'override', weight: 1, mask: 'full',
   customMask: null, enabled: true, muted: false, reference: 'first', wrap: 'clamp', timing: { ...DEFAULT_TIMING },
 });
+
+// Scenes saved before tracks existed: each motion layer on its own track, in stack order.
+export function normalizeLayers(layers) {
+  let t = 0;
+  for (const l of layers) {
+    if (isKeys(l)) continue;
+    l.kind = 'clip';
+    if (!Number.isInteger(l.track)) l.track = t;
+    t = Math.max(t, l.track + 1);
+  }
+  return layers;
+}
 
 export class MotionPanel {
   constructor({ $, player, pathView, status, onLoaded, retarget, onSeek }) {
@@ -76,7 +96,7 @@ export class MotionPanel {
     this.sourceRoots = new Map();
     this.request = 0;
     this.timer = 0;
-    this.layers = [newLayer(0)];
+    this.layers = [newLayer('Clip 1')];
     this.active = 0;
 
     for (const [key, p] of Object.entries(PATH_PRESETS)) $('path-preset').append(new Option(p.label, key));
@@ -91,7 +111,9 @@ export class MotionPanel {
     for (const id of ['foot-lock', 'hip-adjust', 'foot-height', 'foot-speed', 'foot-blend'])
       $(id).addEventListener('change', () => { $('foot-opts').hidden = !$('foot-lock').checked; this.schedule(); });
 
-    this.layerPanel = new LayerPanel($('layers-list'), $('add-layer'), {
+    this.durations = new WeakMap(); // layer -> clip seconds from the last result
+    this.sceneLength = 0; // seconds, 0 = the stack's own length
+    const rowCallbacks = {
       select: (i) => this.select(i),
       change: (i, patch) => {
         // Switching to a custom mask starts from the preset the layer had.
@@ -101,56 +123,46 @@ export class MotionPanel {
         this.renderLayers();
         this.schedule();
       },
-      move: (i, delta) => {
-        const j = i + delta;
-        if (j < 0 || j >= this.layers.length) return;
+      move: (i, delta) => { // anim layers only: swap with the next anim layer up / down
+        const ks = [...this.layers.keys()].filter((k) => isKeys(this.layers[k]));
+        const j = ks[ks.indexOf(i) + delta];
+        if (j === undefined) return;
         [this.layers[i], this.layers[j]] = [this.layers[j], this.layers[i]];
         if (this.active === i) this.active = j; else if (this.active === j) this.active = i;
         this.renderLayers();
         this.schedule();
       },
-      remove: (i) => {
-        if (this.layers.length === 1) return;
-        this.layers.splice(i, 1);
-        this.select(Math.min(this.active, this.layers.length - 1));
-        this.schedule();
-      },
-      add: () => {
-        const base = this.layers[this.active];
-        const l = newLayer(this.layers.length, { ...base.config });
-        l.mask = 'upper';
-        l.blend = 'additive';
-        l.weight = 0.5;
-        this.layers.push(l);
-        this.select(this.layers.length - 1);
-        this.schedule();
-      },
-    });
+      remove: (i) => this.remove(i),
+      canRemove: (i) => this.canRemove(i),
+    };
+    this.layerPanel = new LayerPanel($('layers-list'), rowCallbacks, { empty: 'No anim layers yet.' });
+    this.attrPanel = new LayerPanel($('attr-row'), rowCallbacks, { reorder: false });
     this.maskEditor = new MaskEditor({
       $, status,
       onChange: (mask) => { this.layers[this.active].customMask = mask; this.schedule(); },
       onVisual: (weightOf) => this.onMaskVisual?.(weightOf),
       presets: () => this.maskPresets(),
     });
-    $('add-key-layer').addEventListener('click', () => {
-      const base = this.layers.find((l) => l.kind !== 'keys') ?? this.layers[0];
-      this.layers.push({ ...newLayer(this.layers.length, { ...base.config }), name: 'Keys', kind: 'keys', keys: emptyTracks(), blend: 'additive', reference: 'rest' });
-      this.select(this.layers.length - 1);
-      this.schedule();
-    });
+    $('add-key-layer').addEventListener('click', () => this.addKeyLayer());
     this.timeline = new Timeline($('timeline'), {
       select: (i) => this.select(i),
       seek: (t) => onSeek?.(t),
       timing: (i, patch, final) => {
         const l = this.layers[i];
-        l.timing = { ...timingOf(l), ...patch };
-        if (this.timelineData?.layers[i]) this.timelineData.layers[i].timing = l.timing;
+        const { track, ...rest } = patch;
+        if (track !== undefined && !isKeys(l)) l.track = Math.max(0, track | 0);
+        l.timing = { ...timingOf(l), ...rest };
         if (final) this.schedule();
-        else this.timeline.render(); // live preview of the bar while dragging
+        this.renderTimeline(); // live preview of the bar while dragging
+        if (i === this.active) this.renderAttributes();
       },
+      addClip: () => this.addClip(),
+      addTrack: () => this.addTrack(),
       split: () => this.splitActive(),
       duplicate: () => this.duplicateActive(),
+      remove: (i) => this.remove(i),
     });
+    this.installTimingForm();
     this.writeForm(this.layers[0].config);
     this.renderLayers();
   }
@@ -208,22 +220,198 @@ export class MotionPanel {
     this.$('timing-unit').textContent = timing === 'speed' ? 'm/s' : 's (0 = clip length)';
   }
 
-  // ----- layers ---------------------------------------------------------------------
+  // ----- clips and anim layers ------------------------------------------------------------
   select(i, rerender = true) {
-    this.active = i;
-    this.writeForm(this.activeLayer.config);
-    this.$('motion-controls').hidden = this.activeLayer.kind === 'keys';
-    this.$('motion-layer-name').textContent = `${i + 1}. ${this.activeLayer.name}`;
+    this.active = Math.max(0, Math.min(i, this.layers.length - 1));
+    const l = this.activeLayer;
+    if (!isKeys(l)) this.writeForm(l.config);
+    this.$('motion-controls').hidden = isKeys(l);
     this.showMaskEditor();
     if (rerender) this.renderLayers();
-    else if (this.timelineData) this.timeline.set({ ...this.timelineData, active: i });
-    this.onShown?.(); // the path editor follows the active layer
+    else this.renderAttributes();
+    this.onShown?.(); // the path editor follows the active clip
   }
 
   renderLayers() {
-    this.layerPanel.render(this.layers, this.active);
-    this.$('motion-layer-name').textContent = `${this.active + 1}. ${this.activeLayer.name}`;
-    if (this.timelineData) this.timeline.set({ ...this.timelineData, active: this.active });
+    this.layerPanel.render([...this.layers.entries()].filter(([, l]) => isKeys(l)).map(([i, l]) => ({ l, i })), this.active);
+    this.renderAttributes();
+    this.renderTimeline();
+  }
+
+  renderAttributes() {
+    const l = this.activeLayer;
+    this.$('attr-kind').textContent = isKeys(l) ? `Anim layer · ${l.name}` : `Anim clip · ${l.name} · track ${(l.track ?? 0) + 1}`;
+    this.attrPanel.render([{ l, i: this.active }], this.active);
+    this.$('attr-timing').hidden = isKeys(l);
+    this.writeTiming();
+  }
+
+  // Clip timing fields of the attribute editor.
+  installTimingForm() {
+    const $ = this.$;
+    const fields = ['start', 'trim_in', 'trim_out', 'speed', 'repeat', 'fade_in', 'fade_out'];
+    const read = () => {
+      const n = (id, lo, hi, def) => { const v = Number($(`t-${id}`).value); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : def; };
+      return {
+        start: n('start', -3600, 3600, 0), trim_in: n('trim_in', 0, 3600, 0), trim_out: n('trim_out', 0, 3600, 0),
+        speed: n('speed', 0.05, 20, 1), repeat: Math.round(n('repeat', 1, 100, 1)), fade_in: n('fade_in', 0, 60, 0), fade_out: n('fade_out', 0, 60, 0),
+        extend: $('t-extend').value, auto_blend: $('t-auto_blend').checked, ease_fades: $('t-ease_fades').checked, align_root: $('t-align_root').checked,
+      };
+    };
+    const changed = () => {
+      const l = this.activeLayer;
+      if (isKeys(l)) return;
+      l.timing = { ...timingOf(l), ...read() };
+      this.renderTimeline();
+      this.writeTiming();
+      this.schedule();
+    };
+    for (const f of [...fields, 'extend', 'auto_blend', 'ease_fades', 'align_root']) $(`t-${f}`).addEventListener('change', changed);
+  }
+
+  writeTiming() {
+    const $ = this.$, l = this.activeLayer;
+    if (isKeys(l)) return;
+    const t = timingOf(l), eff = this.effective().get(this.active) ?? t;
+    const r = (v) => String(Math.round(v * 1000) / 1000);
+    for (const f of ['start', 'trim_in', 'trim_out', 'speed', 'repeat', 'fade_in', 'fade_out'])
+      if (document.activeElement !== $(`t-${f}`)) $(`t-${f}`).value = r(t[f]);
+    $('t-extend').value = t.extend;
+    $('t-auto_blend').checked = t.auto_blend;
+    $('t-ease_fades').checked = t.ease_fades;
+    $('t-align_root').checked = t.align_root;
+    const [s0, e0] = this.extent(this.active);
+    $('t-info').textContent = `On the timeline ${r(s0)}–${r(e0)} s · clip ${r(this.durationOf(this.active))} s` +
+      (eff.fade_in > t.fade_in + 1e-4 ? ` · auto blend-in ${r(eff.fade_in)} s` : '');
+  }
+
+  // Seconds of a layer's clip (before timing): the last result, else the source length.
+  durationOf(i) {
+    const l = this.layers[i];
+    if (!l) return 0;
+    if (this.durations.has(l)) return this.durations.get(l);
+    const m = !isKeys(l) && this.sources?.get(l.config.source);
+    return m ? Math.max(m.frames - 1, 0) / 30 : 0;
+  }
+  segment(i) {
+    const t = timingOf(this.layers[i]), d = this.durationOf(i);
+    const tin = Math.min(t.trim_in, d), tout = t.trim_out > tin ? Math.min(t.trim_out, d) : d;
+    return Math.max(tout - tin, 0);
+  }
+  extent(i) { const t = timingOf(this.layers[i]); return [t.start, t.start + (this.segment(i) / t.speed) * t.repeat]; }
+
+  // [track, clip indices by start time], tracks bottom to top.
+  tracks() {
+    const byTrack = new Map();
+    for (const [i, l] of this.layers.entries()) {
+      if (isKeys(l)) continue;
+      const tr = l.track ?? 0;
+      if (!byTrack.has(tr)) byTrack.set(tr, []);
+      byTrack.get(tr).push(i);
+    }
+    for (const list of byTrack.values()) list.sort((a, b) => timingOf(this.layers[a]).start - timingOf(this.layers[b]).start || a - b);
+    return [...byTrack.entries()].sort((a, b) => a[0] - b[0]);
+  }
+  get trackCount() { return Math.max(1, ...this.layers.filter((l) => !isKeys(l)).map((l) => (l.track ?? 0) + 1)); }
+
+  // Stack order sent to kmd-anim: tracks bottom to top (clips by start), then anim layers.
+  stackOrder() {
+    return [...this.tracks().flatMap(([, list]) => list), ...[...this.layers.keys()].filter((i) => isKeys(this.layers[i]))];
+  }
+
+  // Timing as evaluated (auto blend): a clip that is not the first of its track, or is on an
+  // upper track, starts empty (it does not hold its first frame over what plays before it)
+  // and fades in over the time it overlaps the earlier clips of its track.
+  effective() {
+    const eff = new Map();
+    for (const [tr, list] of this.tracks()) {
+      list.forEach((i, k) => {
+        const t = timingOf(this.layers[i]);
+        const e = { ...t };
+        if (t.auto_blend) {
+          if (k > 0 || tr > 0) e.empty_before = true;
+          let overlap = 0;
+          for (const j of list.slice(0, k)) if (this.layers[j].enabled) overlap = Math.max(overlap, this.extent(j)[1] - t.start);
+          const [s0, e0] = this.extent(i);
+          e.fade_in = Math.max(t.fade_in, Math.min(Math.max(overlap, 0), e0 - s0));
+        }
+        eff.set(i, e);
+      });
+    }
+    for (const [i, l] of this.layers.entries()) if (isKeys(l)) eff.set(i, timingOf(l));
+    return eff;
+  }
+
+  renderTimeline() {
+    const eff = this.effective(), fps = this.timelineData?.fps ?? this.player.fps;
+    const joint = this.keyJoint?.();
+    const items = this.layers.map((l, i) => ({
+      name: l.name, kind: l.kind ?? 'clip', track: l.track ?? 0, duration: this.durationOf(i), enabled: l.enabled, muted: l.muted,
+      timing: timingOf(l), eff: eff.get(i),
+      keyTimes: isKeys(l) && joint ? keyFrames(l.keys, joint).map((f) => f / fps) : [],
+    }));
+    let end = this.player.duration;
+    for (const i of this.layers.keys()) if (this.layers[i].enabled) end = Math.max(end, this.extent(i)[1]);
+    this.timeline.set({ layers: items, duration: end, active: this.active, fps, tracks: this.trackCount,
+      contacts: this.timelineData?.contacts ?? null, range: this.player.range ? this.player.rangeFrames.map((f) => f / fps) : null });
+  }
+
+  canRemove(i) { return isKeys(this.layers[i]) || this.layers.filter((l) => !isKeys(l)).length > 1; }
+
+  remove(i) {
+    if (!this.layers[i] || !this.canRemove(i)) { this.status('The scene needs at least one anim clip', true); return; }
+    this.layers.splice(i, 1);
+    this.select(Math.min(this.active > i ? this.active - 1 : this.active, this.layers.length - 1));
+    this.schedule();
+  }
+
+  // The selected clip, or the last clip of the scene when an anim layer is selected.
+  activeClip() {
+    if (!isKeys(this.activeLayer)) return this.active;
+    for (let i = this.layers.length - 1; i >= 0; i--) if (!isKeys(this.layers[i])) return i;
+    return 0;
+  }
+  insertClip(l, duration) {
+    // Clips go before the anim layers in the array (the stack order is computed anyway).
+    const at = this.layers.findIndex(isKeys);
+    const i = at < 0 ? this.layers.length : at;
+    this.layers.splice(i, 0, l);
+    if (duration !== undefined) this.durations.set(l, duration);
+    return i;
+  }
+  clipName() { return `Clip ${this.layers.filter((l) => !isKeys(l)).length + 1}`; }
+
+  // + Clip: same source as the selected clip, after the last clip of its track, root aligned.
+  addClip() {
+    const ci = this.activeClip(), base = this.layers[ci], tr = base.track ?? 0;
+    const list = this.tracks().find(([t]) => t === tr)?.[1] ?? [ci];
+    const end = Math.max(...list.map((j) => this.extent(j)[1]));
+    const l = newLayer(this.clipName(), { ...base.config });
+    l.track = tr;
+    l.timing = { ...DEFAULT_TIMING, start: end, align_root: true };
+    this.select(this.insertClip(l, this.durationOf(ci)));
+    this.schedule();
+  }
+
+  // + Track: a new track above with a clip of the selected clip's source at the playhead,
+  // blending in and out over a quarter of a second.
+  addTrack() {
+    const ci = this.activeClip(), base = this.layers[ci];
+    const l = newLayer(this.clipName(), { ...base.config });
+    l.track = this.trackCount;
+    l.timing = { ...DEFAULT_TIMING, start: Math.round(this.player.time * 30) / 30, extend: 'none', fade_in: 0.25, fade_out: 0.25, align_root: true };
+    this.select(this.insertClip(l, this.durationOf(ci)));
+    this.schedule();
+  }
+
+  addKeyLayer() {
+    const base = this.layers[this.activeClip()];
+    const n = this.layers.filter(isKeys).length;
+    const l = { ...newLayer(n ? `Keys ${n + 1}` : 'Keys', { ...base.config }), kind: 'keys', keys: emptyTracks(), blend: 'additive', reference: 'rest' };
+    delete l.track;
+    this.layers.push(l);
+    this.select(this.layers.length - 1);
+    this.schedule();
   }
 
   // Joints a custom mask is edited for: the character when retargeting, else the source skeleton.
@@ -234,7 +422,7 @@ export class MotionPanel {
       const parents = js.map((j) => j.parent);
       return js.map((j, i) => ({ name: j.name, parent: j.parent, depth: depth(parents, i) }));
     }
-    const key = this.sources?.get(this.layers[0].config.source)?.skeleton_key;
+    const key = this.sources?.get(this.layers[this.baseIndex()].config.source)?.skeleton_key;
     const def = key && this.skeletons.get(key);
     if (!def) return [];
     return def.names.map((name, i) => ({ name, parent: def.parents[i], depth: depth(def.parents, i) }));
@@ -244,7 +432,7 @@ export class MotionPanel {
   async maskPresets() {
     let url;
     if (this.retarget?.enabled) url = `/api/masks?character=${encodeURIComponent(await this.retarget.ensureCharacterId())}`;
-    else url = `/api/masks?skeleton=${encodeURIComponent(this.sources?.get(this.layers[0].config.source)?.skeleton_key ?? '')}`;
+    else url = `/api/masks?skeleton=${encodeURIComponent(this.sources?.get(this.layers[this.baseIndex()].config.source)?.skeleton_key ?? '')}`;
     this.presetCache ??= new Map();
     if (!this.presetCache.has(url)) {
       const r = await fetch(url);
@@ -282,51 +470,46 @@ export class MotionPanel {
     };
   }
 
-  // Recompute the key ticks shown on keyframe-layer rows (selected joint changed / keys edited).
-  refreshKeyTicks() {
-    if (!this.timelineData) return;
-    const joint = this.keyJoint?.(), fps = this.player.fps;
-    for (const l of this.timelineData.layers) l.keyTimes = l.keys && joint ? keyFrames(l.keys, joint).map((f) => f / fps) : [];
-    this.timeline.set({ ...this.timelineData, active: this.active });
-  }
+  // Recompute the key ticks shown on anim-layer rows (selected joint changed / keys edited).
+  refreshKeyTicks() { this.renderTimeline(); }
 
-  // The first enabled motion (non-keyframe) layer: drives overlays and the source skeleton.
+  // The first enabled clip in stack order: drives overlays and the source skeleton.
   baseIndex() {
-    const i = this.layers.findIndex((l) => l.enabled && l.kind !== 'keys');
-    return i >= 0 ? i : Math.max(0, this.layers.findIndex((l) => l.kind !== 'keys'));
+    const order = this.stackOrder().filter((i) => !isKeys(this.layers[i]));
+    return order.find((i) => this.layers[i].enabled) ?? order[0] ?? 0;
   }
 
-  // Split the active clip at the playhead: the first part ends there (empty afterwards), the
-  // second starts there with the rest of the clip (same content, so the motion is unchanged).
+  // Split the selected clip at the playhead: the first part ends there, the second starts there
+  // with the rest of the clip on the same track (same content, so the motion is unchanged).
   splitActive() {
     const i = this.active, l = this.layers[i], t = timingOf(l);
-    const full = this.timelineData?.layers[i]?.duration ?? 0;
+    if (isKeys(l)) return;
+    const full = this.durationOf(i);
     const tout = t.trim_out > t.trim_in ? t.trim_out : full;
     const now = this.player.time;
     const cut = t.trim_in + (now - t.start) * t.speed;
     if (t.repeat !== 1 || cut <= t.trim_in + 1e-3 || cut >= tout - 1e-3) {
-      this.status('Move the playhead inside the active clip (single cycle) to split it', true);
+      this.status('Move the playhead inside the selected clip (single cycle) to split it', true);
       return;
     }
     const second = structuredClone(l);
     second.name = `${l.name} (2)`;
     second.timing = { ...t, trim_in: cut, start: now, fade_in: 0 };
-    l.timing = { ...t, trim_out: cut, extend: 'none', fade_out: 0 };
+    l.timing = { ...t, trim_out: cut, fade_out: 0 };
+    this.durations.set(second, full);
     this.layers.splice(i + 1, 0, second);
     this.select(i + 1);
     this.schedule();
   }
 
-  // Duplicate the active clip right after itself, continuing the root from where it ends.
+  // Duplicate the selected clip right after itself on its track, continuing the root.
   duplicateActive() {
     const i = this.active, l = this.layers[i], t = timingOf(l);
-    const full = this.timelineData?.layers[i]?.duration ?? 0;
-    const tout = t.trim_out > t.trim_in ? t.trim_out : full;
-    const end = t.start + ((tout - t.trim_in) / t.speed) * t.repeat;
+    if (isKeys(l)) return;
     const copy = structuredClone(l);
     copy.name = `${l.name} copy`;
-    copy.timing = { ...t, start: end, align_root: l.kind !== 'keys', extend: 'hold' };
-    l.timing = { ...t, extend: 'none' };
+    copy.timing = { ...t, start: this.extent(i)[1], align_root: true };
+    this.durations.set(copy, this.durationOf(i));
     this.layers.splice(i + 1, 0, copy);
     this.select(i + 1);
     this.schedule();
@@ -334,7 +517,8 @@ export class MotionPanel {
 
   isSimple() {
     const l = this.layers[0];
-    return !this.$('foot-lock').checked && this.layers.length === 1 && l.kind !== 'keys' && isDefaultTiming(l) && l.blend === 'override' && l.weight === 1 && l.mask === 'full' && l.enabled && !l.muted;
+    return !this.$('foot-lock').checked && !(this.sceneLength > 0) && this.layers.length === 1 && !isKeys(l) && isDefaultTiming(l) &&
+      l.blend === 'override' && l.weight === 1 && l.mask === 'full' && l.enabled && !l.muted;
   }
 
   // ----- sources / requests -----------------------------------------------------------
@@ -384,19 +568,21 @@ export class MotionPanel {
     return req;
   }
 
-  // The current stack as /api/layers or /api/export "layers" (a single default layer bakes
-  // to exactly its clip).
-  stackRequest() { return this.layers.map((l, i) => this.layerRequest(l, i)); }
+  // The scene as /api/layers or /api/export "layers", in stack order (a single default clip
+  // bakes to exactly its motion), plus the scene length override.
+  stackRequest() {
+    const eff = this.effective();
+    return this.stackOrder().map((i) => this.layerRequest(this.layers[i], i, eff.get(i)));
+  }
+  stackBody() { return { layers: this.stackRequest(), ...(this.sceneLength > 0 ? { length: this.sceneLength } : {}) }; }
 
-  layerRequest(l, i) {
-    if (l.kind === 'keys') {
-      const mask = l.mask === 'custom' ? (l.customMask || { version: 1, name: 'custom', default: 1, weights: {} }) : l.mask;
-      return { name: l.name || `Keys ${i + 1}`, keys: l.keys, weight: l.weight, mask, enabled: l.enabled, muted: l.muted, wrap: l.wrap, timing: timingOf(l) };
-    }
+  layerRequest(l, i, eff = timingOf(l)) {
+    const { auto_blend, ...timing } = eff;
     const mask = l.mask === 'custom' ? (l.customMask || { version: 1, name: 'custom', default: 1, weights: {} }) : l.mask;
+    if (isKeys(l)) return { name: l.name || `Keys ${i + 1}`, keys: l.keys, weight: l.weight, mask, enabled: l.enabled, muted: l.muted, wrap: l.wrap, timing };
     return {
-      name: l.name || `Layer ${i + 1}`, root_motion: this.rootMotionRequest(l.config), mode: l.blend, weight: l.weight,
-      mask, enabled: l.enabled, muted: l.muted, reference: l.reference, wrap: l.wrap, timing: timingOf(l),
+      name: l.name || `Clip ${i + 1}`, root_motion: this.rootMotionRequest(l.config), mode: l.blend, weight: l.weight,
+      mask, enabled: l.enabled, muted: l.muted, reference: l.reference, wrap: l.wrap, timing,
     };
   }
 
@@ -438,14 +624,15 @@ export class MotionPanel {
 
   async apply() {
     const ticket = ++this.request;
-    const missing = this.layers.findIndex((l) => l.kind !== 'keys' && !l.config.source);
-    if (missing >= 0) {
-      if (this.layers.length > 1) this.status(`Layer ${missing + 1} has no motion source`, true);
+    this.renderTimeline();
+    const missing = this.layers.find((l) => !isKeys(l) && !l.config.source);
+    if (missing) {
+      if (this.layers.length > 1) this.status(`Clip "${missing.name}" has no motion source`, true);
       return;
     }
-    const keys = new Set(this.layers.filter((l) => l.kind !== 'keys').map((l) => this.sources?.get(l.config.source)?.skeleton_key));
+    const keys = new Set(this.layers.filter((l) => !isKeys(l)).map((l) => this.sources?.get(l.config.source)?.skeleton_key));
     try {
-      if (keys.size !== 1) throw new Error('all layers must use motions of the same skeleton');
+      if (keys.size !== 1) throw new Error('all clips must use motions of the same skeleton');
       const [key] = keys;
       this.$('motion-info').textContent = 'Processing…';
       const [def] = await Promise.all([this.skeleton(key), this.retarget?.setSource(key)]);
@@ -472,18 +659,19 @@ export class MotionPanel {
     return {
       motion: { root, rotations }, target: rt ? { meta: body.meta, rotations: tRot, translations: tTrans } : null,
       overlay: { samples, waypoints: req.path?.points ?? [], sourceRoot, resultRoot: root, meta: rt ? body.meta : null },
-      layers: [{ name: l.name, duration: (root.length / 3 - 1) / 30, enabled: true, muted: false, timing: timingOf(l) }],
+      durations: [[0, (root.length / 3 - 1) / 30]],
       summary: `root ${req.mode}`,
     };
   }
 
   async applyStack(rt) {
     const foot_lock = this.footLockRequest();
-    const body = await postJSON('/api/layers', { layers: this.layers.map((l, i) => this.layerRequest(l, i)), ...(rt || {}), ...(foot_lock ? { foot_lock } : {}) });
+    const order = this.stackOrder(), pos = new Map(order.map((i, k) => [i, k]));
+    const body = await postJSON('/api/layers', { ...this.stackBody(), ...(rt || {}), ...(foot_lock ? { foot_lock } : {}) });
     const base = this.baseIndex();
-    // Overlays follow the active layer, or the base layer when a keyframe layer is active.
-    const shown = this.activeLayer.kind === 'keys' ? base : this.active;
-    const act = body.layers[shown], baseRm = body.layers[base].root_motion;
+    // Overlays follow the selected clip, or the base clip when an anim layer is selected.
+    const shown = isKeys(this.activeLayer) ? base : this.active;
+    const act = body.layers[pos.get(shown)], baseRm = body.layers[pos.get(base)].root_motion;
     const [rotations, translations, stackRoot, baseRoot, baseRot, actRoot, samples, sourceRoot] = await Promise.all([
       f32(body.rotations), f32(body.translations), body.native ? f32(body.root) : null,
       body.native ? null : f32(baseRm.root), body.native ? null : f32(baseRm.rotations),
@@ -492,20 +680,21 @@ export class MotionPanel {
     ]);
     const meta = body.meta;
     const activeReq = this.rootMotionRequest(this.layers[shown].config);
+    const clips = this.layers.filter((l) => !isKeys(l)).length, animLayers = this.layers.length - clips;
     return {
-      // Native stacks play on the source skeleton; character stacks show the base layer's
+      // Native stacks play on the source skeleton; character stacks show the base clip's
       // source motion beside the character.
       motion: body.native ? { root: stackRoot, rotations } : { root: baseRoot, rotations: baseRot },
       target: body.native ? null : { meta, rotations, translations },
       overlay: {
         samples, waypoints: activeReq.path?.points ?? [], sourceRoot, resultRoot: actRoot,
-        meta: body.native ? null : JSON.parse(JSON.stringify(body.layers[base].retarget)),
+        meta: body.native ? null : JSON.parse(JSON.stringify(body.layers[pos.get(base)].retarget)),
       },
-      layers: meta.layers.map((l, i) => ({ name: l.name, duration: l.duration, enabled: l.enabled, muted: l.muted, index: i,
-        keys: this.layers[i]?.kind === 'keys' ? this.layers[i].keys : null, kind: this.layers[i]?.kind, timing: timingOf(this.layers[i] ?? {}) })),
+      durations: meta.layers.map((l, k) => [order[k], l.duration]),
       footLock: meta.foot_lock ?? null,
       fps: meta.fps,
-      summary: `${this.layers.length} layer${this.layers.length === 1 ? '' : 's'}, ${meta.frames} frames${meta.foot_lock ? ', feet locked' : ''}`,
+      summary: `${clips} clip${clips === 1 ? '' : 's'} on ${this.trackCount} track${this.trackCount === 1 ? '' : 's'}` +
+        `${animLayers ? `, ${animLayers} anim layer${animLayers === 1 ? '' : 's'}` : ''}, ${meta.frames} frames${meta.foot_lock ? ', feet locked' : ''}`,
     };
   }
 
@@ -534,18 +723,16 @@ export class MotionPanel {
     // The joint list for a custom mask is known now (character or source skeleton).
     if (this.activeLayer.mask === 'custom') this.showMaskEditor();
     const fps = r.fps || this.player.fps;
-    // Keyframe layers show the keys of the joint being edited.
-    const joint = this.keyJoint?.();
-    for (const l of r.layers) l.keyTimes = l.keys && joint ? keyFrames(l.keys, joint).map((f) => f / fps) : [];
+    for (const [i, d] of r.durations) if (this.layers[i]) this.durations.set(this.layers[i], d);
     this.timelineData = {
-      layers: r.layers, duration: this.player.duration, fps,
-      contacts: fl ? fl.contacts.map((c) => ({ foot: c.foot, start: c.start / fps, end: c.end / fps })) : null,
+      fps, contacts: fl ? fl.contacts.map((c) => ({ foot: c.foot, start: c.start / fps, end: c.end / fps })) : null,
     };
-    this.timeline.set({ ...this.timelineData, active: this.active });
+    this.renderTimeline();
+    this.writeTiming();
     const travel = (a) => Math.hypot(a[a.length - 3] - a[0], a[a.length - 1] - a[2]);
     this.$('motion-info').textContent =
       `${def.key} · ${this.player.frames} frames @ ${this.player.fps} fps · ${this.player.duration.toFixed(2)} s · ` +
-      `active layer root travel ${travel(r.overlay.sourceRoot).toFixed(2)} m → ${travel(r.overlay.resultRoot).toFixed(2)} m` +
+      `selected clip root travel ${travel(r.overlay.sourceRoot).toFixed(2)} m → ${travel(r.overlay.resultRoot).toFixed(2)} m` +
       (fl ? ` · foot lock: ${fl.contacts.length} contacts, slide ${(fl.slide_before * 1000).toFixed(1)} → ${(fl.slide_after * 1000).toFixed(1)} mm` +
             `, hips −${(fl.max_hip_drop * 100).toFixed(1)} cm${fl.unreachable_frames ? `, ${fl.unreachable_frames} frames out of reach` : ''}` : '');
     this.status(`Motion: ${r.summary}${rt ? ' · retargeted' : ''}`);

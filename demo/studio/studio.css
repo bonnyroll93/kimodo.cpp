@@ -272,3 +272,27 @@ body {
   .tools { justify-content: flex-start; flex-basis: 100%; }
   .sep { display: none; }
 }
+
+/* Story timeline: tracks of anim clips, anim layers, attribute editor, frame controls */
+.tl-label.track { cursor: default; color: #c4b5fd; }
+.tl-label.keys { color: #ffb547; }
+.tl-track.clip-track { background: repeating-linear-gradient(90deg, #0b1015 0 49px, #121a22 49px 50px); }
+.tl-track.keys-row { background: #0b1015; }
+.tl-bar.selected { background: color-mix(in srgb, var(--accent) 70%, transparent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.tl-bar.keys.selected { background: repeating-linear-gradient(90deg, #ffb547aa 0 6px, #ffb54766 6px 12px); }
+.tl-bar.muted { background: repeating-linear-gradient(45deg, #8b9aa544 0 6px, transparent 6px 12px); }
+.tl-bar.disabled { background: transparent; border: 1px dashed #8b9aa566; }
+.tl-name { position: absolute; left: 5px; top: 1px; right: 40px; font-size: .68rem; color: #051013; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.tl-bar.keys .tl-name { color: #ffd38a; }
+.tl-out-range { position: absolute; top: 0; bottom: 0; background: #05080bb0; pointer-events: none; }
+.attr-timing { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px 8px; align-items: end; }
+.attr-timing .field { font-size: .74rem; }
+.attr-timing input, .attr-timing select { width: 100%; min-width: 0; }
+.attr-timing .toggle, .attr-timing #t-info { grid-column: 1 / -1; }
+.frame-controls { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; flex-basis: 100%; }
+.pb-field { display: inline-flex; gap: 3px; align-items: center; font-size: .74rem; color: var(--muted); }
+.pb-field input { width: 58px; border: 1px solid var(--line); border-radius: 5px; background: #0b1015; color: var(--text); font: inherit; font-size: .74rem; padding: 1px 3px; }
+.playbar { flex-wrap: wrap; row-gap: 6px; }
+.timeline { bottom: 104px; }
+.attr-timing input[type="checkbox"] { width: auto; }
+.attr-timing .toggle { justify-self: start; }

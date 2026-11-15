@@ -42,6 +42,10 @@ type clipTiming struct {
 	FadeIn    float64 `json:"fade_in"`
 	FadeOut   float64 `json:"fade_out"`
 	AlignRoot bool    `json:"align_root"`
+	EaseFades bool    `json:"ease_fades"`
+	// EmptyBefore: nothing before start (set by the studio for clips that follow another
+	// clip on the same track, so they do not cover it before they begin).
+	EmptyBefore bool `json:"empty_before"`
 }
 
 func timingArgs(t *clipTiming) ([]string, string) {
@@ -85,6 +89,12 @@ func timingArgs(t *clipTiming) ([]string, string) {
 	if t.AlignRoot {
 		args = append(args, "--align-root")
 	}
+	if t.EaseFades {
+		args = append(args, "--ease-fades")
+	}
+	if t.EmptyBefore {
+		args = append(args, "--empty-before")
+	}
 	return args, ""
 }
 
@@ -102,6 +112,7 @@ type layersRequest struct {
 	AlignRest bool             `json:"align_rest,omitempty"`
 	Layers    []layerRequest   `json:"layers"`
 	FootLock  *footLockRequest `json:"foot_lock,omitempty"`
+	Length    float64          `json:"length,omitempty"` // scene length override in seconds (0: the stack's)
 }
 
 // footLockArgs validates the foot-lock options and returns kmd-anim layers flags.
@@ -215,8 +226,8 @@ type layersResult struct {
 // layers runs every layer through root motion (+ retarget with a character) and bakes the
 // stack with kmd-anim layers (all steps cached by request hash).
 func (c studioConfig) layers(ctx context.Context, req layersRequest) (layersResult, *httpError) {
-	if len(req.Layers) == 0 || len(req.Layers) > 16 {
-		return layersResult{}, &httpError{http.StatusBadRequest, "a stack needs 1 to 16 layers"}
+	if len(req.Layers) == 0 || len(req.Layers) > 64 {
+		return layersResult{}, &httpError{http.StatusBadRequest, "a stack needs 1 to 64 clips and layers"}
 	}
 	args := []string{}
 	key := []string{req.Character}
@@ -285,6 +296,12 @@ func (c studioConfig) layers(ctx context.Context, req layersRequest) (layersResu
 		return layersResult{}, herr
 	}
 	args = append(args, footArgs...)
+	if req.Length < 0 || req.Length > 3600 {
+		return layersResult{}, &httpError{http.StatusBadRequest, "length must be in [0, 3600] seconds"}
+	}
+	if req.Length > 0 {
+		args = append(args, "--length", num(req.Length))
+	}
 	id := hashID(append(key, args...)...)
 	dir := filepath.Join(c.output, "layers", id)
 	if herr := c.runCached(ctx, dir, "clip.json", func(out string) []string {

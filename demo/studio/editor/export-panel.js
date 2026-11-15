@@ -26,7 +26,8 @@ export class ExportPanel {
     try {
       const rt = await this.retarget.request();
       if (!rt) throw new Error('retarget onto a character first');
-      const body = { name: $('export-name').value || 'Kimodo', ...rt, layers: this.motionPanel.stackRequest() };
+      const foot_lock = this.motionPanel.footLockRequest();
+      const body = { name: $('export-name').value || 'Kimodo', ...rt, ...this.motionPanel.stackBody(), ...(foot_lock ? { foot_lock } : {}) };
       $('export-glb').disabled = true;
       this.status('Exporting GLB…');
       const r = await fetch('/api/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

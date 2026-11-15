@@ -1,8 +1,10 @@
-// Save / open the studio scene as JSON: character reference, layers (motion source, root
-// motion, path waypoints, blend, weight, masks...), retarget mapping and options, foot
+// Save / open the studio scene as JSON: character reference, anim clips (track, timing, motion
+// source, root motion, path waypoints, blend, weight, masks...) and anim layers (keyframes), scene length, retarget mapping and options, foot
 // locking, export name, view toggles, playback position and camera.
 // Motions and characters are referenced, not embedded: sample rigs by name, uploaded
 // characters by content hash (the demo keeps them), motions by their gallery/sample id.
+
+import { normalizeLayers } from './motion-panel.js';
 
 const FORMAT = 'kimodo-studio-scene';
 const TOGGLES = ['show-mesh', 'show-skeleton', 'show-joints', 'show-grid', 'show-axes', 'show-path', 'show-source'];
@@ -51,7 +53,8 @@ export class SceneFile {
       },
       export_name: $('export-name').value,
       view: Object.fromEntries(TOGGLES.map((id) => [id, $(id).checked])),
-      playback: { frame: player.frame, loop: player.loop },
+      scene_length: motionPanel.sceneLength,
+      playback: { frame: player.frame, loop: player.loop, range: player.range ?? null },
       camera: { position: viewport.camera.position.toArray(), target: viewport.controls.target.toArray() },
     };
   }
@@ -65,7 +68,7 @@ export class SceneFile {
     a.download = `${base}.kimodo-scene.json`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    this.ctx.status(`Scene saved: ${scene.layers.length} layer(s)${scene.character ? `, character ${scene.character.name}` : ''}`);
+    this.ctx.status(`Scene saved: ${scene.layers.length} clip(s) / anim layer(s)${scene.character ? `, character ${scene.character.name}` : ''}`);
   }
 
   async restore(scene, fileName) {
@@ -106,7 +109,8 @@ export class SceneFile {
     await motionPanel.loadSources();
     const missing = scene.layers.map((l) => l.config?.source).filter((s) => s && !motionPanel.sources.has(s));
     if (missing.length) warnings.push(`motion source(s) not found on this server: ${[...new Set(missing)].join(', ')}`);
-    motionPanel.layers = structuredClone(scene.layers);
+    motionPanel.layers = normalizeLayers(structuredClone(scene.layers));
+    motionPanel.sceneLength = Math.max(0, Number(scene.scene_length) || 0);
     motionPanel.select(Math.min(Math.max(0, scene.active_layer | 0), motionPanel.layers.length - 1));
 
     // The saved mapping belongs to the base layer's skeleton.
@@ -122,7 +126,9 @@ export class SceneFile {
     player.loop = scene.playback?.loop !== false;
     $('loop').checked = player.loop;
     player.play(false);
+    player.setRange(Array.isArray(scene.playback?.range) ? scene.playback.range : null);
     player.setFrame(scene.playback?.frame ?? 0);
+    motionPanel.renderTimeline();
     if (scene.camera?.position && scene.camera?.target) {
       viewport.camera.position.fromArray(scene.camera.position);
       viewport.controls.target.fromArray(scene.camera.target);

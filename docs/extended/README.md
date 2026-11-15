@@ -375,13 +375,30 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
   - *Auto* recomputes the mapping. *Save* and *Load* exchange mapping JSON files.
   - Locally opened `.glb` files are uploaded once, on demand. Bones are matched by glTF
     node index, because three.js rewrites names such as `mixamorig:Hips`.
-- **Layers.** The *Layers* panel lists the stack, with the top of the list applied last.
-  - Each layer has an enable checkbox, mute (M), a name, a blend mode, a weight slider
-    and a mask (Full / Upper / Lower / Custom…).
-  - Additive layers also choose a reference pose (first frame / rest / frame N).
-  - Each layer chooses whether to hold its end or loop, and can be moved or removed.
-  - *+ Layer* adds an additive upper-body layer on top.
-  - The *Motion* form edits the active layer's source and root motion.
+- **Story mode: anim clips, anim layers and the attribute editor.** The scene is made of
+  *anim clips* on tracks (the Story timeline under the viewport) and *anim layers*
+  (keyframes, in the right panel), similar to MotionBuilder's Story mode.
+  - Every **anim clip** has its own motion source and root motion (Full / In place / Path),
+    blend mode (Override / Additive), weight, mask, enable, mute, additive reference, end
+    behaviour (hold / loop) and clip timing.
+  - Clips on the same **track** play in sequence. Where two clips **overlap**, the later one
+    blends in over the overlap (*Auto blend overlaps*, on by default, smoothstep when
+    *Smooth blends* is on), and the timeline draws the blend as a gradient. A clip that
+    is not the first of its track, or is on an upper track, does not hold its first frame
+    before it starts.
+  - **Higher tracks apply over lower ones** (with their own blend mode, weight, mask and
+    blend in / out), so an upper-body clip on Track 2 replaces or adds to Track 1 only
+    where it plays.
+  - **Anim layers** (keyframes) are applied after all the clips; the *Anim layers* panel
+    lists them, with up / down to reorder.
+  - Select a clip in the timeline (or an anim layer in its panel or row) and the
+    **Attribute editor** shows its settings: the row (enable, name, mute, blend, weight,
+    mask, reference, end), the timing fields (Start, Trim in / out, Speed, Repeat, After
+    end, Blend in / out, Auto blend, Smooth blends, Match root), the joint mask editor and
+    the *Motion* form (source and root motion).
+  - The stack sent to `kmd-anim` is ordered tracks bottom to top (clips by start), then
+    the anim layers; the studio computes each clip's effective blend-in and
+    `empty_before` from the overlaps.
   - *Custom…* opens the **joint mask editor**, where you choose which joints the layer
     affects:
     - each joint has an include checkbox and a weight from 0 to 1; ⤵ applies the choice to
@@ -393,7 +410,7 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     - included joints are coloured in the viewport and excluded ones are grey;
     - switching a layer from Upper or Lower to Custom starts from that preset;
     - Save and Load exchange mask JSON files.
-  - A single default layer behaves exactly as before. A real stack is baked on the
+  - A single default clip behaves exactly as before. Anything else is baked on the
     server, on the character's skeleton when retargeting, otherwise on the native
     skeleton.
 - **Export.** *Export GLB* bakes the current result (motion, root mode, retarget and
@@ -402,7 +419,7 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     from the file, so you can compare it with the preview.
   - Any loaded GLB that contains animations shows an *Embedded animation* selector. These
     animations play through three.js' `AnimationMixer`, on the same play bar.
-- **Keyframe layers.** *+ Keys* adds a keyframe layer on top of the stack. It holds
+- **Anim layers (keyframes).** *+ Keys* adds an anim layer on top of the stack. It holds
   offsets added to the layers below, so joints without keys are untouched.
   - Select a bone of the character (viewport or hierarchy) and pose it with the gizmo:
     *Rotate* (E) or *Move* (W).
@@ -421,8 +438,8 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
   - Gizmo edits are exact when the keyframe layer is the top layer at weight 1, which is
     how *+ Keys* adds it.
 - **Undo / redo.** Ctrl+Z undoes, and Ctrl+Y or Ctrl+Shift+Z redoes; ↶ and ↷ are in the
-  toolbar. The history keeps the last 100 states of everything you edit: layers and their
-  sources, root motion and paths (including viewport edits), keyframes (gizmo and graph
+  toolbar. The history keeps the last 100 states of everything you edit: clips, tracks,
+  anim layers and their sources, the scene length, root motion and paths (including viewport edits), keyframes (gizmo and graph
   editor), masks, clip timing, mapping, retarget and foot-lock options, and the export
   name.
   - Quick successive edits, such as a drag, count as one step.
@@ -430,8 +447,10 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
   - Loading a character or opening a scene starts a new history.
 - **Scenes.** *Save scene* downloads the whole studio state as JSON:
   - the character reference;
-  - every layer (source, root motion, path waypoints, blend, weight, mask or custom mask,
-    enabled, muted, reference, wrap) and the active layer;
+  - every anim clip (track, timing, source, root motion, path waypoints, blend, weight,
+    mask or custom mask, enabled, muted, reference, wrap), every anim layer (keys) and
+    the selection; the scene length and the playback range. Scenes saved before tracks
+    existed open with each motion layer on its own track;
   - the retarget options and mapping, foot locking, the export name, the view toggles,
     the playback frame and the camera.
 
@@ -452,37 +471,39 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
 - **Text to motion** opens the generator in a new tab, so the scene in the studio is
   untouched. New generations appear in *Source* when you come back to the studio tab,
   or when you press ↻.
-- **Clip timeline (retiming).** Every layer is a clip on the timeline.
-  - **Editing with the mouse:** drag a clip to move it; drag its left edge to trim the
-    start and its right edge to trim the end. Times snap to frames; Shift moves freely.
-  - **Stretch / compress** (change the speed) with **Ctrl + drag**, or Cmd / Alt:
-    - on the clip or its right edge the start stays put;
-    - on the left edge the end stays put;
-    - **Ctrl + wheel** over a clip stretches or compresses it in steps;
-    - while Ctrl is held, the clips show a stretch cursor.
-  - **Toolbar for the active clip:**
-    - *Split* cuts it at the playhead into two clips that reproduce the original motion;
-    - *Duplicate* places a copy right after it, with *Align root* so the root continues;
-    - *Start*, *Speed*, *Repeat*, *Fade in* and *Fade out* set the clip's timing; repeated
-      cycles continue the root;
-    - *Hold ends* / *Empty outside* chooses what the clip does outside its range;
-    - *Align root* moves and turns the clip so it starts where the layers below put the
-      root.
-  - Clip timing is part of the layer (`ClipTiming` in `layers.hpp`; `--start`,
+- **Story timeline (retiming).** One row per anim layer (◆, on top), one row per track,
+  and the foot contacts.
+  - **Toolbar:** *+ Clip* adds a clip of the selected clip's source after the last clip
+    of its track (with *Match root*); *+ Track* adds a track above with a clip at the
+    playhead (blend in / out 0.25 s); *Split* cuts the selected clip at the playhead into
+    two clips that reproduce the original motion; *Duplicate* places a copy right after
+    it, root continuing; *Delete* removes the selected clip or anim layer (the scene keeps
+    at least one clip).
+  - **Mouse:** drag a clip to move it, also onto another track row; drag its left edge to
+    trim the start and its right edge to trim the end. Times snap to frames; Shift moves
+    freely. Click empty space to seek.
+  - **Stretch / compress** (change the speed) with **Ctrl + drag**, or Cmd / Alt: on the
+    clip or its right edge the start stays put, on the left edge the end stays put;
+    **Ctrl + wheel** over a clip stretches or compresses it in steps.
+  - Clip timing is part of the clip (`ClipTiming` in `layers.hpp`; `--start`,
     `--trim-in`, `--trim-out`, `--speed`, `--repeat`, `--extend`, `--fade-in`,
-    `--fade-out` and `--align-root` in `kmd-anim layers`; `timing` in `/api/layers`). It
-    is therefore baked, foot-locked and exported like everything else, and saved in scenes.
-  - Not yet: root yaw continuation across repeats (only travel), crossfade presets, and
-    retiming curves (time warping).
-- **Timeline.** It shows one bar per layer (clip length on the stack's time axis), the
-  active layer, disabled and muted states, and a playhead.
-  - Click a row label to make that layer active; click or drag on the bars to seek.
-  - The play bar shows the frame, the time, the duration and the fps.
+    `--fade-out`, `--ease-fades`, `--empty-before` and `--align-root` in `kmd-anim
+    layers`; `timing` in `/api/layers`). It is therefore baked, foot-locked and exported
+    like everything else, and saved in scenes.
+  - Not yet: root yaw continuation across repeats (only travel), and retiming curves
+    (time warping).
+- **Main timeline frame controls** (play bar): |◀ ◀ ▶ ▶| and a *Frame* field (keys: ← / →,
+  Shift: 10 frames, Home / End); a **playback range** *In* / *Out* (frames; `[` / `]` or
+  I / O set them at the current frame, ⟷ resets) inside which play and loop stay, shown
+  dimmed outside on the timeline; and the **scene Length** in seconds (0 = the end of the
+  last clip): shorter cuts the result, longer holds the clips' ends. The length is
+  baked and exported (`--length` in `kmd-anim layers`, `length` in `/api/layers` and
+  `/api/export`) and saved in scenes with the range.
 - **Deep links:**
   - `/studio/?load=samples/test_rig.glb&joint=LeftArm`
   - `/studio/?motion=sample:soma30-walk-s42&mode=path&preset=scurve&frame=45`
   - `/studio/?load=samples/test_rig_mixamo_apose.glb&motion=sample:soma30-walk-s42&mode=inplace&align=1&mapping=open`
-  - `/studio/?load=samples/test_rig.glb&motion=sample:soma30-walk-s42&stack=demo&mask=custom` (a demo two-layer stack)
+  - `/studio/?load=samples/test_rig.glb&motion=sample:soma30-walk-s42&stack=demo&mask=custom` (a demo second track: additive upper body)
   - `…&footlock=1` turns foot locking on; `…&export=1` runs the export once the motion is ready; `/studio/?load=<url of a .glb>&embedded=<animation>&frame=45` reopens a file
 
 | Endpoint | Purpose |
@@ -497,7 +518,7 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
 | `POST /api/retarget/check` | `{character, skeleton, mapping}` → diagnostics |
 | `POST /api/retarget` | `{root_motion:{…}, character, mapping?, align_rest?, root_scale?, yaw?}` |
 | `GET /api/retarget/<id>/{retarget.json,rotations.f32,translations.f32}` | result, cached by request hash |
-| `POST /api/layers` | `{character?, mapping?, align_rest?, foot_lock?:{enabled, height?, speed?, blend?, adjust_hips?}, layers:[{name, root_motion, mode, weight, mask, enabled, muted, reference, wrap}]}` (1–16 layers) |
+| `POST /api/layers` | `{character?, mapping?, align_rest?, length?, foot_lock?:{enabled, height?, speed?, blend?, adjust_hips?}, layers:[{name, root_motion \| keys, mode, weight, mask, enabled, muted, reference, wrap, timing}]}` (1–64 clips and layers, in stack order) |
 | `GET /api/layers/<id>/{clip.json,rotations.f32,translations.f32,root.f32}` | baked stack, cached by request hash |
 | `GET /api/masks?character=…` or `?skeleton=…` | preset masks (full / upper / lower) from `kmd-anim masks` |
 | `DELETE /studio/motions/animation:<id>` | delete a generated animation (gallery entry and files) |

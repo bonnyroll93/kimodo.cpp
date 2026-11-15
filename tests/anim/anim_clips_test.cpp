@@ -46,9 +46,23 @@ void timing_tests(const Skeleton &soma, const AnimationClip &walk) {
     CHECK(near(st.duration(), 1.F + D));
     CHECK(same(st.evaluate(.5F), rest(soma)));
     CHECK(same(st.evaluate(1.7F), sample_clip(walk, .7F)));
-    // Extend::Hold (default): the first frame is held before the start.
+    // Extend::Hold (default): the first frame is held before the start ...
     late.timing.extend = Extend::Hold;
     CHECK(same(single(soma, late).evaluate(.5F), sample_clip(walk, 0.F)));
+    // ... unless empty_before: then nothing before the start, the end is still held.
+    late.timing.empty_before = true;
+    CHECK(same(single(soma, late).evaluate(.5F), rest(soma)));
+    CHECK(same(single(soma, late).evaluate(9.F), sample_clip(walk, D)));
+    late.timing.empty_before = false;
+
+    // Scene length override: shorter cuts, longer holds the end (Extend::Hold).
+    {
+        auto s1 = single(soma, AnimationLayer{.name = "len", .clip = walk});
+        CHECK(s1.bake(30.F, 1.F).frames() == 31);
+        const auto longer = s1.bake(30.F, D + 1.F);
+        CHECK(longer.frames() == static_cast<std::size_t>(std::lround((D + 1.F) * 30.F)) + 1);
+        CHECK(same(s1.evaluate(D + .9F), sample_clip(walk, D)));
+    }
 
     // Trim.
     AnimationLayer trimmed{.name = "trim", .clip = walk};
@@ -100,6 +114,13 @@ void timing_tests(const Skeleton &soma, const AnimationClip &walk) {
     const std::size_t la = static_cast<std::size_t>(soma.find("LeftArm"));
     CHECK(near(angle_between(pf[la].rotation, pb[la].rotation), angle_between(po[la].rotation, pb[la].rotation) / 2.F, 1.e-3F));
     CHECK(same(faded.evaluate(1.5F), sample_clip(other.clip, 1.5F)));
+    // Eased fades: smoothstep, so a quarter of the way in the weight is 0.15625 (linear: 0.25).
+    AnimationLayer eased = other;
+    eased.timing.ease_fades = true;
+    AnimationStack se(soma);
+    CHECK(se.add_layer(base).has_value() && se.add_layer(eased).has_value());
+    const auto pe = se.evaluate(.25F), pb2 = sample_clip(walk, .25F), po2 = sample_clip(other.clip, .25F);
+    CHECK(near(angle_between(pe[la].rotation, pb2[la].rotation), angle_between(po2[la].rotation, pb2[la].rotation) * .15625F, 2.e-3F));
 
     // Split at 1.5 s into two clips (Extend::None) reproduces the original.
     AnimationLayer a{.name = "a", .clip = walk}, b{.name = "b", .clip = walk};

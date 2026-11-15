@@ -51,6 +51,8 @@ struct ClipTiming {
     int repeat = 1;        // cycles of the trimmed segment (with TimeWrap::Loop: unbounded)
     Extend extend = Extend::Hold;
     float fade_in = 0.F, fade_out = 0.F; // seconds
+    bool ease_fades = false;             // smoothstep instead of linear fade ramps
+    bool empty_before = false;           // nothing before `start` even with Extend::Hold (clips later on a track)
     bool align_root = false;
 };
 
@@ -114,8 +116,9 @@ public:
     [[nodiscard]] float duration() const;
     // Local pose at time t, skeleton joint order.
     [[nodiscard]] std::vector<Transform> evaluate(float t) const;
-    // Bakes [0, duration] at fps (0: the fps of the first enabled layer, else 30).
-    [[nodiscard]] AnimationClip bake(float fps = 0.F) const;
+    // Bakes [0, duration] at fps (0: the fps of the first enabled layer, else 30). length > 0
+    // overrides the duration (shorter: cut; longer: the layers keep their extend behaviour).
+    [[nodiscard]] AnimationClip bake(float fps = 0.F, float length = 0.F) const;
 
 private:
     struct Resolved {

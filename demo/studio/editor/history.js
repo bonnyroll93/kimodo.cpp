@@ -40,6 +40,7 @@ export class History {
     return JSON.stringify({
       layers: mp.layers.map(({ customMaskFrom, ...l }) => l),
       active: mp.active,
+      length: mp.sceneLength,
       retarget: { on: $('retarget-on').checked, align: $('align-rest').checked, mapping: this.retarget.mapping ?? null },
       foot: { on: $('foot-lock').checked, hips: $('hip-adjust').checked, h: $('foot-height').value, s: $('foot-speed').value, b: $('foot-blend').value },
       exportName: $('export-name').value,
@@ -91,6 +92,7 @@ export class History {
     this.restoring = true;
     try {
       mp.layers = s.layers;
+      mp.sceneLength = s.length ?? 0;
       $('retarget-on').checked = s.retarget.on && !!this.retarget.character?.joints.length;
       $('align-rest').checked = s.retarget.align;
       this.retarget.mapping = s.retarget.mapping;

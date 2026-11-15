@@ -180,13 +180,24 @@ export class AnimationPlayer {
 
   play(on = !this.playing) { this.playing = on && this.frames > 0; this.emit(); }
 
+  // Playback range in frames (inclusive; null = the whole timeline). Play and loop stay inside it.
+  setRange(range) { this.range = range; this.emit(); }
+  get rangeFrames() {
+    const last = Math.max(this.frames - 1, 0);
+    if (!this.range) return [0, last];
+    const a = Math.max(0, Math.min(last, Math.round(this.range[0])));
+    return [a, Math.max(a, Math.min(last, Math.round(this.range[1])))];
+  }
+
   // Advance by dt seconds (called from the render loop).
   update(dt) {
     if (!this.playing || !this.frames) return;
+    const [a, b] = this.rangeFrames, t0 = a / this.fps, t1 = b / this.fps;
     let t = this.time + dt;
-    if (t > this.duration) {
-      if (this.loop && this.duration > 0) t %= this.duration;
-      else { t = this.duration; this.playing = false; }
+    if (t < t0 - 1e-6) t = t0; // playhead outside the range: jump into it
+    if (t > t1 + 1e-6) {
+      if (this.loop && t1 > t0) t = t0 + ((t - t0) % (t1 - t0));
+      else { t = t1; this.playing = false; }
     }
     this.time = t;
     const f = Math.floor(t * this.fps + 1e-6);
