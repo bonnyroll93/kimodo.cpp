@@ -172,6 +172,35 @@ void timing_tests(const Skeleton &soma, const AnimationClip &walk) {
     z.timing.repeat = 1;
     z.timing.trim_in = -1.F;
     CHECK(!bad.add_layer(z).has_value());
+    z.timing.trim_in = 0.F;
+
+    // Retiming (warp): the first second of the clip dilated to 2 s, the rest unchanged.
+    CHECK(near(warp_time({{0.F, 0.F}, {2.F, 1.F}}, 1.F), .5F) && near(warp_time({{0.F, 0.F}, {2.F, 1.F}}, 3.F), 2.F));
+    CHECK(near(unwarp_time({{0.F, 0.F}, {2.F, 1.F}}, .5F), 1.F) && near(unwarp_time({{0.F, 0.F}, {2.F, 1.F}}, 2.F), 3.F));
+    CHECK(near(warp_time({}, 1.25F), 1.25F));
+    AnimationLayer slow{.name = "slow", .clip = walk};
+    slow.timing.start = .5F;
+    slow.timing.extend = Extend::None;
+    slow.timing.warp = {{0.F, 0.F}, {2.F, 1.F}};
+    auto ws = single(soma, slow);
+    CHECK(near(ws.duration(), .5F + D + 1.F));                      // one second longer
+    CHECK(same(ws.evaluate(.5F + 1.F), sample_clip(walk, .5F)));     // half speed in the first part
+    CHECK(same(ws.evaluate(.5F + 2.F), sample_clip(walk, 1.F)));
+    CHECK(same(ws.evaluate(.5F + 2.5F), sample_clip(walk, 1.5F)));   // normal speed after it
+    // Contracted: the middle second (1..2 s of the clip) played in 0.5 s.
+    slow.timing.warp = {{1.F, 1.F}, {1.5F, 2.F}};
+    auto wc = single(soma, slow);
+    CHECK(near(wc.duration(), .5F + D - .5F));
+    CHECK(same(wc.evaluate(.5F + 1.25F), sample_clip(walk, 1.5F)));
+    CHECK(same(wc.evaluate(.5F + .5F), sample_clip(walk, .5F)));
+    // With speed: the warp comes first (timeline seconds), then the speed.
+    slow.timing.speed = 2.F;
+    slow.timing.warp = {{0.F, 0.F}, {1.F, .5F}};
+    auto wv = single(soma, slow);
+    CHECK(same(wv.evaluate(.5F + 1.F), sample_clip(walk, 1.F)));
+    // Invalid: not increasing.
+    z.timing.warp = {{0.F, 0.F}, {1.F, 0.F}};
+    CHECK(!bad.add_layer(z).has_value());
 }
 } // namespace
 

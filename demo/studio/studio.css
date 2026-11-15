@@ -392,3 +392,24 @@ body {
 .seamless-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 8px 0 2px; }
 .seamless-row .mini { display: inline-flex; align-items: center; gap: 3px; font-size: .72rem; color: var(--muted); }
 .seamless-row .mini input { width: 3.6em; border: 1px solid var(--line); border-radius: 5px; background: #0b1015; color: var(--text); font: inherit; font-size: .72rem; padding: 1px 3px; }
+/* Timeline groups and retiming */
+.tl-bar.multi { outline: 2px dashed #fbbf24; outline-offset: -2px; }
+.tl-bar.grouped::after { content: '▣'; position: absolute; right: 3px; top: 0; font-size: .6rem; color: #fbbf24; opacity: .8; }
+.tl-label.group, .tl-label.retime { color: #fbbf24; background: transparent; border: 0; text-align: left; font: inherit; cursor: pointer; }
+.tl-label.group.active { font-weight: 700; }
+.tl-track.group-row { position: relative; }
+.tl-group { position: absolute; top: 3px; bottom: 3px; border: 1px solid #fbbf24; border-radius: 4px; background: color-mix(in srgb, #fbbf24 18%, transparent);
+  color: #fde68a; font-size: .66rem; padding: 0 6px; white-space: nowrap; overflow: hidden; cursor: grab; user-select: none; }
+.tl-group.selected { background: color-mix(in srgb, #fbbf24 34%, transparent); }
+.tl-track.retime-row { position: relative; background: color-mix(in srgb, #38bdf8 6%, transparent); cursor: copy; }
+.tl-warp-seg { position: absolute; top: 2px; bottom: 2px; border-left: 0; text-align: center; font-size: .6rem; color: var(--muted); overflow: hidden; pointer-events: none;
+  background: color-mix(in srgb, #94a3b8 10%, transparent); }
+.tl-warp-seg.slow { background: color-mix(in srgb, #38bdf8 22%, transparent); color: #bae6fd; }
+.tl-warp-seg.fast { background: color-mix(in srgb, #f97316 22%, transparent); color: #fed7aa; }
+.tl-warp-pt { position: absolute; top: 0; bottom: 0; width: 8px; margin-left: -4px; cursor: ew-resize; z-index: 2; }
+.tl-warp-pt::before { content: ''; position: absolute; left: 3px; top: 0; bottom: 0; width: 2px; background: #38bdf8; }
+.tl-warp-pt::after { content: ''; position: absolute; left: 0; top: 50%; width: 8px; height: 8px; margin-top: -4px; transform: rotate(45deg); background: #38bdf8; }
+.tl-warp-pt.fixed { cursor: default; }
+.tl-warp-pt.fixed::before, .tl-warp-pt.fixed::after { background: #64748b; }
+.tl-retime-note { position: absolute; left: 6px; top: 50%; transform: translateY(-50%); font-size: .66rem; color: var(--muted); }
+.tl-toolbar .icon-button.on { color: #111; background: #38bdf8; }

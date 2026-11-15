@@ -57,6 +57,7 @@ export class SceneFile {
       scene_length: motionPanel.sceneLength,
       control_rig: motionPanel.controlRig ?? null,
       root_scope: motionPanel.rootScope,
+      groups: structuredClone(motionPanel.groups ?? []),
       scene_root: structuredClone(motionPanel.sceneRoot),
       playback: { frame: player.frame, loop: player.loop, range: player.range ?? null },
       camera: { position: viewport.camera.position.toArray(), target: viewport.controls.target.toArray() },
@@ -117,6 +118,8 @@ export class SceneFile {
     motionPanel.sceneLength = Math.max(0, Number(scene.scene_length) || 0);
     motionPanel.controlRig = scene.control_rig ? structuredClone(scene.control_rig) : null;
     motionPanel.rootScope = scene.root_scope === 'scene' ? 'scene' : 'clip';
+    motionPanel.groups = Array.isArray(scene.groups) ? structuredClone(scene.groups) : [];
+    motionPanel.groupFocus = null;
     if (scene.scene_root) motionPanel.sceneRoot = structuredClone(scene.scene_root);
     motionPanel.select(Math.min(Math.max(0, scene.active_layer | 0), motionPanel.layers.length - 1));
 

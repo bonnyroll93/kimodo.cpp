@@ -43,6 +43,7 @@ export class History {
       length: mp.sceneLength,
       rig: mp.controlRig ?? null,
       rootScope: mp.rootScope,
+      groups: mp.groups ?? [],
       sceneRoot: mp.sceneRoot,
       retarget: { on: $('retarget-on').checked, align: $('align-rest').checked, mapping: this.retarget.mapping ?? null, pose: this.retarget.referencePose ?? null },
       foot: { on: $('foot-lock').checked, hips: $('hip-adjust').checked, h: $('foot-height').value, s: $('foot-speed').value, b: $('foot-blend').value },
@@ -98,6 +99,8 @@ export class History {
       mp.sceneLength = s.length ?? 0;
       mp.controlRig = s.rig ?? null;
       mp.rootScope = s.rootScope ?? 'clip';
+      mp.groups = structuredClone(s.groups ?? []);
+      mp.groupFocus = null;
       if (s.sceneRoot) mp.sceneRoot = s.sceneRoot;
       $('retarget-on').checked = s.retarget.on && !!this.retarget.character?.joints.length;
       $('align-rest').checked = s.retarget.align;

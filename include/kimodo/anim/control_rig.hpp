@@ -74,6 +74,7 @@ struct ControlRigLayer {
     float weight = 1.F;
     Curve weight_curve;          // keyed layer weight (replaces weight when keyed), layer frames
     float start = 0.F, speed = 1.F, end = 0.F; // layer time (seconds); end > start: stops there
+    std::vector<std::pair<float, float>> warp;  // retiming, as ClipTiming::warp
     std::map<std::string, LimbLayerCurves, std::less<>> limbs; // by limb name
     std::array<Curve, ChannelCount> root_control, hips_control;
 };
@@ -92,7 +93,7 @@ struct ControlRig {
 //   "target":{"tx":[keys],...,"rz":[keys]},"pole":{"tx":[keys],"ty":[keys],"tz":[keys]}}],
 //   "root_control":{"tx":[keys],...},"hips_control":{"tx":[keys],...},
 //   "layers":[{"name":"Keys","mode":"additive"|"override","weight":1,"weight_keys":[keys],
-//     "start":0,"speed":1,"end":0,"limbs":{"left_arm":{"target":{...},"pole":{...},"blend":[keys]}},
+//     "start":0,"speed":1,"end":0,"warp":[[out,in],...],"limbs":{"left_arm":{"target":{...},"pole":{...},"blend":[keys]}},
 //     "root_control":{...},"hips_control":{...}}]}
 // (keys as in keyframes.hpp: {"f","v","i","a","l","r"})
 [[nodiscard]] std::expected<ControlRig, std::string> control_rig_from_json(std::string_view json);

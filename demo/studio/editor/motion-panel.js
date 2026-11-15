@@ -11,6 +11,7 @@
 import { LayerPanel } from './layer-panel.js';
 import { MaskEditor } from './animation-mask.js';
 import { Timeline } from './timeline.js';
+import { warpTime, unwarpTime, composeWarp, shiftWarp, scaleWarp, tidyWarp, isIdentity } from './timewarp.js';
 import { emptyTracks, keyFrames, evaluate, setKey } from '../viewer/keyframes.js';
 
 // Preset paths on the ground plane (x, z in metres), starting at the origin and heading +Z.
@@ -205,7 +206,10 @@ export class MotionPanel {
         if (isKeys(l) && this.boundClip(l) >= 0) { if (final) this.status('This anim layer follows its clip: move the clip', true); return; }
         const { track, ...rest } = patch;
         if (track !== undefined && !isKeys(l)) l.track = Math.max(0, track | 0);
-        l.timing = { ...timingOf(l), ...rest };
+        const before = timingOf(l);
+        // A stretch (new speed) scales the clip's retiming with it.
+        if (rest.speed !== undefined && before.warp?.length && rest.speed !== before.speed) rest.warp = tidyWarp(scaleWarp(before.warp, before.speed / rest.speed));
+        l.timing = { ...before, ...rest };
         if (final) this.schedule();
         this.renderTimeline(); // live preview of the bar while dragging
         if (i === this.active) this.renderAttributes();
@@ -219,7 +223,23 @@ export class MotionPanel {
       deleteKeys: (i, frames) => this.moveKeys(i, frames, null),
       moveRigKey: (f, delta) => this.moveRigKey?.(f, delta),
       graphOpen: () => this.graphOpen?.() ?? false,
+      // Groups and multi-selection.
+      toggleSelect: (i) => this.toggleSelect(i),
+      clearMulti: () => { if (this.multi.size || this.groupFocus) { this.multi.clear(); this.groupFocus = null; } },
+      group: () => this.groupSelected(),
+      ungroup: () => this.ungroup(),
+      selectGroup: (gid) => this.selectGroup(gid),
+      groupBegin: (gid) => this.groupBegin(gid),
+      groupEdit: (gid, op, final) => this.groupEdit(gid, op, final),
+      // Retiming.
+      retimeToggle: () => { this.retimeOn = !this.retimeOn; this.retimeInit(); this.renderTimeline(); },
+      retimeReset: () => this.setWarp(this.retimeTarget(), [], true),
+      setWarp: (warp, final) => this.setWarp(this.retimeTarget(), warp, final),
     });
+    this.groups = []; // [{id, name, members: [layer id], warp}] (timeline groups)
+    this.multi = new Set(); // layer ids selected together (Shift + click)
+    this.retimeOn = false;
+    this.groupFocus = null; // a group selected through its bar (the retime target)
     this.installTimingForm();
     // Root motion (Full / In place / Path) per clip, or once for the whole scene (the clips
     // composed first, then one root motion on the result: e.g. a single path for a sequence).
@@ -315,6 +335,8 @@ export class MotionPanel {
   // ----- clips and anim layers ------------------------------------------------------------
   select(i, rerender = true) {
     this.active = Math.max(0, Math.min(i, this.layers.length - 1));
+    if (this.groupFocus && !this.groups.find((g) => g.id === this.groupFocus)?.members.includes(this.activeLayer?.id)) this.groupFocus = null;
+    if (this.retimeOn) this.retimeInit();
     const l = this.activeLayer;
     if (!isKeys(l)) this.writeClipForm(l);
     this.$('motion-controls').hidden = isKeys(l);
@@ -433,7 +455,142 @@ export class MotionPanel {
     const tin = Math.min(t.trim_in, d), tout = t.trim_out > tin ? Math.min(t.trim_out, d) : d;
     return Math.max(tout - tin, 0);
   }
-  extent(i) { const t = timingOf(this.layers[i]); return [t.start, t.start + (this.segment(i) / t.speed) * t.repeat]; }
+  extent(i) {
+    const t = timingOf(this.layers[i]);
+    return [t.start, t.start + unwarpTime(this.effectiveWarp(i), (this.segment(i) / t.speed) * t.repeat)];
+  }
+
+  // ----- groups and retiming ----------------------------------------------------------------
+  // A group moves / stretches its members together; its retiming (warp, seconds since the
+  // group's start) applies on top of each member's own warp.
+  groupOf(l) { return l ? this.groups.find((g) => g.members.includes(l.id)) ?? null : null; }
+  groupMembers(g) { return this.layers.map((l, i) => [l, i]).filter(([l]) => g.members.includes(l.id)).map(([, i]) => i); }
+  groupStart(g) { return Math.min(...this.groupMembers(g).map((i) => timingOf(this.layers[i]).start)); }
+  groupExtent(g) {
+    const ms = this.groupMembers(g);
+    if (!ms.length) return [0, 0];
+    return [Math.min(...ms.map((i) => this.extent(i)[0])), Math.max(...ms.map((i) => this.extent(i)[1]))];
+  }
+  // Own warp, then the group's (shifted to the member's start): the member plays
+  // own(group(t)) seconds since its start.
+  effectiveWarp(i) {
+    const l = this.layers[i], own = timingOf(l).warp ?? [];
+    const g = this.groupOf(l);
+    if (!g?.warp?.length) return own;
+    return composeWarp(own, shiftWarp(g.warp, timingOf(l).start - this.groupStart(g)));
+  }
+  canGroup(l) { return !!l && (!isKeys(l) || this.boundClip(l) < 0); } // bound anim layers follow their clip
+
+  toggleSelect(i) {
+    const l = this.layers[i];
+    if (!l) return;
+    if (this.multi.has(l.id)) this.multi.delete(l.id); else this.multi.add(l.id);
+    this.groupFocus = null;
+    this.select(i);
+  }
+  selectGroup(gid) {
+    const g = this.groups.find((x) => x.id === gid);
+    if (!g) return;
+    this.multi = new Set(g.members);
+    this.groupFocus = gid;
+    const ms = this.groupMembers(g);
+    if (ms.length) this.select(ms[0]); else this.renderTimeline();
+    this.retimeInit();
+  }
+  groupSelected() {
+    const ids = [...new Set([...this.multi, this.activeLayer?.id])].filter((id) => this.canGroup(this.layers.find((l) => l.id === id)));
+    if (!ids.length) { this.status('Select clips / anim layers first (Shift + click on the timeline)', true); return; }
+    for (const g of this.groups) g.members = g.members.filter((m) => !ids.includes(m));
+    this.groups = this.groups.filter((g) => g.members.length);
+    const n = this.groups.length + 1;
+    const g = { id: newId(), name: `Group ${n}`, members: ids, warp: [] };
+    this.groups.push(g);
+    this.groupFocus = g.id;
+    this.multi = new Set(ids);
+    this.status(`${g.name}: ${ids.length} item(s) grouped · drag the group bar to move it, its edges (or Ctrl + drag) to stretch it`);
+    this.renderTimeline();
+    this.schedule();
+  }
+  // Ungroup: the group's retiming is kept, baked into each member's own warp.
+  ungroup(gid = this.groupFocus ?? this.groupOf(this.activeLayer)?.id) {
+    const g = this.groups.find((x) => x.id === gid);
+    if (!g) { this.status('Select a group (click its bar) to ungroup it', true); return; }
+    if (g.warp?.length) for (const i of this.groupMembers(g)) {
+      const l = this.layers[i];
+      l.timing = { ...timingOf(l), warp: tidyWarp(this.effectiveWarp(i)) };
+    }
+    this.groups = this.groups.filter((x) => x !== g);
+    this.groupFocus = null;
+    this.status(`${g.name} ungrouped`);
+    this.renderTimeline();
+    this.schedule();
+  }
+  // Group drag: a snapshot of the members' timings, then edits relative to it.
+  groupBegin(gid) {
+    const g = this.groups.find((x) => x.id === gid);
+    if (!g) return;
+    this.groupSnap = { gid, warp: structuredClone(g.warp ?? []), start: this.groupStart(g), extent: this.groupExtent(g),
+      timings: new Map(this.groupMembers(g).map((i) => [this.layers[i].id, structuredClone(timingOf(this.layers[i]))])) };
+  }
+  // op: {dt} moves; {k, anchor} stretches by k about the anchor time (speed / k, fades and
+  // warps scaled), keeping the members' relative timing.
+  groupEdit(gid, op, final) {
+    const g = this.groups.find((x) => x.id === gid), s = this.groupSnap;
+    if (!g || !s || s.gid !== gid) return;
+    let k = op.k ?? 1;
+    if (op.k !== undefined) { // keep every member's speed within 0.05..20
+      for (const t of s.timings.values()) k = Math.min(Math.max(k, t.speed / 20), t.speed / 0.05);
+    }
+    for (const i of this.groupMembers(g)) {
+      const l = this.layers[i], t = s.timings.get(l.id);
+      if (!t) continue;
+      if (op.dt !== undefined) { l.timing = { ...t, start: Math.max(-3600, t.start + op.dt) }; continue; }
+      const a = op.anchor ?? s.start;
+      l.timing = { ...t, start: a + (t.start - a) * k, speed: t.speed / k, fade_in: t.fade_in * k, fade_out: t.fade_out * k,
+        warp: t.warp?.length ? tidyWarp(scaleWarp(t.warp, k)) : t.warp };
+    }
+    if (op.k !== undefined) g.warp = s.warp.length ? tidyWarp(scaleWarp(s.warp, k)) : [];
+    this.renderTimeline();
+    if (this.activeLayer && this.groupOf(this.activeLayer) === g) this.renderAttributes();
+    if (final) { this.groupSnap = null; this.schedule(); }
+  }
+
+  // The retiming target: the group selected through its bar, else the selected item.
+  retimeTarget() {
+    const g = this.groupFocus ? this.groups.find((x) => x.id === this.groupFocus) : null;
+    if (g) return { kind: 'group', g };
+    const l = this.activeLayer;
+    if (!l || (isKeys(l) && this.boundClip(l) >= 0)) return null;
+    return { kind: 'layer', l, i: this.active };
+  }
+  // Where the target starts on the timeline, its warp and its length before the warp.
+  retimeView() {
+    if (!this.retimeOn) return null;
+    const t = this.retimeTarget();
+    if (!t) return { none: 'Select a clip, an unbound anim layer or a group to retime it' };
+    if (t.kind === 'group') {
+      const base = this.groupStart(t.g), [, e] = this.groupExtent(t.g);
+      return { label: t.g.name, base, warp: t.g.warp ?? [], length: Math.max(e - base, 1 / 30) };
+    }
+    const tm = timingOf(t.l), [s, e] = this.extent(t.i);
+    const length = isKeys(t.l) ? Math.max(this.timeline.duration - s, 1 / 30) : (this.segment(t.i) / tm.speed) * tm.repeat;
+    return { label: t.l.name, base: s, warp: tm.warp ?? [], length, end: e };
+  }
+  // Start a retime on a target without markers: its start and end as the first two.
+  retimeInit() {
+    const v = this.retimeView();
+    if (!v || v.none || v.warp.length) return;
+    const t = this.retimeTarget();
+    const len = t.kind === 'group' ? unwarpTime([], v.length) : v.length;
+    this.setWarp(t, [[0, 0], [len, len]], false);
+  }
+  setWarp(t, warp, final) {
+    if (!t) return;
+    const w = tidyWarp(warp);
+    if (t.kind === 'group') t.g.warp = w; else t.l.timing = { ...timingOf(t.l), warp: w };
+    this.renderTimeline();
+    if (final) { this.renderAttributes(); this.schedule(); }
+  }
 
   // [track, clip indices by start time], tracks bottom to top.
   tracks() {
@@ -462,7 +619,7 @@ export class MotionPanel {
     for (const [tr, list] of this.tracks()) {
       list.forEach((i, k) => {
         const t = timingOf(this.layers[i]);
-        const e = { ...t };
+        const e = { ...t, warp: this.effectiveWarp(i) };
         if (t.auto_blend) {
           if (k > 0 || tr > 0) e.empty_before = true;
           let overlap = 0;
@@ -476,12 +633,12 @@ export class MotionPanel {
     for (const [i, l] of this.layers.entries()) {
       if (!isKeys(l)) continue;
       const c = this.boundClip(l);
-      if (c < 0) { eff.set(i, timingOf(l)); continue; }
+      if (c < 0) { eff.set(i, { ...timingOf(l), warp: this.effectiveWarp(i) }); continue; }
       // Bound to a clip: keys in the clip's time (start, speed), active only while the clip
       // plays, blending in / out with it.
       const ce = eff.get(c) ?? timingOf(this.layers[c]), [s0, e0] = this.extent(c);
       eff.set(i, { ...DEFAULT_TIMING, start: s0, speed: ce.speed, extend: 'hold', empty_before: true, end: e0,
-        fade_in: ce.fade_in, fade_out: ce.fade_out, ease_fades: ce.ease_fades });
+        fade_in: ce.fade_in, fade_out: ce.fade_out, ease_fades: ce.ease_fades, warp: ce.warp ?? [] });
     }
     return eff;
   }
@@ -492,11 +649,11 @@ export class MotionPanel {
   // Key frame (anim layer time) <-> stack frame for the selected anim layer.
   keyFrame(stackFrame, i = this.active) {
     const t = this.effective().get(i) ?? DEFAULT_TIMING, fps = this.player.fps;
-    return (stackFrame / fps - t.start) * t.speed * fps;
+    return warpTime(t.warp, stackFrame / fps - t.start) * t.speed * fps;
   }
   stackFrame(keyFrame, i = this.active) {
     const t = this.effective().get(i) ?? DEFAULT_TIMING, fps = this.player.fps;
-    return (keyFrame / fps / t.speed + t.start) * fps;
+    return (unwarpTime(t.warp, keyFrame / fps / t.speed) + t.start) * fps;
   }
 
   // Re-time the keys of anim layer i so they stay where they are on the timeline.
@@ -516,10 +673,10 @@ export class MotionPanel {
     if (!isKeys(l) || (l.bind ?? null) === clipId) return;
     const fps = this.player.fps;
     const before = this.effective().get(i);
-    const toStack = (f) => (f / fps / before.speed + before.start) * fps; // with the old scope
+    const toStack = (f) => (unwarpTime(before.warp, f / fps / before.speed) + before.start) * fps; // with the old scope
     l.bind = clipId;
     const after = this.effective().get(i);
-    this.remapKeys(i, (f) => (toStack(f) / fps - after.start) * after.speed * fps, after.speed / before.speed);
+    this.remapKeys(i, (f) => warpTime(after.warp, toStack(f) / fps - after.start) * after.speed * fps, after.speed / before.speed);
     this.renderLayers();
     this.schedule();
     this.onShown?.();
@@ -545,12 +702,15 @@ export class MotionPanel {
     const joint = this.keyJoint?.();
     const items = this.layers.map((l, i) => ({
       name: l.name, kind: l.kind ?? 'clip', track: l.track ?? 0, duration: this.durationOf(i), enabled: l.enabled, muted: l.muted,
-      timing: isKeys(l) ? eff.get(i) : timingOf(l), eff: eff.get(i), bound: isKeys(l) && this.boundClip(l) >= 0,
+      timing: isKeys(l) ? eff.get(i) : { ...timingOf(l), warp: eff.get(i)?.warp ?? [] }, eff: eff.get(i), bound: isKeys(l) && this.boundClip(l) >= 0,
+      selected: this.multi.has(l.id), group: this.groupOf(l)?.id ?? null, extent: this.extent(i),
       keyFrames: isKeys(l) ? (joint ? keyFrames(l.keys, joint) : this.allKeyFrames(l)) : [],
     }));
     let end = this.player.duration;
     for (const i of this.layers.keys()) if (this.layers[i].enabled) end = Math.max(end, this.extent(i)[1]);
-    this.timeline.set({ layers: items, duration: end, active: this.active, fps, tracks: this.trackCount,
+    const groups = this.groups.map((g) => ({ id: g.id, name: g.name, extent: this.groupExtent(g), focus: g.id === this.groupFocus,
+      members: g.members.length, warped: !isIdentity(g.warp) }));
+    this.timeline.set({ layers: items, duration: end, active: this.active, fps, tracks: this.trackCount, groups, retime: this.retimeView(),
       rigRow: this.rigRow?.() ?? null, contacts: this.timelineData?.contacts ?? null, range: this.player.range ? this.player.rangeFrames.map((f) => f / fps) : null });
   }
 
@@ -560,6 +720,9 @@ export class MotionPanel {
     if (!this.layers[i] || !this.canRemove(i)) { this.status('The scene needs at least one anim clip', true); return; }
     const id = this.layers[i].id;
     for (const [k, l] of this.layers.entries()) if (isKeys(l) && l.bind === id) this.setScope(null, k);
+    for (const g of this.groups) g.members = g.members.filter((m) => m !== id);
+    this.groups = this.groups.filter((g) => g.members.length);
+    this.multi.delete(id);
     this.layers.splice(i, 1);
     this.select(Math.min(this.active > i ? this.active - 1 : this.active, this.layers.length - 1));
     this.schedule();
@@ -729,7 +892,8 @@ export class MotionPanel {
     const full = this.durationOf(i);
     const tout = t.trim_out > t.trim_in ? t.trim_out : full;
     const now = this.player.time;
-    const cut = t.trim_in + (now - t.start) * t.speed;
+    const x = now - t.start, y = warpTime(t.warp, x); // timeline / clip seconds since the start
+    const cut = t.trim_in + y * t.speed;
     if (t.repeat !== 1 || cut <= t.trim_in + 1e-3 || cut >= tout - 1e-3) {
       this.status('Move the playhead inside the selected clip (single cycle) to split it', true);
       return;
@@ -737,7 +901,10 @@ export class MotionPanel {
     const second = structuredClone(l);
     second.id = newId();
     second.name = `${l.name} (2)`;
-    second.timing = { ...t, trim_in: cut, start: now, fade_in: 0 };
+    second.timing = { ...t, trim_in: cut, start: now, fade_in: 0,
+      ...(t.warp?.length ? { warp: tidyWarp([[0, 0], ...t.warp.filter(([o]) => o > x + 1e-4).map(([o, w]) => [o - x, w - y])]) } : {}) };
+    const g = this.groupOf(l);
+    if (g) g.members.push(second.id); // the second part stays in the group
     l.timing = { ...t, trim_out: cut, fade_out: 0 };
     this.durations.set(second, full);
     this.layers.splice(i + 1, 0, second);
@@ -828,6 +995,7 @@ export class MotionPanel {
 
   layerRequest(l, i, eff = timingOf(l)) {
     const { auto_blend, ...timing } = eff;
+    if (isIdentity(timing.warp)) delete timing.warp; else timing.warp = tidyWarp(timing.warp);
     const mask = l.mask === 'custom' ? (l.customMask || { version: 1, name: 'custom', default: 1, weights: {} }) : l.mask;
     if (isKeys(l)) return { name: l.name || `Keys ${i + 1}`, keys: l.weightKeys?.length ? { ...l.keys, weight: l.weightKeys } : l.keys, mode: l.blend === 'override' ? 'override' : 'additive', weight: l.weight, mask, enabled: l.enabled, muted: l.muted, wrap: l.wrap, timing };
     return {

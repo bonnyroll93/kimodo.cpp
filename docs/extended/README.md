@@ -528,6 +528,23 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     clip's time: they move and stretch with the clip, act only while it plays and blend
     in / out with it. Changing the scope keeps the keys where they are on the timeline;
     deleting the clip turns its layers back to the whole timeline.
+  - **Groups.** Shift + click clips / anim layers on the timeline to select several, then
+    *Group* (Ctrl + G). A group bar appears above the tracks: drag it to move the whole
+    group, drag its edges (or Ctrl + drag) to stretch / compress it — every member's start,
+    speed, fades and retiming scale together about the other edge, so the parts keep their
+    relative timing. Click the bar (or its label) to select the group; *Ungroup*
+    (Ctrl + Shift + G) keeps the group's retiming on the members. Anim layers bound to a
+    clip follow their clip instead. Groups are saved in scenes and undoable.
+  - **Retime** (⏱ in the timeline toolbar): retimes the selected clip / unbound anim layer,
+    or the selected group, with markers. Its start and end are the first markers; double-click
+    the retime row to add one (splitting a segment), drag a marker to move it — the segments
+    on either side dilate or contract (each shows its rate: blue slower, orange faster) —
+    double-click a marker to remove it, *Reset retime* removes them all. It is a
+    piecewise-linear time map (`ClipTiming::warp` in `layers.hpp`, `warp` in a layer's
+    `timing`, `kmd-anim layers … --warp OUT,IN;…`), applied before speed, trims and repeats,
+    so preview, anim layers, the control rig's layers and the export all follow it. A
+    group's retiming applies on top of each member's own; splitting or stretching a
+    retimed clip keeps its retiming.
   - **Root motion scope** (*Root motion applies to* in the Motion form): *Each clip* (every
     clip has its own Full / In place / Path) or *Whole scene*: the clips are composed first
     on the source skeleton, then one root motion applies to the result (e.g. one path for a

@@ -9,6 +9,13 @@
 // Keyframes (◆ on anim-layer rows; the selected joint's keys, or every keyed frame when no
 // joint is selected): click selects (Shift: add / remove) and seeks, drag moves the
 // selected keys in time, Delete removes them.
+// Groups (Shift + click adds items to the selection, Group / Ctrl + G groups them): a group bar
+// above the tracks; drag it to move the whole group, drag its edges (or Ctrl + drag) to stretch
+// it (every member's position, speed, fades and retiming scale together).
+// Retime: markers on the selected clip / group (its start and end first); double-click the
+// retime row to add a marker, drag a marker to dilate / contract the segments around it,
+// double-click a marker to remove it. Each segment shows its playback rate.
+import { warpTime, unwarpTime } from './timewarp.js';
 
 const EDGE = 6; // px grab zone for trimming
 
@@ -32,6 +39,13 @@ export class Timeline {
     container.addEventListener('pointermove', (e) => this.move(e));
     container.addEventListener('pointerup', () => this.up());
     container.addEventListener('wheel', (e) => this.wheel(e), { passive: false });
+    container.addEventListener('dblclick', (e) => this.dblclick(e));
+    window.addEventListener('keydown', (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'g') return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+      e.preventDefault();
+      if (e.shiftKey) this.cb.ungroup?.(); else this.cb.group?.();
+    });
     const mod = (e) => this.container.classList.toggle('stretching', e.ctrlKey || e.metaKey || e.altKey);
     window.addEventListener('keydown', mod);
     window.addEventListener('keyup', mod);
@@ -50,8 +64,10 @@ export class Timeline {
 
   // layers: per MotionPanel.layers index {name, kind, track, duration (clip s), enabled, muted,
   // timing, eff (effective timing incl. auto blends), keyTimes}; duration: stack seconds.
-  set({ layers, duration, active, contacts = null, fps = 30, tracks = 1, range = null, rigRow = null }) {
+  set({ layers, duration, active, contacts = null, fps = 30, tracks = 1, range = null, rigRow = null, groups = [], retime = null }) {
     this.range = range;
+    this.groups = groups;
+    this.retime = retime;
     this.rigRow = rigRow;
     this.layers = layers;
     this.duration = Math.max(duration, 1e-3);
@@ -75,11 +91,11 @@ export class Timeline {
     const t = this.timingOf(i);
     if (t.end > t.start) return [t.start, t.end]; // bound to a clip
     if (this.layers[i]?.kind === 'keys') return [t.start, Math.max(this.duration, t.start)]; // the whole scene
-    return [t.start, t.start + (this.segment(i) / t.speed) * t.repeat];
+    return [t.start, t.start + unwarpTime(t.warp, (this.segment(i) / t.speed) * t.repeat)];
   }
   pct(seconds) { return `${(seconds / this.duration) * 100}%`; }
   // Stack time of key frame f of anim layer i (its timing: start, speed).
-  keyTime(i, f) { const t = this.timingOf(i); return t.start + f / this.fps / t.speed; }
+  keyTime(i, f) { const t = this.timingOf(i); return t.start + unwarpTime(t.warp, f / this.fps / t.speed); }
 
   render() {
     const c = this.container;
@@ -110,6 +126,27 @@ export class Timeline {
     }
     labels.append(rulerLabel);
     tracks.append(ruler);
+    if (this.retime) this.retimeRow(labels, tracks);
+    for (const g of this.groups ?? []) { // group bars: move / stretch the whole group
+      const label = document.createElement('button');
+      label.type = 'button';
+      label.className = `tl-label group${g.focus ? ' active' : ''}`;
+      label.textContent = `▣ ${g.name}`;
+      label.title = `${g.name}: ${g.members} item(s) — click to select the group`;
+      label.addEventListener('click', () => this.cb.selectGroup?.(g.id));
+      const track = document.createElement('div');
+      track.className = 'tl-track group-row';
+      const [s, e] = g.extent, bar = document.createElement('div');
+      bar.className = `tl-group${g.focus ? ' selected' : ''}`;
+      bar.dataset.group = g.id;
+      bar.style.left = this.pct(s);
+      bar.style.width = this.pct(Math.max(e - s, 1 / this.fps));
+      bar.title = `${g.name}: ${s.toFixed(2)}–${e.toFixed(2)} s · drag: move the group · edges / Ctrl + drag: stretch it`;
+      bar.textContent = `${g.name}${g.warped ? ' · retimed' : ''}`;
+      track.append(bar);
+      labels.append(label);
+      tracks.append(track);
+    }
     // Anim layers (applied last) on top, then tracks from the highest down.
     const keyLayers = [...this.layers.keys()].filter((i) => this.layers[i]?.kind === 'keys').reverse();
     for (const i of keyLayers) {
@@ -205,12 +242,12 @@ export class Timeline {
     const l = this.layers[i], t = this.timingOf(i), eff = { ...t, ...(l.eff ?? {}) };
     const [s, e] = this.extent(i);
     const bar = document.createElement('div');
-    bar.className = `tl-bar${l.kind === 'keys' ? ' keys' : ''}${i === this.active ? ' selected' : ''}${l.enabled ? '' : ' disabled'}${l.muted ? ' muted' : ''}`;
+    bar.className = `tl-bar${l.kind === 'keys' ? ' keys' : ''}${i === this.active ? ' selected' : ''}${l.selected ? ' multi' : ''}${l.group ? ' grouped' : ''}${l.enabled ? '' : ' disabled'}${l.muted ? ' muted' : ''}`;
     bar.dataset.layer = i;
     bar.style.left = this.pct(s);
     bar.style.width = this.pct(Math.max(e - s, 1 / this.fps));
     bar.title = `${l.name}: ${s.toFixed(2)}–${e.toFixed(2)} s · ${t.speed.toFixed(2)}× · ${t.repeat} cycle(s)` +
-      ' · drag: move (also to another track) · edges: trim · Ctrl + drag / Ctrl + wheel: stretch';
+      ' · drag: move (also to another track) · edges: trim · Ctrl + drag / Ctrl + wheel: stretch · Shift + click: add to the selection';
     for (let k = 1; k < t.repeat; k++) {
       const sep = document.createElement('div');
       sep.className = 'tl-cycle';
@@ -230,7 +267,8 @@ export class Timeline {
     name.textContent = l.name;
     const tag = document.createElement('span');
     tag.className = 'tl-tag';
-    tag.textContent = [t.speed !== 1 ? `${+t.speed.toFixed(2)}×` : '', t.repeat > 1 ? `↻${t.repeat}` : '', t.align_root ? '⇢' : ''].filter(Boolean).join(' ');
+    tag.textContent = [t.speed !== 1 ? `${+t.speed.toFixed(2)}×` : '', t.repeat > 1 ? `↻${t.repeat}` : '', t.align_root ? '⇢' : '',
+      t.warp?.length ? '⏱' : ''].filter(Boolean).join(' ');
     bar.append(name, tag);
     return bar;
   }
@@ -256,10 +294,17 @@ export class Timeline {
       btn('+ Track', 'Add a track above with a new clip at the playhead', () => this.cb.addTrack()),
       btn('Split', 'Split the selected clip at the playhead', () => this.cb.split(), !activeIsClip),
       btn('Duplicate', 'Duplicate the selected clip right after itself (root aligned)', () => this.cb.duplicate(), !activeIsClip),
-      btn('Delete', 'Delete the selected clip or anim layer', () => this.cb.remove(this.active)));
+      btn('Delete', 'Delete the selected clip or anim layer', () => this.cb.remove(this.active)),
+      btn('Group', 'Group the selected items (Shift + click to select several) — Ctrl + G', () => this.cb.group?.()),
+      btn('Ungroup', 'Ungroup the selected group (its retiming stays on the members) — Ctrl + Shift + G', () => this.cb.ungroup?.(), !(this.groups ?? []).length));
+    const rt = btn('⏱ Retime', 'Retime the selected clip or group: markers split it into segments, drag them to dilate / contract the parts', () => this.cb.retimeToggle?.());
+    rt.classList.toggle('on', !!this.retime);
+    bar.append(rt);
+    if (this.retime && !this.retime.none) bar.append(btn('Reset retime', 'Remove the retiming of the selected clip / group', () => this.cb.retimeReset?.()));
     const hint = document.createElement('span');
     hint.className = 'muted small';
-    hint.textContent = 'Drag: move · edges: trim · Ctrl+drag / Ctrl+wheel: stretch · overlaps cross-fade';
+    hint.textContent = this.retime ? 'Retime: double-click the row to add a marker · drag a marker · double-click it to remove'
+      : 'Drag: move · edges: trim · Ctrl+drag / Ctrl+wheel: stretch · Shift+click: select several · overlaps cross-fade';
     bar.append(hint);
     return bar;
   }
@@ -307,7 +352,32 @@ export class Timeline {
       this.render();
       return;
     }
+    const wpt = e.target.closest('.tl-warp-pt');
+    if (wpt) { // drag a retime marker (its timeline position; what it plays stays)
+      const k = Number(wpt.dataset.k);
+      if (k === 0) return; // the start is fixed
+      this.container.setPointerCapture(e.pointerId);
+      this.drag = { warp: true, k, t0: this.timeAt(e), points: this.retime.warp.map((p) => [...p]) };
+      return;
+    }
+    if (e.target.closest('.retime-row')) return; // double-click adds a marker
+    const gbar = e.target.closest('.tl-group');
+    if (gbar) {
+      const gid = gbar.dataset.group, r = gbar.getBoundingClientRect();
+      let zone = e.clientX - r.left < EDGE ? 'left' : r.right - e.clientX < EDGE ? 'right' : 'body';
+      if ((e.ctrlKey || e.metaKey || e.altKey) && zone === 'body') zone = 'right';
+      this.container.setPointerCapture(e.pointerId);
+      this.cb.selectGroup?.(gid);
+      this.cb.groupBegin?.(gid);
+      const g = this.groups.find((x) => x.id === gid);
+      this.drag = { group: gid, zone, t0: this.timeAt(e), extent: g ? [...g.extent] : [0, 0] };
+      return;
+    }
     const bar = e.target.closest('.tl-bar');
+    if (bar && e.shiftKey && !(e.ctrlKey || e.metaKey || e.altKey)) { // add to / remove from the selection
+      this.cb.toggleSelect?.(Number(bar.dataset.layer));
+      return;
+    }
     if (!e.shiftKey && this.keySel.frames.size) { this.keySel = { i: -1, frames: new Set() }; this.render(); }
     this.container.setPointerCapture(e.pointerId);
     if (!bar) {
@@ -316,6 +386,7 @@ export class Timeline {
       return;
     }
     const i = Number(bar.dataset.layer);
+    this.cb.clearMulti?.(); // a plain click selects only this item
     const r = bar.getBoundingClientRect();
     let zone = e.clientX - r.left < EDGE ? 'left' : r.right - e.clientX < EDGE ? 'right' : 'body';
     const stretch = e.ctrlKey || e.metaKey || e.altKey;
@@ -323,6 +394,64 @@ export class Timeline {
     if (i !== this.active) this.cb.select(i);
     this.drag = { i, zone, t0: this.timeAt(e), timing: this.timingOf(i), segment: this.segment(i), stretch,
       track: this.layers[i].track ?? 0 };
+  }
+
+  // Retime row: the target's markers (timeline positions) and each segment's rate.
+  retimeRow(labels, tracks) {
+    const r = this.retime;
+    const label = document.createElement('div');
+    label.className = 'tl-label retime';
+    label.textContent = r.none ? '⏱ Retime' : `⏱ ${r.label}`;
+    label.title = r.none ?? 'Retime: double-click the row to add a marker, drag a marker, double-click it to remove it';
+    const track = document.createElement('div');
+    track.className = 'tl-track retime-row';
+    if (r.none) {
+      const note = document.createElement('span');
+      note.className = 'tl-retime-note';
+      note.textContent = r.none;
+      track.append(note);
+    } else {
+      const pts = r.warp;
+      for (let k = 0; k + 1 < pts.length; k++) { // segments with their rate (clip seconds per second)
+        const [o0, i0] = pts[k], [o1, i1] = pts[k + 1];
+        const seg = document.createElement('div');
+        const rate = (i1 - i0) / Math.max(o1 - o0, 1e-6);
+        seg.className = `tl-warp-seg${rate > 1.001 ? ' fast' : rate < 0.999 ? ' slow' : ''}`;
+        seg.style.left = this.pct(r.base + o0);
+        seg.style.width = this.pct(o1 - o0);
+        seg.textContent = `${rate.toFixed(2)}×`;
+        seg.title = `${o0.toFixed(2)}–${o1.toFixed(2)} s plays ${i0.toFixed(2)}–${i1.toFixed(2)} s: ${rate.toFixed(2)}× (${rate < 1 ? 'dilated' : rate > 1 ? 'contracted' : 'unchanged'})`;
+        track.append(seg);
+      }
+      pts.forEach(([o, i], k) => {
+        const m = document.createElement('div');
+        m.className = `tl-warp-pt${k === 0 ? ' fixed' : ''}`;
+        m.dataset.k = k;
+        m.style.left = this.pct(r.base + o);
+        m.title = k === 0 ? 'Start (fixed)' : `Marker at ${(r.base + o).toFixed(2)} s (plays ${i.toFixed(2)} s) · drag: move · double-click: remove`;
+        track.append(m);
+      });
+    }
+    labels.append(label);
+    tracks.append(track);
+  }
+
+  dblclick(e) {
+    const r = this.retime;
+    if (!r || r.none) return;
+    const pt = e.target.closest('.tl-warp-pt');
+    if (pt) { // remove a marker (not the start)
+      const k = Number(pt.dataset.k);
+      if (k === 0) return;
+      this.cb.setWarp?.(r.warp.filter((_, j) => j !== k), true);
+      return;
+    }
+    if (!e.target.closest('.retime-row')) return;
+    const o = this.snap(this.timeAt(e), e) - r.base;
+    if (o <= 1 / this.fps) return;
+    if (r.warp.some(([x]) => Math.abs(x - o) < 1 / this.fps)) return;
+    const p = [...r.warp.map((x) => [...x]), [o, warpTime(r.warp, o)]].sort((a, b) => a[0] - b[0]);
+    this.cb.setWarp?.(p, true);
   }
 
   wheel(e) {
@@ -350,6 +479,22 @@ export class Timeline {
     }
     const d = this.drag;
     if (d.seek) { this.cb.seek(this.timeAt(e)); return; }
+    if (d.warp) { // a marker between its neighbours (at least a frame apart)
+      const p = d.points.map((x) => [...x]), gap = 1 / this.fps;
+      const lo = p[d.k - 1][0] + gap, hi = d.k + 1 < p.length ? p[d.k + 1][0] - gap : Infinity;
+      p[d.k][0] = Math.min(hi, Math.max(lo, this.snap(d.points[d.k][0] + this.timeAt(e) - d.t0, e)));
+      d.moved = p;
+      this.cb.setWarp?.(p, false);
+      return;
+    }
+    if (d.group) {
+      const dt = this.timeAt(e) - d.t0, [s, en] = d.extent, len = Math.max(en - s, 1e-3);
+      if (d.zone === 'body') d.op = { dt: this.snap(s + dt, e) - s };
+      else if (d.zone === 'right') d.op = { k: Math.max(1e-3, this.snap(en + dt, e) - s) / len, anchor: s };
+      else d.op = { k: Math.max(1e-3, en - this.snap(s + dt, e)) / len, anchor: en };
+      this.cb.groupEdit?.(d.group, d.op, false);
+      return;
+    }
     if (d.rig) {
       d.delta = Math.max(-d.f, Math.round((this.timeAt(e) - d.t0) * this.fps));
       d.tick.style.left = this.pct((d.f + d.delta) / this.fps);
@@ -392,6 +537,8 @@ export class Timeline {
     const d = this.drag;
     this.drag = null;
     this.container.classList.remove('scrubbing');
+    if (d?.warp) { if (d.moved) this.cb.setWarp?.(d.moved, true); return; }
+    if (d?.group) { this.cb.groupEdit?.(d.group, d.op ?? { dt: 0 }, true); return; }
     if (d?.rig) {
       if (d.delta) this.cb.moveRigKey?.(d.f, d.delta);
       else d.tick.classList.remove('selected');

@@ -1,5 +1,6 @@
 #include <kimodo/anim/control_rig.hpp>
 #include <kimodo/anim/ik.hpp>
+#include <kimodo/anim/layers.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -125,6 +126,10 @@ std::expected<ControlRig, std::string> control_rig_from_json(std::string_view te
             layer.speed = l.value("speed", 1.F);
             layer.end = l.value("end", 0.F);
             if (!(layer.speed > 0.F)) return std::unexpected("control rig: layer " + layer.name + ": speed must be positive");
+            for (const auto &p : l.value("warp", nlohmann::json::array())) {
+                if (!p.is_array() || p.size() != 2) return std::unexpected("control rig: layer " + layer.name + ": warp needs [out, in] pairs");
+                layer.warp.emplace_back(p[0].get<float>(), p[1].get<float>());
+            }
             for (const auto &[key, dst] : {std::pair{"root_control", &layer.root_control}, std::pair{"hips_control", &layer.hips_control}}) {
                 auto c = curves(l.value(key, nlohmann::json()));
                 if (!c) return std::unexpected("control rig: layer " + layer.name + ": " + key + ": " + c.error());
@@ -201,7 +206,7 @@ std::expected<ControlRigReport, std::string> apply_control_rig(AnimationClip &cl
         act.clear();
         for (const ControlRigLayer &L : rig.layers) {
             if (L.end > L.start && sec > L.end) continue;
-            const float lf = (sec - L.start) * L.speed * rig.fps;
+            const float lf = warp_time(L.warp, sec - L.start) * L.speed * rig.fps;
             const float w = keyed(L.weight_curve) ? std::clamp(L.weight_curve.evaluate(lf), 0.F, 1.F) : L.weight;
             if (w > 0.F) act.push_back({&L, lf, w});
         }

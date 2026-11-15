@@ -28,6 +28,7 @@
 #include <map>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace kimodo::anim {
@@ -56,7 +57,16 @@ struct ClipTiming {
     float end = 0.F;                     // > start: stack time after which the layer contributes nothing
                                          // (fade_out ends there); e.g. an anim layer bound to a clip
     bool align_root = false;
+    // Retiming (time warp): (out, in) pairs in seconds since `start`, both strictly
+    // increasing: `out` seconds after start the layer plays what it played at `in` before
+    // the warp. Linear between pairs (each segment dilated or contracted), slope 1 before
+    // the first and after the last pair. Applied before speed, trims and repeats; empty: none.
+    std::vector<std::pair<float, float>> warp;
 };
+
+// The warp's map (out -> in) and its inverse (in -> out).
+[[nodiscard]] float warp_time(const std::vector<std::pair<float, float>> &warp, float out) noexcept;
+[[nodiscard]] float unwarp_time(const std::vector<std::pair<float, float>> &warp, float in) noexcept;
 
 // Per-joint weights by joint name; joints not listed get default_weight.
 struct AnimationMask {

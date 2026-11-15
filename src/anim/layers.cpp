@@ -132,6 +132,15 @@ AnimationStack::AnimationStack(Skeleton skeleton) : skeleton_(std::move(skeleton
 
 std::expected<AnimationStack::Resolved, std::string> AnimationStack::resolve(AnimationLayer layer) const {
     const std::string label = "layer '" + layer.name + "': ";
+    {
+        const auto &w = layer.timing.warp;
+        if (w.size() > 256) return std::unexpected(label + "warp has more than 256 points");
+        for (std::size_t i = 0; i < w.size(); ++i) {
+            if (!std::isfinite(w[i].first) || !std::isfinite(w[i].second)) return std::unexpected(label + "warp points must be finite");
+            if (i > 0 && (w[i].first <= w[i - 1].first || w[i].second <= w[i - 1].second))
+                return std::unexpected(label + "warp points must increase in both times");
+        }
+    }
     if (!std::isfinite(layer.weight) || layer.weight < 0.F || layer.weight > 1.F)
         return std::unexpected(label + "weight must be in [0, 1]");
     const AnimationClip &c = layer.clip;
@@ -197,13 +206,32 @@ std::expected<AnimationStack::Resolved, std::string> AnimationStack::resolve(Ani
 float AnimationStack::layer_end(const Resolved &r) const {
     const ClipTiming &tm = r.layer.timing;
     if (tm.end > tm.start) return tm.end;
-    return tm.start + r.segment / tm.speed * static_cast<float>(tm.repeat);
+    return tm.start + unwarp_time(tm.warp, r.segment / tm.speed * static_cast<float>(tm.repeat));
 }
+
+namespace {
+// Piecewise-linear map through (a, b) pairs; slope 1 outside them.
+float piecewise(const std::vector<std::pair<float, float>> &w, float x, bool inverse) noexcept {
+    if (w.empty()) return x;
+    const auto a = [&](std::size_t i) { return inverse ? w[i].second : w[i].first; };
+    const auto b = [&](std::size_t i) { return inverse ? w[i].first : w[i].second; };
+    if (x <= a(0)) return b(0) + (x - a(0));
+    const std::size_t n = w.size();
+    if (x >= a(n - 1)) return b(n - 1) + (x - a(n - 1));
+    std::size_t i = 1;
+    while (i < n && a(i) < x) ++i;
+    const float u = (x - a(i - 1)) / (a(i) - a(i - 1));
+    return b(i - 1) + (b(i) - b(i - 1)) * u;
+}
+} // namespace
+
+float warp_time(const std::vector<std::pair<float, float>> &warp, float out) noexcept { return piecewise(warp, out, false); }
+float unwarp_time(const std::vector<std::pair<float, float>> &warp, float in) noexcept { return piecewise(warp, in, true); }
 
 float layer_weight(const AnimationLayer &l, float t) noexcept {
     const auto &s = l.weight_samples;
     if (s.empty()) return l.weight;
-    const float x = std::max(0.F, (t - l.timing.start) * l.timing.speed * l.weight_fps);
+    const float x = std::max(0.F, warp_time(l.timing.warp, t - l.timing.start) * l.timing.speed * l.weight_fps);
     const auto i = static_cast<std::size_t>(x);
     if (i + 1 >= s.size()) return std::clamp(s.back(), 0.F, 1.F);
     const float u = x - static_cast<float>(i);
@@ -214,7 +242,8 @@ bool AnimationStack::sample_layer(std::size_t index, float t, std::vector<Transf
     const Resolved &r = layers_[index];
     const AnimationLayer &l = r.layer;
     const ClipTiming &tm = l.timing;
-    const float local = (t - tm.start) * tm.speed;      // clip seconds since the layer started
+    const float tw = warp_time(tm.warp, t - tm.start); // retimed seconds since the layer started
+    const float local = tw * tm.speed;                 // clip seconds since the layer started
     const float span = r.segment * static_cast<float>(tm.repeat);
     const bool loop = l.wrap == TimeWrap::Loop && r.segment > 0.F;
     weight = 1.F;
@@ -237,7 +266,7 @@ bool AnimationStack::sample_layer(std::size_t index, float t, std::vector<Transf
         u = 0.F;
     }
     // Fades on the timeline range [start, end].
-    const float tl = t - tm.start, end = bounded ? tm.end - tm.start : span / tm.speed;
+    const float tl = tw, end = bounded ? warp_time(tm.warp, tm.end - tm.start) : span / tm.speed;
     const auto ramp = [&](float x) {
         x = std::clamp(x, 0.F, 1.F);
         return tm.ease_fades ? x * x * (3.F - 2.F * x) : x;
@@ -299,7 +328,9 @@ void AnimationStack::remove_layer(std::size_t i) {
 float AnimationStack::duration() const {
     float d = 0.F;
     for (const Resolved &r : layers_)
-        if (r.layer.enabled) d = std::max(d, r.layer.wrap == TimeWrap::Loop ? r.layer.timing.start + r.segment / r.layer.timing.speed : layer_end(r));
+        if (r.layer.enabled)
+            d = std::max(d, r.layer.wrap == TimeWrap::Loop ? r.layer.timing.start + unwarp_time(r.layer.timing.warp, r.segment / r.layer.timing.speed)
+                                                           : layer_end(r));
     return d;
 }
 

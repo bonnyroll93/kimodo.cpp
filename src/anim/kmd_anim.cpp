@@ -116,6 +116,7 @@ int usage() {
                  "                       override the keyed channels replace the pose (rest * offset)\n"
                  "           clip timing per layer: [--start S] [--trim-in S] [--trim-out S] [--speed X] [--repeat N]\n"
                  "                       [--extend hold|none] [--fade-in S] [--fade-out S] [--ease-fades] [--empty-before] [--end S] [--align-root]\n"
+                 "                       [--warp OUT,IN;OUT,IN;...]   retiming: piecewise-linear time map (seconds since start)\n"
                  "       DIR is a clip directory (clip.json/retarget.json) or a native motion directory;\n"
                  "       layers are applied bottom to top in command-line order. OUT_DIR gets clip.json,\n"
                  "       local_rotations_xyzw.f32, local_translations.f32 (+ root_positions.f32 if --native).\n"
@@ -541,6 +542,15 @@ int layers_command(int argc, char **argv) {
             current().layer.timing.fade_out = std::stof(value());
         } else if (arg == "--end") {
             current().layer.timing.end = std::stof(value());
+        } else if (arg == "--warp") { // retiming: OUT,IN;OUT,IN;... seconds since start
+            auto &w = current().layer.timing.warp;
+            w.clear();
+            std::stringstream ss{std::string(value())};
+            for (std::string item; std::getline(ss, item, ';');) {
+                const auto comma = item.find(',');
+                if (comma == std::string::npos) throw std::runtime_error("--warp needs OUT,IN pairs");
+                w.emplace_back(std::stof(item.substr(0, comma)), std::stof(item.substr(comma + 1)));
+            }
         } else if (arg == "--align-root") {
             current().layer.timing.align_root = true;
         } else if (arg == "--ease-fades") {

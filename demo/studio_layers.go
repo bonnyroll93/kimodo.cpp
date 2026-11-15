@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"math"
 	"strings"
 )
 
@@ -48,6 +49,8 @@ type clipTiming struct {
 	EmptyBefore bool `json:"empty_before"`
 	// End: > start stops the layer there (anim layers bound to a clip).
 	End float64 `json:"end"`
+	// Warp: retiming, [out, in] seconds since start, both increasing (layers.hpp ClipTiming::warp).
+	Warp [][2]float64 `json:"warp,omitempty"`
 }
 
 func timingArgs(t *clipTiming) ([]string, string) {
@@ -102,6 +105,22 @@ func timingArgs(t *clipTiming) ([]string, string) {
 	}
 	if t.End > t.Start {
 		args = append(args, "--end", num(t.End))
+	}
+	if len(t.Warp) > 0 {
+		if len(t.Warp) > 256 {
+			return nil, "warp has more than 256 points"
+		}
+		pairs := make([]string, len(t.Warp))
+		for i, p := range t.Warp {
+			if !finite(p[0], p[1]) || math.Abs(p[0]) > 7200 || math.Abs(p[1]) > 7200 {
+				return nil, "warp points out of range"
+			}
+			if i > 0 && (p[0] <= t.Warp[i-1][0] || p[1] <= t.Warp[i-1][1]) {
+				return nil, "warp points must increase in both times"
+			}
+			pairs[i] = num(p[0]) + "," + num(p[1])
+		}
+		args = append(args, "--warp", strings.Join(pairs, ";"))
 	}
 	return args, ""
 }

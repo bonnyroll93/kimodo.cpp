@@ -178,7 +178,7 @@ export class ControlRig {
       if (!Object.keys(rl).length && !hk && !rk) continue;
       const t = eff.get(i) ?? {};
       layers.push({ name: l.name, mode: l.blend === 'override' ? 'override' : 'additive', weight: l.weight,
-        ...(l.weightKeys?.length ? { weight_keys: l.weightKeys } : {}), start: t.start ?? 0, speed: t.speed ?? 1, ...(t.end > (t.start ?? 0) ? { end: t.end } : {}),
+        ...(l.weightKeys?.length ? { weight_keys: l.weightKeys } : {}), start: t.start ?? 0, speed: t.speed ?? 1, ...(t.end > (t.start ?? 0) ? { end: t.end } : {}), ...(t.warp?.length ? { warp: t.warp } : {}),
         limbs: rl, ...(hk ? { hips_control: lr.body.hips } : {}), ...(rk ? { root_control: lr.body.root } : {}) });
     }
     return limbs.length || rootOn || hipsOn || layers.length ? { version: 1, fps: 30, hips: ch.hips.name, limbs,

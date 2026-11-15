@@ -212,3 +212,15 @@ func TestLayersEndpoint(t *testing.T) {
 		t.Fatalf("invalid mask weights: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestTimingWarpArgs(t *testing.T) {
+	args, msg := timingArgs(&clipTiming{Start: 1, Warp: [][2]float64{{0, 0}, {2, 1}, {3, 2.5}}})
+	if msg != "" || strings.Join(args, " ") != "--start 1 --warp 0,0;2,1;3,2.5" {
+		t.Fatalf("got %q %q", strings.Join(args, " "), msg)
+	}
+	for _, w := range [][][2]float64{{{0, 0}, {1, 0}}, {{1, 0}, {0, 1}}, {{0, math.NaN()}}} {
+		if _, msg := timingArgs(&clipTiming{Warp: w}); msg == "" {
+			t.Fatalf("%v: expected an error", w)
+		}
+	}
+}
