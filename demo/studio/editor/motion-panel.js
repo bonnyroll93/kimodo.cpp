@@ -36,8 +36,9 @@ export function parsePoints(text) {
 }
 
 export class MotionPanel {
-  constructor({ $, player, pathView, status, onLoaded }) {
+  constructor({ $, player, pathView, status, onLoaded, retarget }) {
     this.$ = $;
+    this.retarget = retarget;
     this.player = player;
     this.pathView = pathView;
     this.status = status;
@@ -136,14 +137,19 @@ export class MotionPanel {
       const [def, sourceRoot] = await Promise.all([
         this.skeleton(source.skeleton_key),
         this.sourceId === id ? this.sourceRoot : f32(`motions/${encodeURIComponent(id)}/root.f32`),
+        this.retarget?.setSource(source.skeleton_key),
       ]);
-      const res = await fetch('/api/root-motion', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req),
+      const rt = this.retarget ? await this.retarget.request() : null;
+      const res = await fetch(rt ? '/api/retarget' : '/api/root-motion', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(rt ? { root_motion: req, ...rt } : req),
       });
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.error || `HTTP ${res.status}`);
-      const [root, rotations, samples] = await Promise.all([
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      const result = rt ? body.root_motion : body;
+      const [root, rotations, samples, tRot, tTrans] = await Promise.all([
         f32(result.root), f32(result.rotations), result.path ? f32(result.path) : null,
+        rt ? f32(body.rotations) : null, rt ? f32(body.translations) : null,
       ]);
       if (ticket !== this.request) return; // a newer request superseded this one
       const first = this.sourceId !== id;
@@ -152,7 +158,21 @@ export class MotionPanel {
       this.samples = samples;
       this.player.setSkeleton(def);
       this.player.setMotion({ root, rotations });
-      this.pathView.show({ samples, waypoints: req.path ? req.path.points : [], sourceRoot, resultRoot: root });
+      let map, ground = 0;
+      if (rt) {
+        const m = body.meta;
+        this.player.setTarget({ character: this.retarget.character, meta: m, rotations: tRot, translations: tTrans });
+        this.retarget.diagnostics(m);
+        // Source-space ground points -> character space (see RetargetResult in retarget.hpp).
+        const yaw = (m.facing_yaw_degrees * Math.PI) / 180, c = Math.cos(yaw), s = Math.sin(yaw);
+        const [sx, , sz] = m.source_reference, [tx, , tz] = m.target_reference, k = m.root_scale;
+        map = (x, z) => [tx + k * (c * (x - sx) + s * (z - sz)), tz + k * (-s * (x - sx) + c * (z - sz))];
+        ground = m.target_ground;
+      } else {
+        this.player.setTarget(null);
+      }
+      this.retargeted = !!rt;
+      this.pathView.show({ samples, waypoints: req.path ? req.path.points : [], sourceRoot, resultRoot: root, map, ground });
       const travel = (r) => Math.hypot(r[r.length - 3] - r[0], r[r.length - 1] - r[2]);
       this.$('motion-info').textContent =
         `${source.skeleton_key} · ${this.player.frames} frames · ${this.player.duration.toFixed(2)} s · ` +

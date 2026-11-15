@@ -30,6 +30,7 @@ type studioConfig struct {
 func registerStudio(mux *http.ServeMux, c studioConfig) {
 	sampleRigs := c.sampleRigs
 	registerRootMotion(mux, c)
+	registerRetarget(mux, c)
 	sub, err := fs.Sub(studioFiles, "studio")
 	if err != nil {
 		panic(err)

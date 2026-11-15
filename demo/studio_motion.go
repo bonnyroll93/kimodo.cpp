@@ -254,64 +254,104 @@ func registerRootMotion(mux *http.ServeMux, c studioConfig) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		fail := func(status int, message string) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(status)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
-		}
 		var req rootMotionRequest
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
-			fail(http.StatusBadRequest, "invalid JSON: "+err.Error())
+			writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 			return
 		}
-		source, ok := c.findMotion(req.Source)
-		if !ok {
-			fail(http.StatusNotFound, "unknown motion source")
-			return
-		}
-		args, err := rootMotionArgs(req)
+		res, err := c.rootMotion(r.Context(), req)
 		if err != nil {
-			fail(http.StatusBadRequest, err.Error())
+			writeError(w, err.status, err.message)
 			return
-		}
-		key := sha256.Sum256([]byte(source.ID + "\x00" + strings.Join(args, "\x00")))
-		id := hex.EncodeToString(key[:12])
-		dir := filepath.Join(c.output, "root-motion", id)
-		if _, err := os.Stat(filepath.Join(dir, "local_rotations_xyzw.f32")); err != nil {
-			tmp := dir + ".tmp-" + strconv.FormatInt(time.Now().UnixNano(), 36)
-			ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
-			defer cancel()
-			cmd := exec.CommandContext(ctx, c.anim, append([]string{"root-motion", source.dir, tmp}, args...)...)
-			var stderr bytes.Buffer
-			cmd.Stderr = &stderr
-			if err := cmd.Run(); err != nil {
-				_ = os.RemoveAll(tmp)
-				message := strings.TrimSpace(stderr.String())
-				if message == "" {
-					message = err.Error()
-				}
-				fail(http.StatusUnprocessableEntity, "kmd-anim: "+message)
-				return
-			}
-			if err := os.Rename(tmp, dir); err != nil {
-				_ = os.RemoveAll(tmp)
-				// Fine if a concurrent identical request produced the result first.
-				if _, statErr := os.Stat(filepath.Join(dir, "local_rotations_xyzw.f32")); statErr != nil {
-					fail(http.StatusInternalServerError, "cannot store result: "+err.Error())
-					return
-				}
-			}
-		}
-		result := map[string]any{
-			"id": id, "source": source.ID, "skeleton_key": source.SkeletonKey, "frames": source.Frames,
-			"root": "/api/root-motion/" + id + "/root.f32", "rotations": "/api/root-motion/" + id + "/rotations.f32",
-		}
-		if req.Mode == "path" {
-			result["path"] = "/api/root-motion/" + id + "/path.f32"
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(result)
+		_ = json.NewEncoder(w).Encode(res)
 	})
+}
+
+type httpError struct {
+	status  int
+	message string
+}
+
+func writeError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+// runCached runs `kmd-anim args... <dir>`-style commands into a temporary directory and
+// renames it to dir, unless dir already holds marker (results are keyed by request hash).
+// build receives the temporary output directory and returns the full argument list.
+func (c studioConfig) runCached(ctx context.Context, dir, marker string, build func(out string) []string) *httpError {
+	if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(dir), 0755); err != nil {
+		return &httpError{http.StatusInternalServerError, err.Error()}
+	}
+	tmp := dir + ".tmp-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, c.anim, build(tmp)...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		_ = os.RemoveAll(tmp)
+		message := strings.TrimSpace(stderr.String())
+		if message == "" {
+			message = err.Error()
+		}
+		return &httpError{http.StatusUnprocessableEntity, "kmd-anim: " + message}
+	}
+	if err := os.Rename(tmp, dir); err != nil {
+		_ = os.RemoveAll(tmp)
+		// Fine if a concurrent identical request produced the result first.
+		if _, statErr := os.Stat(filepath.Join(dir, marker)); statErr != nil {
+			return &httpError{http.StatusInternalServerError, "cannot store result: " + err.Error()}
+		}
+	}
+	return nil
+}
+
+func hashID(parts ...string) string {
+	key := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return hex.EncodeToString(key[:12])
+}
+
+type rootMotionResult struct {
+	ID          string `json:"id"`
+	Source      string `json:"source"`
+	SkeletonKey string `json:"skeleton_key"`
+	Frames      int    `json:"frames"`
+	Root        string `json:"root"`
+	Rotations   string `json:"rotations"`
+	Path        string `json:"path,omitempty"`
+	dir         string
+}
+
+func (c studioConfig) rootMotion(ctx context.Context, req rootMotionRequest) (rootMotionResult, *httpError) {
+	source, ok := c.findMotion(req.Source)
+	if !ok {
+		return rootMotionResult{}, &httpError{http.StatusNotFound, "unknown motion source"}
+	}
+	args, err := rootMotionArgs(req)
+	if err != nil {
+		return rootMotionResult{}, &httpError{http.StatusBadRequest, err.Error()}
+	}
+	id := hashID(append([]string{source.ID}, args...)...)
+	dir := filepath.Join(c.output, "root-motion", id)
+	if herr := c.runCached(ctx, dir, "local_rotations_xyzw.f32", func(out string) []string {
+		return append([]string{"root-motion", source.dir, out}, args...)
+	}); herr != nil {
+		return rootMotionResult{}, herr
+	}
+	res := rootMotionResult{ID: id, Source: source.ID, SkeletonKey: source.SkeletonKey, Frames: source.Frames,
+		Root: "/api/root-motion/" + id + "/root.f32", Rotations: "/api/root-motion/" + id + "/rotations.f32", dir: dir}
+	if req.Mode == "path" {
+		res.Path = "/api/root-motion/" + id + "/path.f32"
+	}
+	return res, nil
 }
 
 // defaultAnimTool places kmd-anim next to the generator binary (same build directory).

@@ -89,6 +89,27 @@
         <p class="note">Post-processing only: the generated steps are not re-timed, so feet may slide when the path speed differs from the walk.</p>
       </div>
       <p id="motion-info" class="muted small"></p>
+      <div class="retarget">
+        <div class="row">
+          <label class="toggle"><input type="checkbox" id="retarget-on"> Retarget onto character</label>
+          <label class="toggle"><input type="checkbox" id="show-source" checked> Source skeleton</label>
+        </div>
+        <p id="retarget-hint" class="note"></p>
+        <div id="retarget-opts" class="opts" hidden>
+          <label class="toggle"><input type="checkbox" id="align-rest"> Align rest pose (A-pose / T-pose)</label>
+          <div id="mapping-status" class="mapping-status"></div>
+          <div class="button-row">
+            <button id="edit-mapping" class="button small-button" type="button">Edit mapping</button>
+            <button id="auto-mapping" class="button small-button" type="button" title="Recompute the automatic mapping">Auto</button>
+            <button id="save-mapping" class="button small-button" type="button" title="Download the mapping as JSON">Save</button>
+            <label class="button small-button" title="Load a mapping JSON">Load<input id="load-mapping" type="file" accept=".json,application/json" hidden></label>
+          </div>
+          <div id="mapping-editor" class="mapping-editor" hidden>
+            <div class="map-head"><span>Target joint</span><span>Source joint</span></div>
+            <div id="mapping-rows"></div>
+          </div>
+        </div>
+      </div>
     </div>
     <div class="panel-head"><h2>Inspector</h2></div>
     <div id="inspector" class="inspector"><p class="muted pad">Select a joint in the hierarchy or the viewport.</p></div>

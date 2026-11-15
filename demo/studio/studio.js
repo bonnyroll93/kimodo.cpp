@@ -9,6 +9,7 @@ import { Inspector } from './editor/inspector.js';
 import { AnimationPlayer } from './viewer/animation-player.js';
 import { MotionPathView } from './viewer/motion-path-view.js';
 import { MotionPanel } from './editor/motion-panel.js';
+import { RetargetPanel } from './editor/retarget-panel.js';
 
 const $ = (id) => document.getElementById(id);
 const status = (text, error = false) => {
@@ -52,8 +53,9 @@ player.onChange((p) => {
 $('play').addEventListener('click', () => player.play());
 $('scrub').addEventListener('input', (e) => { player.play(false); player.setFrame(Number(e.target.value)); });
 $('loop').addEventListener('change', (e) => { player.loop = e.target.checked; });
+const retargetPanel = new RetargetPanel({ $, status, onChange: () => motionPanel.schedule() });
 const motionPanel = new MotionPanel({
-  $, player, pathView, status,
+  $, player, pathView, status, retarget: retargetPanel,
   onLoaded: (first) => {
     $('empty').hidden = true;
     applyVisibility();
@@ -67,18 +69,20 @@ const motionPanel = new MotionPanel({
 function applyVisibility() {
   if (character) character.root.traverse((o) => { if (o.isMesh) o.visible = $('show-mesh').checked; });
   skeletonView.setVisible({ joints: $('show-joints').checked, skeleton: $('show-skeleton').checked });
-  player.setVisible({ joints: $('show-joints').checked, skeleton: $('show-skeleton').checked });
+  player.setVisible({ joints: $('show-joints').checked, skeleton: $('show-skeleton').checked, source: $('show-source').checked });
   pathView.visible = $('show-path').checked;
   viewport.grid.visible = $('show-grid').checked;
   viewport.axes.visible = $('show-axes').checked;
 }
-for (const id of ['show-mesh', 'show-skeleton', 'show-joints', 'show-grid', 'show-axes', 'show-path'])
+for (const id of ['show-mesh', 'show-skeleton', 'show-joints', 'show-grid', 'show-axes', 'show-path', 'show-source'])
   $(id).addEventListener('change', applyVisibility);
 
-async function open(source, name) {
+// source: ArrayBuffer (local file) or URL; serverId: id the backend knows (sample rigs).
+async function open(source, name, serverId = null) {
   status(`Loading ${name}…`);
   try {
     const next = await loadCharacter(source, name);
+    player.setTarget(null);
     if (character) {
       viewport.scene.remove(character.root);
       disposeCharacter(character);
@@ -90,6 +94,8 @@ async function open(source, name) {
     skeletonView.setCharacter(character, radius);
     hierarchy.setCharacter(character);
     inspector.showStats(character);
+    retargetPanel.setCharacter(character, { id: serverId, upload: source instanceof ArrayBuffer ? source : null });
+    if (player.motion) motionPanel.schedule();
     select(-1);
     applyVisibility();
     $('empty').hidden = true;
@@ -114,6 +120,11 @@ $('file').addEventListener('change', async (e) => {
 function frameMotion(side = false) {
   const m = player.motion;
   if (!m) return;
+  if (player.target && character) {
+    const box = new THREE.Box3().setFromObject(character.root, true).union(new THREE.Box3().setFromObject(pathView.group));
+    viewport.frameBox(box, side ? new THREE.Vector3(0.75, 0.45, 0.9) : null);
+    return;
+  }
   const box = new THREE.Box3();
   const p = new THREE.Vector3();
   for (const arr of [m.root, motionPanel.sourceRoot, motionPanel.samples])
@@ -168,13 +179,15 @@ fetch('samples/')
 $('samples').addEventListener('change', async (e) => {
   const n = e.target.value;
   e.target.value = '';
-  if (n) await open(`samples/${encodeURIComponent(n)}`, n);
+  if (n) await open(`samples/${encodeURIComponent(n)}`, n, `sample:${n}`);
 });
 
 applyVisibility();
 
 // Deep links: /studio/?load=samples/test_rig.glb&joint=LeftArm
 //             /studio/?motion=sample:soma30-walk-s42&mode=path&preset=scurve&frame=45
+//             (with load=...: the motion is retargeted onto the character; align=1 aligns rest poses;
+//              mapping=open shows the mapping editor)
 const params = new URLSearchParams(location.search);
 motionPanel.loadSources().then(() => {
   const motion = params.get('motion');
@@ -185,15 +198,18 @@ motionPanel.loadSources().then(() => {
   if (params.get('preset')) { $('path-preset').value = params.get('preset'); motionPanel.applyPreset(false); }
   if (params.get('lock')) $('lock').value = params.get('lock');
   if (params.get('timing')) $('timing').value = params.get('timing');
+  if (params.get('align') === '1') $('align-rest').checked = true;
   $('motion-source').value = motion;
   motionPanel.syncVisibility();
   motionPanel.apply().then(() => {
     if (params.get('frame')) { player.play(false); player.setFrame(Number(params.get('frame'))); }
+    if (params.get('mapping') === 'open' && $('mapping-editor').hidden) $('edit-mapping').click();
   });
 }).catch((err) => status(`Cannot list motions: ${err.message || err}`, true));
 if (params.get('load')) {
   const url = params.get('load');
-  open(url, decodeURIComponent(url.split('/').pop())).then(() => {
+  const file = decodeURIComponent(url.split('/').pop());
+  open(url, file, url.startsWith('samples/') ? `sample:${file}` : null).then(() => {
     const joint = params.get('joint');
     if (joint && character) select(character.joints.findIndex((j) => j.name === joint));
   });

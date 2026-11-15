@@ -15,9 +15,14 @@ function line(points, color, opacity, dashed = false) {
   return l;
 }
 
-function groundTrail(root) {
+// map: (x, z) in source space -> [x, z] in display space (identity, or into a retargeted
+// character's space); ground: display height of the floor.
+function groundPoints(arr, map, ground, lift = LIFT) {
   const pts = [];
-  for (let i = 0; i < root.length; i += 3) pts.push(new THREE.Vector3(root[i], LIFT, root[i + 2]));
+  for (let i = 0; i < arr.length; i += 3) {
+    const [x, z] = map(arr[i], arr[i + 2]);
+    pts.push(new THREE.Vector3(x, ground + lift, z));
+  }
   return pts;
 }
 
@@ -34,22 +39,19 @@ export class MotionPathView {
   }
 
   // samples: Float32Array [N,3] or null; waypoints: [[x,y,z]]; sourceRoot/resultRoot: Float32Array [T,3].
-  show({ samples = null, waypoints = [], sourceRoot = null, resultRoot = null }) {
+  show({ samples = null, waypoints = [], sourceRoot = null, resultRoot = null, map = (x, z) => [x, z], ground = 0 }) {
     this.clear();
-    if (sourceRoot) this.group.add(line(groundTrail(sourceRoot), 0x8b9aa5, 0.55, true));
-    if (samples && samples.length >= 6) {
-      const pts = [];
-      for (let i = 0; i < samples.length; i += 3) pts.push(new THREE.Vector3(samples[i], LIFT * 2, samples[i + 2]));
-      this.group.add(line(pts, 0x3bd3d0, 0.95));
-    }
-    if (resultRoot) this.group.add(line(groundTrail(resultRoot), 0x9f7aea, 0.9));
+    if (sourceRoot) this.group.add(line(groundPoints(sourceRoot, map, ground), 0x8b9aa5, 0.55, true));
+    if (samples && samples.length >= 6) this.group.add(line(groundPoints(samples, map, ground, LIFT * 2), 0x3bd3d0, 0.95));
+    if (resultRoot) this.group.add(line(groundPoints(resultRoot, map, ground), 0x9f7aea, 0.9));
     if (waypoints.length) {
       const geo = new THREE.CylinderGeometry(0.04, 0.04, 0.01, 20);
       const mat = new THREE.MeshBasicMaterial({ color: 0x3bd3d0 });
       const first = new THREE.MeshBasicMaterial({ color: 0x5ee6be });
       waypoints.forEach((p, i) => {
         const m = new THREE.Mesh(geo, i === 0 ? first : mat);
-        m.position.set(p[0], LIFT * 3, p[2]);
+        const [x, z] = map(p[0], p[2]);
+        m.position.set(x, ground + LIFT * 3, z);
         this.group.add(m);
       });
     }

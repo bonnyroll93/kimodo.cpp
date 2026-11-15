@@ -7,7 +7,9 @@ Standard library only. Writes, into OUTPUT_DIR (default tests/data/rigs):
                    * joint nodes stored children-before-parents (non-topological),
                    * non-identity rest rotations on arms and legs,
                    * a non-deforming end joint (HeadTop_End);
-  test_noskin.glb  the same hierarchy with an unskinned mesh (importer must reject it).
+  test_noskin.glb  the same hierarchy with an unskinned mesh (importer must reject it);
+  test_rig_mixamo_apose.glb
+                   the skinned rig with "mixamorig:" joint names and arms in an A-pose.
 """
 import json
 import math
@@ -140,22 +142,25 @@ class Bin:
         return len(self.accessors) - 1
 
 
-def build(skinned):
-    names = [j[0] for j in JOINTS]
-    local = {n: trs_matrix(t, quat(r)) for n, _, t, r in JOINTS}
+def build(skinned, prefix="", arm_deg=90.0):
+    """prefix: namespace for node names (e.g. "mixamorig:"); arm_deg: 90 = T-pose, 135 = A-pose."""
+    joints = [(n, p, t, ((0, 0, 1), -arm_deg) if n == "LeftArm" else ((0, 0, 1), arm_deg) if n == "RightArm" else r)
+              for n, p, t, r in JOINTS]
+    names = [j[0] for j in joints]
+    local = {n: trs_matrix(t, quat(r)) for n, _, t, r in joints}
     armature = trs_matrix(ARMATURE_T, quat(ARMATURE_R))
     world = {}
-    for n, p, _, _ in JOINTS:
+    for n, p, _, _ in joints:
         world[n] = mat_mul(world[p] if p else armature, local[n])
-    children = {n: [c for c, p, _, _ in JOINTS if p == n] for n in names}
+    children = {n: [c for c, p, _, _ in joints if p == n] for n in names}
 
     # Node order: reversed joint list puts every child before its parent.
     order = list(reversed(names))
     node_of = {n: i for i, n in enumerate(order)}
     nodes = []
     for n in order:
-        _, _, t, r = next(j for j in JOINTS if j[0] == n)
-        node = {"name": n, "translation": list(t)}
+        _, _, t, r = next(j for j in joints if j[0] == n)
+        node = {"name": prefix + n, "translation": list(t)}
         if r is not None:
             node["rotation"] = list(quat(r))
         if children[n]:
@@ -233,7 +238,8 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     write_glb(out / "test_rig.glb", *build(skinned=True))
     write_glb(out / "test_noskin.glb", *build(skinned=False))
-    print(f"wrote {out / 'test_rig.glb'} and {out / 'test_noskin.glb'}")
+    write_glb(out / "test_rig_mixamo_apose.glb", *build(skinned=True, prefix="mixamorig:", arm_deg=135.0))
+    print(f"wrote test_rig.glb, test_noskin.glb and test_rig_mixamo_apose.glb to {out}")
 
 
 if __name__ == "__main__":

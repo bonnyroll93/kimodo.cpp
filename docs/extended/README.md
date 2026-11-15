@@ -14,7 +14,7 @@ The original generation path is unchanged; `tests/data/baseline/` guards it bit 
 | 0 | audit, baseline, fork | done |
 | 1 | skeleton runtime, GLB import, Three.js studio viewer | done |
 | 2 | root motion (Full / InPlace) and MotionPath, studio playback | done |
-| 3 | retargeting | — |
+| 3 | retargeting (role-based mapping, JSON mappings, studio preview on the character) | done |
 | 4 | animation layers, timeline | — |
 | 5 | GLB export, regression | — |
 
@@ -25,8 +25,9 @@ The original generation path is unchanged; `tests/data/baseline/` guards it bit 
 | `include/kimodo/anim/` | public C++ API, namespace `kimodo::anim` |
 | `src/anim/` | implementation and the `kmd-anim` tool |
 | `third_party/cgltf/` | vendored cgltf v1.14 (MIT) |
+| `third_party/nlohmann/` | vendored nlohmann/json v3.11.3 (MIT), mapping files |
 | `demo/studio/`, `demo/studio*.go` | Three.js viewer at `/studio/`, root-motion endpoints |
-| `tests/anim/`, `tests/data/rigs/` | tests and generated test characters |
+| `tests/anim/`, `tests/data/rigs/` | tests and generated test characters (T-pose rig, Mixamo-named A-pose rig, unskinned) |
 | `scripts/make_test_rig_glb.py` | regenerates the test characters (stdlib only) |
 
 The CMake option `KIMODO_BUILD_ANIM` (default ON) builds the static library `kimodo_anim`
@@ -94,6 +95,63 @@ kimodo::anim::write_motion_dir("out", kimodo::anim::clip_to_motion(*clip));
 - This is procedural post-processing: it does not condition the diffusion model, and it
   does not re-time the steps.
 
+## Step 3 API: retargeting
+
+```cpp
+#include <kimodo/anim/retarget.hpp>
+
+auto source = kimodo::anim::native_skeleton("soma30");
+auto character = kimodo::anim::load_gltf_character("character.glb");
+auto mapping = kimodo::anim::auto_map(*source, character->skeleton);   // or load_mapping("m.json")
+auto diag = kimodo::anim::check_mapping(mapping, *source, character->skeleton);
+kimodo::anim::RetargetOptions opt;            // auto facing, hip-height root scale, KeepRest
+opt.align_rest_directions = true;             // for A-pose characters
+auto result = kimodo::anim::retarget(clip, *source, character->skeleton, mapping, opt);
+// result->clip: target joint order; result->diagnostics.warnings; result->root_scale ...
+```
+
+**Method.** Each mapped joint receives the source's change of *global* rotation relative to
+the source rest pose. That change is applied to the target's own global rest rotation, so
+the two rigs may use different local axes, rest offsets, axis flips and bone lengths. The
+target always keeps its own bone lengths. The joint mapped to the source root also gets
+the root translation:
+- the translation is measured relative to the source's standing reference (native rigs
+  stand with the root at hip height);
+- it is turned by the facing difference, which is detected from the hips (or a yaw you
+  give);
+- it is scaled by the ratio of hip heights (or an explicit `root_scale`).
+
+A source frame at its reference therefore reproduces the target rest pose exactly.
+Unmapped target joints keep their rest local rotation (`UnmappedPolicy::KeepRest`).
+
+**A-pose / T-pose.** `align_rest_directions` first rotates each mapped target rest bone onto
+the source's rest bone direction. It is off by default, so that the rest pose maps to the
+rest pose. Turn it on when the character's rest pose differs from the source's, e.g. an
+A-pose Mixamo character driven by T-pose SOMA.
+
+**Mapping.**
+- **Persisted format.** Mappings are stored by joint name in a JSON file
+  (`{"version":1,"joints":[{"target":..,"source":..,"offset_xyzw":[..]?}]}`). The optional
+  offset is an extra rotation in the target joint's local frame.
+- **Role detection.** `detect_roles` combines naming conventions (Mixamo, `mixamorig:`
+  prefixes, UE `thigh_l`/`calf_l`, SMPL, SOMA, left/right tokens) with the hierarchy:
+  - limbs are found as chains walking up from the hand and the foot, so SOMA's `LeftLeg`
+    (thigh) and Mixamo's `LeftLeg` (calf) are told apart;
+  - spine and neck chains of different lengths are matched first↔first and last↔last.
+- **Errors** (retargeting is refused with a message, it never crashes):
+  - unknown joints;
+  - a target mapped twice;
+  - an unmapped source root;
+  - incompatible parents, i.e. a target joint whose mapped ancestor is driven by a source
+    joint that is not an ancestor of its own source.
+- **Warnings:**
+  - unmapped deforming joints;
+  - one source driving several targets;
+  - undetectable facing or hip height.
+
+Only humanoid rigs that are compatible with the source skeleton are supported. Arbitrary
+rigs (quadrupeds, robots) are out of scope for the MVP.
+
 ## Tools
 
 ```sh
@@ -101,6 +159,19 @@ kmd-anim inspect character.glb [--skin N]   # skeleton, rest pose, mesh stats as
 kmd-anim inspect --native soma30            # a native Kimodo skeleton as JSON
 kmd-anim root-motion IN_DIR OUT_DIR --mode full|inplace|path     [--lock both|forward|lateral] [--up X,Y,Z] [--forward X,Y,Z]     [--points "x,y,z;x,y,z;..."] [--interp catmull|polyline] [--loop]     [--timing distance|duration|speed] [--duration S] [--speed M_PER_S] [--no-orient]
 ```
+
+```sh
+kmd-anim map soma30 character.glb [--mapping m.json]      # auto (or given) mapping + errors/warnings
+kmd-anim retarget MOTION_DIR character.glb OUT_DIR \
+    [--mapping m.json] [--save-mapping m.json] [--align-rest] [--root-scale S] [--yaw DEG] [--no-auto-facing]
+```
+
+`retarget` writes three files to `OUT_DIR`:
+- `local_rotations_xyzw.f32` (`[T,J,4]`) and `local_translations.f32` (`[T,J,3]`), in the
+  target's joint order;
+- `retarget.json`, with the joints (name, parent, glTF node, rest scale), the mapping, the
+  diagnostics, `root_scale`, `facing_yaw_degrees`, and the source/target reference points
+  used to map overlays into the character's space.
 
 `root-motion` reads and writes the `kmd-generate` format (`root_positions.f32`,
 `local_rotations_xyzw.f32`). In path mode it also writes `path_samples.f32`, which is the
@@ -129,9 +200,21 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     scrubbing and loop. Space toggles play/pause.
   - The viewport shows the source root trail (dashed), the evaluated path (cyan), its
     waypoints and the resulting root trail (purple).
+- **Retarget onto character.** Load a character, keep *Retarget onto character* on, and
+  the current motion (after Full / In place / Path) is retargeted on the server and played
+  on the character's mesh.
+  - The source skeleton can be shown beside it.
+  - The path and the root trails are drawn in the character's space.
+  - *Align rest pose* handles A-pose characters.
+  - *Edit mapping* shows a target→source table that you can edit. Every change is checked
+    on the server and the errors and warnings appear inline.
+  - *Auto* recomputes the mapping. *Save* and *Load* exchange mapping JSON files.
+  - Locally opened `.glb` files are uploaded once, on demand. Bones are matched by glTF
+    node index, because three.js rewrites names such as `mixamorig:Hips`.
 - **Deep links:**
   - `/studio/?load=samples/test_rig.glb&joint=LeftArm`
   - `/studio/?motion=sample:soma30-walk-s42&mode=path&preset=scurve&frame=45`
+  - `/studio/?load=samples/test_rig_mixamo_apose.glb&motion=sample:soma30-walk-s42&mode=inplace&align=1&mapping=open`
 
 | Endpoint | Purpose |
 |---|---|
@@ -140,6 +223,11 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
 | `GET /api/skeletons/<key>` | native skeleton names, parents and offsets |
 | `POST /api/root-motion` | `{source, mode, lock?, path?{points,interpolation,loop}, timing?, duration?, speed?, orient?}` |
 | `GET /api/root-motion/<id>/{root,rotations,path}.f32` | result, cached by request hash |
+| `POST /api/characters` | upload a `.glb` (≤ 128 MiB) → `{"id":"upload:<hash>"}`; sample rigs are `sample:<file>` |
+| `GET /api/retarget/map?character=&skeleton=` | automatic mapping + diagnostics |
+| `POST /api/retarget/check` | `{character, skeleton, mapping}` → diagnostics |
+| `POST /api/retarget` | `{root_motion:{…}, character, mapping?, align_rest?, root_scale?, yaw?}` |
+| `GET /api/retarget/<id>/{retarget.json,rotations.f32,translations.f32}` | result, cached by request hash |
 
 The demo finds `kmd-anim` next to `-generator`; override that location with `-anim`.
 

@@ -75,6 +75,20 @@ struct Quat {
     const float wa = std::sin((1.F - t) * theta) / s, wb = std::sin(t * theta) / s;
     return {a.x * wa + b.x * wb, a.y * wa + b.y * wb, a.z * wa + b.z * wb, a.w * wa + b.w * wb};
 }
+// Shortest-arc rotation taking direction a onto direction b (identity if either is ~zero).
+[[nodiscard]] inline Quat from_to(Vec3 a, Vec3 b) noexcept {
+    a = normalize(a);
+    b = normalize(b);
+    if (dot(a, a) == 0.F || dot(b, b) == 0.F) return {};
+    const float c = dot(a, b);
+    if (c < -.999999F) { // opposite: rotate pi about any axis perpendicular to a
+        Vec3 axis = cross({1.F, 0.F, 0.F}, a);
+        if (dot(axis, axis) < 1.e-6F) axis = cross({0.F, 1.F, 0.F}, a);
+        return Quat::from_axis_angle(axis, 3.14159265358979F);
+    }
+    const Vec3 v = cross(a, b);
+    return normalize(Quat{v.x, v.y, v.z, 1.F + c});
+}
 // Angle in radians between two orientations (0..pi), sign-independent.
 [[nodiscard]] inline float angle_between(Quat a, Quat b) noexcept {
     const float c = std::fabs(dot(normalize(a), normalize(b)));

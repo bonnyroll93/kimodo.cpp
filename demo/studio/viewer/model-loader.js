@@ -43,10 +43,16 @@ export async function loadCharacter(source, name) {
     const p = boneParent(bone);
     if (p) children.get(p).push(bone); else roots.push(bone);
   }
+  // GLTFLoader sanitises object names ("mixamorig:Hips" -> "mixamorigHips"); keep the glTF
+  // node index and the original node name, which is what the C++ importer and mappings use.
+  const nodeDefs = gltf.parser.json.nodes || [];
+  const nodeIndexOf = (bone) => gltf.parser.associations.get(bone)?.nodes;
   const joints = [];
   const walk = (bone, parentIndex) => {
     const index = joints.length;
-    joints.push({ bone, index, parent: parentIndex, name: bone.name || `joint_${index}`,
+    const nodeIndex = nodeIndexOf(bone) ?? -1;
+    const name = nodeDefs[nodeIndex]?.name || bone.name || `node_${nodeIndex}`;
+    joints.push({ bone, index, parent: parentIndex, name, nodeIndex,
                   deforming: deforming.has(bone), children: [] });
     if (parentIndex >= 0) joints[parentIndex].children.push(index);
     for (const c of children.get(bone)) walk(c, index);

@@ -3,8 +3,13 @@
 //   kmd-anim inspect --native KEY               native Kimodo skeleton (smplx22|soma30|g1skel34)
 //   kmd-anim root-motion IN_DIR OUT_DIR --mode full|inplace|path [options]
 //                                               Full / InPlace / CustomPath on kmd-generate output
+//   kmd-anim map SOURCE_KEY TARGET.glb [--mapping FILE]
+//                                               automatic (or given) joint mapping + diagnostics
+//   kmd-anim retarget MOTION_DIR TARGET.glb OUT_DIR [options]
+//                                               retarget a native motion onto a rigged character
 #include <kimodo/anim/clip.hpp>
 #include <kimodo/anim/gltf.hpp>
+#include <kimodo/anim/retarget.hpp>
 #include <kimodo/anim/root_motion.hpp>
 #include <kimodo/anim/skeleton.hpp>
 
@@ -12,6 +17,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <stdexcept>
 #include <iostream>
 #include <sstream>
@@ -78,7 +84,12 @@ int usage() {
                  "           [--points X,Y,Z;X,Y,Z;...] [--interp catmull|polyline] [--loop]\n"
                  "           [--timing distance|duration|speed] [--duration S] [--speed M_PER_S] [--no-orient]\n"
                  "       IN_DIR/OUT_DIR hold root_positions.f32 + local_rotations_xyzw.f32; path mode also\n"
-                 "       writes OUT_DIR/path_samples.f32 ([N,3], the evaluated curve for display).\n";
+                 "       writes OUT_DIR/path_samples.f32 ([N,3], the evaluated curve for display).\n"
+                 "       kmd-anim map smplx22|soma30|g1skel34 TARGET.glb [--mapping FILE] [--skin N]\n"
+                 "       kmd-anim retarget MOTION_DIR TARGET.glb OUT_DIR [--mapping FILE] [--save-mapping FILE]\n"
+                 "           [--root-scale S] [--yaw DEG] [--no-auto-facing] [--align-rest] [--skin N] [--fps N]\n"
+                 "       retarget writes OUT_DIR/retarget.json, local_rotations_xyzw.f32 [T,J,4] and\n"
+                 "       local_translations.f32 [T,J,3] in the target's joint order.\n";
     return 2;
 }
 
@@ -185,10 +196,137 @@ int root_motion(int argc, char **argv) {
               << ",\"skeleton\":" << quote(skeleton->source) << "}\n";
     return 0;
 }
+std::string string_list(const std::vector<std::string> &items) {
+    std::string out = "[";
+    for (std::size_t i = 0; i < items.size(); ++i) out += (i ? "," : "") + quote(items[i]);
+    return out + "]";
+}
+
+std::string diagnostics_json(const MappingDiagnostics &d) {
+    return "\"errors\":" + string_list(d.errors) + ",\"warnings\":" + string_list(d.warnings);
+}
+
+std::string compact_mapping_json(const RetargetMapping &mapping) {
+    std::string json = mapping_to_json(mapping);
+    while (!json.empty() && (json.back() == '\n' || json.back() == ' ')) json.pop_back();
+    return json;
+}
+
+int map_command(int argc, char **argv) {
+    if (argc < 4) return usage();
+    auto source = native_skeleton(argv[2]);
+    if (!source) throw std::runtime_error(source.error());
+    std::optional<std::filesystem::path> mapping_file;
+    GltfImportOptions import;
+    for (int i = 4; i < argc; ++i) {
+        const std::string_view arg = argv[i];
+        if (arg == "--mapping" && i + 1 < argc) mapping_file = argv[++i];
+        else if (arg == "--skin" && i + 1 < argc) import.skin = std::stoi(argv[++i]);
+        else throw std::runtime_error("unknown option '" + std::string(arg) + "'");
+    }
+    auto character = load_gltf_character(argv[3], import);
+    if (!character) throw std::runtime_error(character.error());
+    RetargetMapping mapping;
+    if (mapping_file) {
+        auto loaded = load_mapping(*mapping_file);
+        if (!loaded) throw std::runtime_error(loaded.error());
+        mapping = std::move(*loaded);
+    } else {
+        mapping = auto_map(*source, character->skeleton);
+    }
+    const auto d = check_mapping(mapping, *source, character->skeleton);
+    std::cout << "{\"mapping\":" << compact_mapping_json(mapping) << "," << diagnostics_json(d) << "}\n";
+    return d.ok() ? 0 : 1;
+}
+
+int retarget_command(int argc, char **argv) {
+    if (argc < 5) return usage();
+    const std::filesystem::path motion_dir = argv[2], target_path = argv[3], out = argv[4];
+    std::optional<std::filesystem::path> mapping_file, save_file;
+    RetargetOptions options;
+    GltfImportOptions import;
+    float fps = 30.F;
+    for (int i = 5; i < argc; ++i) {
+        const std::string_view arg = argv[i];
+        auto value = [&]() -> std::string {
+            if (i + 1 >= argc) throw std::runtime_error(std::string(arg) + " needs a value");
+            return argv[++i];
+        };
+        if (arg == "--mapping") mapping_file = value();
+        else if (arg == "--save-mapping") save_file = value();
+        else if (arg == "--root-scale") options.root_scale = std::stof(value());
+        else if (arg == "--yaw") options.yaw_offset_degrees = std::stof(value());
+        else if (arg == "--no-auto-facing") options.auto_facing = false;
+        else if (arg == "--align-rest") options.align_rest_directions = true;
+        else if (arg == "--skin") import.skin = std::stoi(value());
+        else if (arg == "--fps") fps = std::stof(value());
+        else throw std::runtime_error("unknown option '" + std::string(arg) + "'");
+    }
+    auto motion = read_motion_dir(motion_dir);
+    if (!motion) throw std::runtime_error(motion.error());
+    auto source = native_skeleton_for_joint_count(motion->joints);
+    if (!source) throw std::runtime_error(source.error());
+    auto clip = clip_from_motion(*source, *motion, fps);
+    if (!clip) throw std::runtime_error(clip.error());
+    auto character = load_gltf_character(target_path, import);
+    if (!character) throw std::runtime_error(character.error());
+    const Skeleton &target = character->skeleton;
+    RetargetMapping mapping;
+    if (mapping_file) {
+        auto loaded = load_mapping(*mapping_file);
+        if (!loaded) throw std::runtime_error(loaded.error());
+        mapping = std::move(*loaded);
+    } else {
+        mapping = auto_map(*source, target);
+    }
+    if (save_file)
+        if (auto ok = save_mapping(*save_file, mapping); !ok) throw std::runtime_error(ok.error());
+    auto result = retarget(*clip, *source, target, mapping, options);
+    if (!result) throw std::runtime_error(result.error());
+
+    std::error_code ec;
+    std::filesystem::create_directories(out, ec);
+    if (ec) throw std::runtime_error("cannot create " + out.string() + ": " + ec.message());
+    const std::size_t frames = result->clip.frames(), joints = result->clip.joint_count;
+    std::vector<float> rot, trans;
+    rot.reserve(frames * joints * 4);
+    trans.reserve(frames * joints * 3);
+    for (const Transform &t : result->clip.locals) {
+        rot.insert(rot.end(), {t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w});
+        trans.insert(trans.end(), {t.translation.x, t.translation.y, t.translation.z});
+    }
+    auto write = [&](const char *name, const std::vector<float> &v) {
+        std::ofstream f(out / name, std::ios::binary | std::ios::trunc);
+        f.write(reinterpret_cast<const char *>(v.data()), static_cast<std::streamsize>(v.size() * sizeof(float)));
+        if (!f) throw std::runtime_error(std::string("cannot write ") + name);
+    };
+    write("local_rotations_xyzw.f32", rot);
+    write("local_translations.f32", trans);
+    std::ostringstream meta;
+    meta << "{\"frames\":" << frames << ",\"fps\":" << num(result->clip.fps) << ",\"source_skeleton\":"
+         << quote(source->source) << ",\"translation_joint\":" << result->translation_joint
+         << ",\"root_scale\":" << num(result->root_scale) << ",\"facing_yaw_degrees\":"
+         << num(result->facing_yaw_degrees) << ",\"source_reference\":" << vec(result->source_reference)
+         << ",\"target_reference\":" << vec(result->target_reference) << ",\"target_ground\":"
+         << num(result->target_ground) << "," << diagnostics_json(result->diagnostics) << ",\"joints\":[";
+    for (std::size_t j = 0; j < joints; ++j) {
+        const Joint &jt = target.joints[j];
+        meta << (j ? "," : "") << "{\"name\":" << quote(jt.name) << ",\"parent\":" << jt.parent
+             << ",\"source_node\":" << jt.source_node << ",\"scale\":" << vec(jt.rest_local.scale) << "}";
+    }
+    meta << "],\"mapping\":" << compact_mapping_json(mapping) << "}\n";
+    std::ofstream meta_file(out / "retarget.json", std::ios::binary | std::ios::trunc);
+    meta_file << meta.str();
+    if (!meta_file) throw std::runtime_error("cannot write retarget.json");
+    std::cout << meta.str();
+    return 0;
+}
 } // namespace
 
 int main(int argc, char **argv) try {
     if (argc >= 2 && std::string_view(argv[1]) == "root-motion") return root_motion(argc, argv);
+    if (argc >= 2 && std::string_view(argv[1]) == "map") return map_command(argc, argv);
+    if (argc >= 2 && std::string_view(argv[1]) == "retarget") return retarget_command(argc, argv);
     if (argc < 3 || std::string_view(argv[1]) != "inspect") return usage();
     if (std::string_view(argv[2]) == "--native") {
         if (argc != 4) return usage();

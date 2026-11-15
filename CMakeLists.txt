@@ -105,11 +105,12 @@ endif()
 if(KIMODO_BUILD_ANIM)
   add_library(kimodo_anim STATIC
     src/anim/types.cpp src/anim/skeleton.cpp src/anim/gltf_import.cpp src/anim/cgltf_impl.cpp
-    src/anim/clip.cpp src/anim/root_motion.cpp src/anim/motion_path.cpp)
+    src/anim/clip.cpp src/anim/root_motion.cpp src/anim/motion_path.cpp
+    src/anim/retarget_mapping.cpp src/anim/retarget.cpp)
   add_library(kimodo::anim ALIAS kimodo_anim)
   target_include_directories(kimodo_anim
     PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
-    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/cgltf")
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/cgltf" "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
   if(MSVC)
     target_compile_options(kimodo_anim PRIVATE /W4 /permissive-)
   else()
@@ -144,6 +145,14 @@ if(BUILD_TESTING AND KIMODO_BUILD_TESTS AND KIMODO_BUILD_ANIM)
     COMMAND kmd-anim root-motion "${KIMODO_TEST_WALK}" "${CMAKE_CURRENT_BINARY_DIR}/anim-test-out/bad"
             --mode inplace --points "0,0,0;1,0,0")
   set_tests_properties(kimodo-anim-root-motion-exclusive PROPERTIES WILL_FAIL TRUE)
+  add_executable(kimodo-anim-retarget-test tests/anim/anim_retarget_test.cpp)
+  target_link_libraries(kimodo-anim-retarget-test PRIVATE kimodo_anim)
+  add_test(NAME kimodo-anim-retarget-test COMMAND kimodo-anim-retarget-test "${KIMODO_TEST_WALK}" "${KIMODO_TEST_RIGS}")
+  add_test(NAME kimodo-anim-retarget-cli
+    COMMAND kmd-anim retarget "${KIMODO_TEST_WALK}" "${KIMODO_TEST_RIGS}/test_rig.glb" "${CMAKE_CURRENT_BINARY_DIR}/anim-test-out/retarget")
+  set_tests_properties(kimodo-anim-retarget-cli PROPERTIES PASS_REGULAR_EXPRESSION "\"translation_joint\":0,")
+  add_test(NAME kimodo-anim-map-cli COMMAND kmd-anim map soma30 "${KIMODO_TEST_RIGS}/test_rig.glb")
+  set_tests_properties(kimodo-anim-map-cli PROPERTIES PASS_REGULAR_EXPRESSION "\"target\": \"LeftLeg\",[ \r\n]*\"source\": \"LeftShin\"")
 endif()
 if(BUILD_TESTING AND KIMODO_BUILD_TESTS)
   add_executable(kimodo-capi-test tests/capi_test.cpp)

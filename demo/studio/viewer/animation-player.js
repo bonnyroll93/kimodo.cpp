@@ -56,6 +56,7 @@ export class AnimationPlayer {
   }
 
   clear() {
+    this.setTarget(null);
     this.motion = null;
     this.playing = false;
     this.group.clear();
@@ -63,6 +64,72 @@ export class AnimationPlayer {
     this.joints = [];
     this.skeletonKey = null;
     this.emit();
+  }
+
+  // Retargeted clip for a loaded character: meta from retarget.json, rotations [T,J,4] and
+  // translations [T,J,3] in the target skeleton's order. Joints are matched to the
+  // character's bones by glTF node index. Pass null to stop driving the character.
+  setTarget(target) {
+    if (this.target) this.restoreTarget();
+    this.target = null;
+    if (target) {
+      const byNode = new Map(target.character.joints.map((j) => [j.nodeIndex, j]));
+      const joints = target.meta.joints.map((mj, i) => {
+        const cj = byNode.get(mj.source_node);
+        return { bone: cj?.bone ?? null, parent: mj.parent, scale: new THREE.Vector3().fromArray(mj.scale ?? [1, 1, 1]), index: i };
+      });
+      for (const j of joints) {
+        // Bones whose three.js parent is the parent joint's bone take local values directly;
+        // others (the root under an Armature node) are solved from the global transform.
+        j.direct = !!j.bone && j.parent >= 0 && joints[j.parent].bone === j.bone.parent;
+      }
+      const rest = joints.map((j) => j.bone && { p: j.bone.position.clone(), q: j.bone.quaternion.clone(), s: j.bone.scale.clone() });
+      this.target = { ...target, joints, rest, frames: target.meta.frames };
+      this._local = joints.map(() => new THREE.Matrix4());
+      this._global = joints.map(() => new THREE.Matrix4());
+    }
+    this.setFrame(this.frame);
+  }
+
+  restoreTarget() {
+    const t = this.target;
+    if (!t) return;
+    t.joints.forEach((j, i) => {
+      if (!j.bone) return;
+      j.bone.position.copy(t.rest[i].p);
+      j.bone.quaternion.copy(t.rest[i].q);
+      j.bone.scale.copy(t.rest[i].s);
+    });
+    t.character.root.updateMatrixWorld(true);
+  }
+
+  applyTarget(frame) {
+    const t = this.target;
+    if (!t || frame >= t.frames) return;
+    const n = t.joints.length;
+    const pos = new THREE.Vector3(), quat = new THREE.Quaternion();
+    const sceneWorld = t.character.root.matrixWorld;
+    const inv = new THREE.Matrix4();
+    for (let i = 0; i < n; i++) {
+      const j = t.joints[i];
+      const r = (frame * n + i) * 4, p = (frame * n + i) * 3;
+      quat.set(t.rotations[r], t.rotations[r + 1], t.rotations[r + 2], t.rotations[r + 3]);
+      pos.set(t.translations[p], t.translations[p + 1], t.translations[p + 2]);
+      this._local[i].compose(pos, quat, j.scale);
+      if (j.parent >= 0) this._global[i].multiplyMatrices(this._global[j.parent], this._local[i]);
+      else this._global[i].multiplyMatrices(sceneWorld, this._local[i]); // skeleton space = scene space
+      if (!j.bone) continue;
+      if (j.direct) {
+        j.bone.position.copy(pos);
+        j.bone.quaternion.copy(quat);
+        j.bone.scale.copy(j.scale);
+      } else {
+        j.bone.parent.updateWorldMatrix(true, false);
+        inv.copy(j.bone.parent.matrixWorld).invert().multiply(this._global[i]);
+        inv.decompose(j.bone.position, j.bone.quaternion, j.bone.scale);
+      }
+    }
+    t.character.root.updateMatrixWorld(true);
   }
 
   setFrame(f) {
@@ -78,6 +145,7 @@ export class AnimationPlayer {
     }
     this.group.updateMatrixWorld(true);
     this.view.update();
+    this.applyTarget(this.frame);
     this.emit();
   }
 
@@ -96,7 +164,9 @@ export class AnimationPlayer {
     if (f !== this.frame) this.setFrame(f); else this.emit();
   }
 
-  setVisible({ joints, skeleton }) { this.view.setVisible({ joints, skeleton }); }
+  setVisible({ joints, skeleton, source = true }) {
+    this.view.setVisible({ joints: joints && source, skeleton: skeleton && source });
+  }
   onChange(fn) { this.listeners.push(fn); }
   emit() { for (const fn of this.listeners) fn(this); }
 }
