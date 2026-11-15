@@ -11,6 +11,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { CHANNELS, channelsOf, offsetAt, setKey, keyedJoints, keyFrames, quatEuler, eulerQuat } from '../viewer/keyframes.js';
 import { GraphEditor } from './graph-editor.js';
 import { skeletonLocal } from '../viewer/model-loader.js';
+import { channels } from './channel-box.js';
 
 export class KeyPanel {
   constructor({ $, viewport, player, status, motionPanel, retarget, getCharacter, onSelectJoint }) {
@@ -164,6 +165,28 @@ export class KeyPanel {
     this.start = null;
     if (this.$('key-auto').checked) this.keyCurrent();
     else this.updateInfo();
+  }
+
+  // Channel box: the selected joint's key values at this frame (Additive: offset; Override: the
+  // pose); a change keys the joint.
+  channelSpec() {
+    if (!this.active || !this.retarget.enabled || this.blocked?.()) return null;
+    const j = this.joint();
+    if (!j) return null;
+    const t = this.tracks(), f = this.kf(), name = j.name, frames = keyFrames(t, name);
+    const values = this.pending?.joint === name && this.pending.frame === f ? this.pending.values
+      : this.override && !frames.length ? this.poseValues(j) : offsetAt(t, name, f);
+    return {
+      id: `key:${name}`,
+      title: name,
+      subtitle: `${this.override ? 'pose (override)' : 'offset (additive)'} · ${this.motionPanel.activeLayer.name} · frame ${f + 1}${frames.includes(f) ? ' · keyed' : this.pending ? ' · unkeyed change' : ''}`,
+      channels: channels(values, ['tx', 'ty', 'tz', 'rx', 'ry', 'rz']),
+      set: (k, v, final) => {
+        if (!final) return;
+        this.pending = { joint: name, frame: f, values: { ...values, [k]: v }, translated: k[0] === 't' || !!this.pending?.translated };
+        this.keyCurrent();
+      },
+    };
   }
 
   // Key the selected joint at the current frame (the pending gizmo edit, or the current values).

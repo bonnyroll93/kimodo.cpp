@@ -8,7 +8,7 @@
 //   * Body controls: the hips box (offset of the hips: lower them and the IK feet stay on the
 //     ground) and the root circle on the ground (offset of the whole character). Their
 //     values are offsets (0 = the animation), keyed like the limb controls.
-//   * Transform: the picked control's values in its follow space; typing one keys it.
+//   * Channel box: the picked control's values in its follow space; typing one keys it.
 //   * Changing a limb's follow space converts its keys (the control stays where it was on
 //     every keyed frame).
 // The rig is sent with every stack (control_rig in /api/layers, /api/export) and solved by
@@ -18,6 +18,7 @@ import * as THREE from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { evaluate, setKey, quatEuler, eulerQuat, offsetAt, channelsOf, CHANNELS } from '../viewer/keyframes.js';
 import { skeletonLocal } from '../viewer/model-loader.js';
+import { LABELS } from './channel-box.js';
 
 export const LIMBS = [
   { id: 'left_arm', label: 'Left arm', src: ['LeftArm', 'LeftForeArm', 'LeftHand'] },
@@ -316,7 +317,6 @@ export class ControlRig {
         const pos = this.picked.kind === 'hips' ? p.clone().add(dp) : p.clone().sub(pivot).applyQuaternion(dq).add(pivot).add(dp);
         setBoneWorld(b, pos, dq.clone().multiply(q));
       }
-      this.syncValues(this.bodyValues());
       return;
     }
     const ch = this.chains();
@@ -324,12 +324,6 @@ export class ControlRig {
     const ik = this.controls.get(`${this.picked.limb}:ik`), pole = this.controls.get(`${this.picked.limb}:pole`);
     solveTwoBone(ch[this.picked.limb], ik.position, pole.position, ik.quaternion);
     this.update();
-    const l = this.limb(this.picked.limb), m = this.controls.get(`${this.picked.limb}:${this.picked.kind}`);
-    const v = this.spaceValues(l, this.picked.kind, m.position, m.quaternion, ch, this.player.frame);
-    for (const input of this.$('rig-xform').querySelectorAll('input[data-c]')) {
-      const k = input.dataset.c;
-      input.value = (k.startsWith('t') ? v[k].toFixed(3) : v[k].toFixed(1));
-    }
   }
 
   dragEnd() {
@@ -671,34 +665,36 @@ export class ControlRig {
     this.$('rig-selected').textContent = !this.picked ? ''
       : isBody(this.picked) ? `Picked: ${this.label('body', this.picked.kind)} (offset from the animation)`
       : `Picked: ${this.label(this.picked.limb, this.picked.kind)} (follows ${this.limb(this.picked.limb).follow})`;
-    this.renderTransform();
   }
 
-  // Transform: the picked control's values at the current frame (follow space); typing keys it.
-  renderTransform() {
-    const host = this.$('rig-xform'), p = this.picked, ch = this.chains();
-    host.replaceChildren();
-    host.hidden = !p || !(isBody(p) ? ch : ch?.[p.limb]);
-    if (host.hidden) return;
-    const names = p.kind === 'pole' ? POS : ALL;
-    for (const k of names) {
-      const lab = document.createElement('label');
-      lab.textContent = k.startsWith('t') ? `Move ${k[1].toUpperCase()}` : `Rot ${k[1].toUpperCase()}°`;
-      const input = document.createElement('input');
-      Object.assign(input, { type: 'number', step: k.startsWith('t') ? 0.01 : 1 });
-      input.dataset.c = k;
-      input.addEventListener('change', () => {
-        const v = this.currentValues();
-        if (!v || !Number.isFinite(Number(input.value))) return;
-        v[k] = Number(input.value);
-        if (isBody(p)) { this.keyBody(p.kind, v); return; }
-        this.placeControl(p.limb, p.kind, v, ch);
+  // Channel box: the picked control's values (live while it is dragged); a change keys it.
+  channelSpec() {
+    const p = this.picked, ch = this.chains();
+    if (!p || !(isBody(p) ? ch : ch?.[p.limb])) return null;
+    let v;
+    if (this.dragging && isBody(p)) v = this.bodyValues();
+    else if (this.dragging) {
+      const m = this.controls.get(`${p.limb}:${p.kind}`);
+      v = this.spaceValues(this.limb(p.limb), p.kind, m.position, m.quaternion, ch, this.player.frame);
+    } else v = this.currentValues();
+    if (!v) return null;
+    const keys = p.kind === 'pole' ? POS : ALL;
+    const keyed = keyedFrames(this.curvesOf(p), keys).includes(this.player.frame);
+    return {
+      id: `rig:${p.limb}:${p.kind}`,
+      title: this.label(p.limb, p.kind),
+      subtitle: `${isBody(p) ? 'offset from the animation' : `follows ${this.limb(p.limb).follow}`} · frame ${this.player.frame}${keyed ? ' · keyed' : ''}`,
+      channels: keys.map((k) => ({ k, label: LABELS[k], value: v[k] })),
+      set: (k, value, final) => {
+        if (!final) return;
+        const now = this.currentValues();
+        if (!now) return;
+        now[k] = value;
+        if (isBody(p)) { this.keyBody(p.kind, now); return; }
+        this.placeControl(p.limb, p.kind, now, ch);
         this.key(p.limb, p.kind);
-      });
-      lab.append(input);
-      host.append(lab);
-    }
-    this.syncValues();
+      },
+    };
   }
 
   // Values of the picked control on the frame shown, in its follow space.
@@ -710,22 +706,13 @@ export class ControlRig {
     return this.spaceValues(l, p.kind, w.pos, w.rot, ch, this.player.frame);
   }
 
-  // Refresh the frame-dependent widgets (blend sliders, Transform) when the frame changes.
-  syncValues(values = null) {
+  // Refresh the frame-dependent widgets (blend sliders) when the frame changes.
+  syncValues() {
     for (const s of this.$('rig-limbs').querySelectorAll('input[data-blend]')) {
       if (document.activeElement === s) continue;
       const v = this.blendAt(this.limb(s.dataset.blend));
       s.value = v;
       s.nextElementSibling.nextElementSibling.textContent = v.toFixed(2);
-    }
-    const host = this.$('rig-xform');
-    if (host.hidden || (this.dragging && !values)) return;
-    const v = values ?? this.currentValues();
-    if (!v) return;
-    for (const input of host.querySelectorAll('input[data-c]')) {
-      if (document.activeElement === input) continue;
-      const k = input.dataset.c;
-      input.value = (k.startsWith('t') ? v[k].toFixed(3) : v[k].toFixed(1));
     }
   }
 }

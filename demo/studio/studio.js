@@ -22,6 +22,8 @@ import { TPoseEditor } from './editor/tpose-editor.js';
 import { ControlRig } from './editor/control-rig.js';
 import { Picker } from './editor/picker.js';
 import { PoseTools } from './editor/pose-tools.js';
+import { ChannelBox, channels } from './editor/channel-box.js';
+import { quatEuler } from './viewer/keyframes.js';
 
 const $ = (id) => document.getElementById(id);
 const status = (text, error = false) => {
@@ -306,6 +308,20 @@ motionPanel.rigRow = () => controlRig.pickedKeyFrames();
 motionPanel.moveRigKey = (f, delta) => controlRig.moveKey(f, delta);
 const poseTools = new PoseTools({ $, player, motionPanel, status, getCharacter: () => character, selectedJoint: () => selected });
 poseTools.onKeyed = () => keyPanel.updateInfo();
+
+// Channel box: T-pose editing, the picked rig control, anim layer keys, else the joint (read only).
+const channelBox = new ChannelBox({ host: $('channel-box'), viewport });
+channelBox.add(() => tposeEditor.channelSpec());
+channelBox.add(() => (tposeEditor.active ? null : controlRig.channelSpec()));
+channelBox.add(() => keyPanel.channelSpec());
+channelBox.add(() => {
+  const j = character?.joints[selected];
+  if (!j || tposeEditor.active) return null;
+  const b = j.bone, e = quatEuler(b.quaternion, [0, 0, 0]);
+  const v = { tx: b.position.x, ty: b.position.y, tz: b.position.z, rx: e[0], ry: e[1], rz: e[2], sx: b.scale.x, sy: b.scale.y, sz: b.scale.z };
+  return { id: `joint:${j.name}`, title: j.name, subtitle: 'local transform (read only) · select an anim layer to key it',
+    channels: channels(v, ['tx', 'ty', 'tz', 'rx', 'ry', 'rz', 'sx', 'sy', 'sz'], true) };
+});
 controlRig.onPick = (p) => { if (p) select(-1, true); picker.render(); motionPanel.renderTimeline(); };
 const shownBeforeRig = motionPanel.onShown;
 motionPanel.onShown = () => { shownBeforeRig?.(); controlRig.renderPanel(); picker.render(); };
@@ -520,4 +536,4 @@ if (params.get('load')) {
 }
 
 // Debug hook for automated checks: /studio/?debug=1 exposes the main objects.
-if (new URLSearchParams(location.search).get('debug') === '1') window.__studio = { THREE, player, motionPanel, keyPanel, retargetPanel, tposeEditor, controlRig, poseTools, picker, getCharacter: () => character, select };
+if (new URLSearchParams(location.search).get('debug') === '1') window.__studio = { THREE, player, motionPanel, keyPanel, retargetPanel, tposeEditor, controlRig, poseTools, picker, channelBox, getCharacter: () => character, select };

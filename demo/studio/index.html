@@ -83,14 +83,18 @@
       <span id="tpose-joint" class="key-joint"></span>
       <span id="tpose-source" class="muted small"></span>
       <span class="button-row">
-        <button id="tpose-auto" class="button small-button" type="button" title="Start again from the automatic T-pose">Reset to automatic</button>
+        <label class="toggle small" title="Mirror every bone edit onto its left / right twin"><input type="checkbox" id="tpose-sym"> Symmetry</label>
+        <button id="tpose-space" class="button small-button" type="button" title="Rotate about the bone's own axes or the world axes">Gizmo: Local</button>
+        <button id="tpose-auto" class="button small-button" type="button" title="Back to the automatic T-pose: every channel at 0">Reset T-pose (0)</button>
+        <button id="tpose-bind" class="button small-button" type="button" title="Start from the character's bind pose (as modelled)">Bind pose</button>
         <button id="tpose-download" class="button small-button" type="button" title="Download the pose as JSON">Download</button>
         <label class="button small-button" title="Load a T-pose JSON">Load<input id="tpose-load" type="file" accept=".json,application/json" hidden></label>
         <button id="tpose-cancel" class="button small-button" type="button" title="Leave without saving (Esc)">Cancel</button>
         <button id="tpose-save" class="button primary small-button" type="button" title="Use this T-pose for retargeting, layers and export">Save T-pose</button>
       </span>
-      <span class="muted small">Purple: the source T-pose, scaled onto the character. Select a bone and rotate it with the gizmo until the character matches; orbit to check from the side.</span>
+      <span class="muted small">Purple: the source T-pose, scaled onto the character. Select a bone and rotate it with the gizmo or the channel box until the character matches; orbit to check from the side.</span>
     </div>
+    <div id="channel-box" class="channel-box" hidden></div>
     <div id="graph-editor" class="graph-editor" hidden>
       <div class="graph-toolbar">
         <strong>Graph editor</strong> <span class="graph-joint muted"></span>
@@ -141,7 +145,6 @@
     <div class="layers-form" id="rig-panel">
       <div id="rig-limbs" class="rig-limbs"><p class="note">Load a character and retarget a motion onto it to use the control rig.</p></div>
       <div id="rig-selected" class="key-joint"></div>
-      <div id="rig-xform" class="rig-xform" hidden></div>
       <div class="button-row">
         <button id="rig-move" class="button small-button on" type="button" title="Move the picked control (W)">Move</button>
         <button id="rig-rotate" class="button small-button" type="button" title="Rotate the picked IK control (E)">Rotate</button>
@@ -164,7 +167,7 @@
         <button id="pose-paste-mirror" class="button small-button" type="button" disabled title="Key the copied pose mirrored (left ↔ right) on the selected anim layer at this frame">Paste mirrored</button>
         <button id="pose-mirror" class="button small-button" type="button" title="Mirror the pose shown (left ↔ right) and key it on the selected anim layer">Mirror</button>
       </div>
-      <p class="note">IK on: the hand / foot follows its box control (keyed), the elbow / knee points at its pole (diamond). Without keys a control follows the animation. Moving a control or typing a Transform value keys it. IK/FK blend: 1 = IK, 0 = FK; key it (◆) to switch over time, and use Match to snap one onto the other first.</p>
+      <p class="note">IK on: the hand / foot follows its box control (keyed), the elbow / knee points at its pole (diamond). Without keys a control follows the animation. Moving a control or typing a value in the channel box keys it. IK/FK blend: 1 = IK, 0 = FK; key it (◆) to switch over time, and use Match to snap one onto the other first.</p>
     </div>
     <div class="panel-head"><h2>Anim layers</h2><span class="button-row"><button id="add-key-layer" class="button small-button" type="button" title="Add an anim layer on top: pose bones with the gizmo and key them">+ Keys</button></span></div>
     <div class="layers-form">

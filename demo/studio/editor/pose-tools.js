@@ -30,8 +30,14 @@ export function mirrorName(name, names) {
   return name;
 }
 
-// Reflection across the YZ plane of a rotation: (x, y, z, w) -> (x, -y, -z, w).
-const mirrorQ = (q) => new THREE.Quaternion(q.x, -q.y, -q.z, q.w);
+// Reflection of a rotation across the plane with normal n (unit): the vector part v becomes
+// 2 (v . n) n - v. For n = X: (x, y, z, w) -> (x, -y, -z, w).
+export function mirrorQuat(q, n = new THREE.Vector3(1, 0, 0)) {
+  const v = new THREE.Vector3(q.x, q.y, q.z);
+  const m = n.clone().multiplyScalar(2 * v.dot(n)).sub(v);
+  return new THREE.Quaternion(m.x, m.y, m.z, q.w);
+}
+const mirrorQ = (q) => mirrorQuat(q);
 
 export class PoseTools {
   constructor({ $, player, motionPanel, status, getCharacter, selectedJoint }) {

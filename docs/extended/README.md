@@ -385,7 +385,13 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     is shown in its T-pose with the source skeleton's T-pose overlaid (purple, on the same
     hips, scaled to the character's hip height and turned to its facing); timeline and
     play bar are hidden. Select a bone and rotate it with the gizmo until the character
-    matches; *Reset to automatic* starts again from the automatic alignment, *Download* /
+    matches (or type / drag the channel box values: the rotation from the automatic T-pose,
+    all 0 = that pose). *Reset T-pose (0)* goes back to the automatic alignment with every
+    channel at 0, *Bind pose* starts from the character's bind pose as modelled.
+    *Symmetry* mirrors every bone edit onto its left / right twin (paired by name; the
+    rotation from the bind pose, reflected across the character's mid plane, so the bind
+    pose should be symmetric); *Gizmo: Local / World* rotates about the bone's axes or the
+    world axes. *Download* /
     *Load* exchange the pose JSON, *Cancel* (Esc) leaves without saving. *Save T-pose*
     makes it the character's **reference pose**: retargeting, layer stacks and export use
     it instead of the automatic alignment (`kmd-anim retarget --reference-pose POSE.json`,
@@ -395,6 +401,13 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     session and saved in scenes; *Use automatic* forgets it.
   - Locally opened `.glb` files are uploaded once, on demand. Bones are matched by glTF
     node index, because three.js rewrites names such as `mixamorig:Hips`.
+- **Channel box** (top right of the viewport, Maya-style): the channels of what is being
+  edited, in every mode — Edit T-pose: the selected bone's rotation from the T-pose; Rig:
+  the picked control (its follow space; Hips / Root: the offset); anim layer: the selected
+  joint's key values at this frame (Additive offset or Override pose); otherwise the
+  selected joint's local transform, read only. Type a value (Enter) or drag a channel's
+  name left / right (Shift ×10, Alt ×0.1); a change keys the object (or poses the bone in
+  Edit T-pose). ▾ folds it.
 - **Layout (after ActionForge).** Left column: *Outliner* (skeleton tree and inspector) |
   *Picker*. Right column: *Animate* (Rig, Anim layers, Attribute editor, Motion) | *Setup*
   (Character & retarget, foot locking, Export, character stats). The chosen tabs are
