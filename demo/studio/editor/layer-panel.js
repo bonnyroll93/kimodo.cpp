@@ -19,7 +19,7 @@ export class LayerPanel {
   render(layers, active) {
     this.container.replaceChildren();
     layers.forEach((l, i) => {
-      const row = el('div', { className: `layer${i === active ? ' active' : ''}${l.enabled ? '' : ' disabled'}${l.muted ? ' muted' : ''}` });
+      const row = el('div', { className: `layer${i === active ? ' active' : ''}${l.enabled ? '' : ' disabled'}${l.muted ? ' muted' : ''}${l.kind === 'keys' ? ' keys' : ''}` });
       row.addEventListener('click', (e) => { if (e.target === row || e.target.classList.contains('layer-index')) this.cb.select(i); });
 
       const enabled = el('input', { type: 'checkbox', checked: l.enabled, title: 'Enabled: off removes the layer from the stack (and from its duration)' });
@@ -43,6 +43,10 @@ export class LayerPanel {
       blend.append(new Option('Override', 'override'), new Option('Additive', 'additive'));
       blend.value = l.blend;
       blend.addEventListener('change', () => this.cb.change(i, { blend: blend.value }));
+      if (l.kind === 'keys') { // keyframe layers are additive offsets
+        blend.replaceChildren(new Option('Keyframes (additive)', 'additive'));
+        blend.disabled = true;
+      }
       const weight = el('input', { type: 'range', min: 0, max: 1, step: 0.01, value: l.weight, title: 'Weight' });
       const weightText = el('span', { className: 'weight-text', textContent: l.weight.toFixed(2) });
       weight.addEventListener('input', () => { weightText.textContent = Number(weight.value).toFixed(2); });
@@ -54,7 +58,7 @@ export class LayerPanel {
       const controls = el('div', { className: 'layer-controls' }, blend, weight, weightText, mask);
 
       const extra = el('div', { className: 'layer-controls' });
-      if (l.blend === 'additive') {
+      if (l.blend === 'additive' && l.kind !== 'keys') {
         const ref = el('select', { title: 'Additive reference pose' });
         ref.append(new Option('Ref: first frame', 'first'), new Option('Ref: rest pose', 'rest'), new Option('Ref: frame…', 'frame'));
         ref.value = /^\d+$/.test(l.reference) ? 'frame' : l.reference;

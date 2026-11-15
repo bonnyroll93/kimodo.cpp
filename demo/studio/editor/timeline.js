@@ -55,6 +55,12 @@ export class Timeline {
       bar.className = 'tl-bar';
       bar.style.width = `${duration > 0 ? Math.min(100, (l.duration / duration) * 100) : 100}%`;
       track.append(bar);
+      for (const t of l.keyTimes ?? []) { // keys of the selected joint on keyframe layers
+        const tick = document.createElement('div');
+        tick.className = 'tl-key';
+        tick.style.left = `${duration > 0 ? Math.min(100, (t / duration) * 100) : 0}%`;
+        track.append(tick);
+      }
       labels.append(label);
       tracks.append(track);
     });

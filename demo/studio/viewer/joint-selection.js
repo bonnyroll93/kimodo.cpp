@@ -10,7 +10,7 @@ export function installJointPicking(viewport, skeletonView, onSelect) {
   canvas.addEventListener('pointerdown', (e) => { if (e.button === 0) down = { x: e.clientX, y: e.clientY }; });
   canvas.addEventListener('pointerup', (e) => {
     if (!down || e.button !== 0) return;
-    if (viewport.editingPath) { down = null; return; } // clicks belong to the path editor
+    if (viewport.editingPath || viewport.gizmoDragging) { down = null; return; } // path editor / bone gizmo
     const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
     down = null;
     if (moved > 4) return;

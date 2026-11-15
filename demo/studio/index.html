@@ -43,13 +43,32 @@
     <input id="filter" class="filter" type="search" placeholder="Filter joints" autocomplete="off">
     <div id="hierarchy" class="tree" role="tree"><p class="muted pad">No character loaded.</p></div>
   </aside>
-  <section class="stage">
+  <section class="stage" id="stage-root">
     <div id="viewport" class="viewport"></div>
     <div id="empty" class="empty">
       <p><strong>Drop a rigged .glb here</strong></p>
       <p class="muted">or use <em>Open GLB</em> / <em>Sample rigs</em>. Orbit: left-drag · Pan: right-drag · Zoom: wheel · Select: click a joint</p>
     </div>
     <div id="drop" class="drop" hidden>Drop to load</div>
+    <div id="graph-editor" class="graph-editor" hidden>
+      <div class="graph-toolbar">
+        <strong>Graph editor</strong> <span class="graph-joint muted"></span>
+        <span class="graph-channels">
+          <button type="button" class="ch" data-channel="rx">rx</button><button type="button" class="ch" data-channel="ry">ry</button><button type="button" class="ch" data-channel="rz">rz</button>
+          <button type="button" class="ch" data-channel="tx">tx</button><button type="button" class="ch" data-channel="ty">ty</button><button type="button" class="ch" data-channel="tz">tz</button>
+        </span>
+        <span class="sep"></span>
+        <button type="button" class="icon-button" data-interp="constant" title="Constant interpolation (selected keys)">Const</button>
+        <button type="button" class="icon-button" data-interp="linear" title="Linear interpolation (selected keys)">Linear</button>
+        <button type="button" class="icon-button" data-interp="bezier" title="Bezier interpolation (selected keys)">Bezier</button>
+        <button type="button" class="icon-button" data-action="auto" title="Automatic (clamped) tangents for the selected keys">Auto tangents</button>
+        <button type="button" class="icon-button" data-action="delete" title="Delete the selected keys (Delete)">Delete</button>
+        <button type="button" class="icon-button" data-action="fit" title="Frame all keys">Fit</button>
+        <button type="button" id="graph-close" class="icon-button" title="Close">✕</button>
+      </div>
+      <canvas></canvas>
+      <div class="graph-help muted">Drag keys (Alt: free time) · drag handles (Alt: break) · double-click: add key · wheel: zoom time (Shift: values) · right-drag: pan · click: seek</div>
+    </div>
     <div id="timeline" class="timeline" hidden></div>
     <div id="playbar" class="playbar" hidden>
       <button id="play" class="button" title="Play / pause (Space)">Play</button>
@@ -59,7 +78,7 @@
     </div>
   </section>
   <aside class="panel" aria-label="Motion and inspector">
-    <div class="panel-head"><h2>Layers</h2><button id="add-layer" class="button small-button" type="button" title="Add a layer on top (copies the active layer's motion)">+ Layer</button></div>
+    <div class="panel-head"><h2>Layers</h2><span class="button-row"><button id="add-layer" class="button small-button" type="button" title="Add a motion layer on top (copies the active layer's motion)">+ Layer</button><button id="add-key-layer" class="button small-button" type="button" title="Add a keyframe layer on top: pose bones with the gizmo and key them">+ Keys</button></span></div>
     <div class="layers-form">
       <div id="layers-list" class="layers-list"></div>
       <p class="note">Top of the list is applied last. Off removes a layer from the stack; M (mute) keeps it on the timeline but silences it.</p>
@@ -89,6 +108,22 @@
     </div>
     <div class="panel-head"><h2>Motion</h2><span id="motion-layer-name" class="muted small"></span></div>
     <div class="motion-form">
+      <div id="key-panel" class="key-panel" hidden>
+        <div class="muted small">Keyframe layer — offsets added on top of the layers below.</div>
+        <div id="key-joint" class="key-joint"></div>
+        <div class="button-row">
+          <button id="key-rotate" class="button small-button on" type="button" title="Rotate gizmo (E)">Rotate</button>
+          <button id="key-translate" class="button small-button" type="button" title="Translate gizmo (W)">Move</button>
+          <button id="key-set" class="button primary small-button" type="button" title="Key the selected joint at the current frame (K)">Key</button>
+          <button id="key-delete" class="button small-button" type="button" title="Delete the selected joint's keys at the current frame">Delete key</button>
+          <label class="toggle"><input type="checkbox" id="key-auto" checked> Auto key</label>
+          <button id="key-graph" class="button small-button" type="button" title="Open the graph editor for the selected joint">Graph editor</button>
+        </div>
+        <div id="key-values" class="muted small"></div>
+        <div class="muted small">Keyed joints:</div>
+        <div id="key-joints" class="button-row"></div>
+      </div>
+      <div id="motion-controls">
       <div class="row source-row">
         <label class="field">Source <select id="motion-source"><option value="">Loading…</option></select></label>
         <button id="refresh-sources" class="button small-button" type="button" title="Reload the list (new generations appear here)">↻</button>
@@ -126,6 +161,7 @@
         </div>
         <label class="toggle"><input type="checkbox" id="orient" checked> Orient root along path</label>
         <p class="note">Post-processing only: the generated steps are not re-timed, so feet may slide when the path speed differs from the walk.</p>
+      </div>
       </div>
       <div class="footlock">
         <div class="row">

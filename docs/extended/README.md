@@ -268,7 +268,8 @@ kimodo::anim::solve_two_bone_ik(skeleton, pose, thigh, calf, foot, target);   //
   0.001 mm, with no frame out of reach. This holds for the generated walk, the walk
   retargeted onto the test rig, a curved path and a path 20% faster than the walk.
 - **Where it applies.** Foot locking is a final step after the layers are baked:
-  `kmd-anim layers … --foot-lock`, `kmd-anim footlock`, `foot_lock` in `/api/layers` and
+  `kmd-anim layers … --key-layer KEYS.json [layer options]   # keyframe offset layer (additive, rest reference)
+kmd-anim layers … --foot-lock`, `kmd-anim footlock`, `foot_lock` in `/api/layers` and
   `/api/export`, and the *Foot locking (IK)* option in the studio. So it also applies to
   the exported GLB. The studio draws a print at each pinned position and a row of contact
   bars per foot in the timeline.
@@ -401,6 +402,24 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     from the file, so you can compare it with the preview.
   - Any loaded GLB that contains animations shows an *Embedded animation* selector. These
     animations play through three.js' `AnimationMixer`, on the same play bar.
+- **Keyframe layers.** *+ Keys* adds a keyframe layer on top of the stack. It holds
+  offsets added to the layers below, so joints without keys are untouched.
+  - Select a bone of the character (viewport or hierarchy) and pose it with the gizmo:
+    *Rotate* (E) or *Move* (W).
+  - *Key* (K) records the selected joint at the current frame; *Auto key* records every
+    gizmo edit. *Delete key* removes the keys at the current frame.
+  - Keyed joints are listed, and their keys appear as diamonds on the layer's timeline row.
+  - **Graph editor**: the curves of the selected joint. rx/ry/rz are rotation offsets in
+    degrees (Euler XYZ); tx/ty/tz are translation offsets in parent units.
+    - Drag keys (frames snap; Alt: free), drag bezier handles (manual tangents, aligned;
+      Alt breaks them), double-click to add a key, Delete to remove.
+    - Constant / Linear / Bezier / Auto tangents apply to the selected keys.
+    - Wheel zooms time (Shift: values), right-drag pans, a click seeks.
+  - The curves are evaluated by the same rules in the graph editor (`viewer/keyframes.js`)
+    and in `kmd-anim` (`include/kimodo/anim/keyframes.hpp`), so the bake and the export
+    match what you see.
+  - Gizmo edits are exact when the keyframe layer is the top layer at weight 1, which is
+    how *+ Keys* adds it.
 - **Scenes.** *Save scene* downloads the whole studio state as JSON:
   - the character reference;
   - every layer (source, root motion, path waypoints, blend, weight, mask or custom mask,

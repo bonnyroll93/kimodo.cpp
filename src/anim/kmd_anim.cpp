@@ -17,6 +17,7 @@
 #include <kimodo/anim/gltf.hpp>
 #include <kimodo/anim/gltf_export.hpp>
 #include <kimodo/anim/ik.hpp>
+#include <kimodo/anim/keyframes.hpp>
 #include <kimodo/anim/layers.hpp>
 #include <kimodo/anim/retarget.hpp>
 #include <kimodo/anim/root_motion.hpp>
@@ -103,6 +104,7 @@ int usage() {
                  "           --layer DIR [--name S] [--mode override|additive] [--weight W]\n"
                  "                       [--mask full|upper|lower|MASK.json] [--disabled] [--muted]\n"
                  "                       [--reference first|rest|FRAME] [--wrap clamp|loop]  (repeat per layer)\n"
+                 "           --key-layer KEYS.json [same layer options]   keyframe offset layer (additive)\n"
                  "       DIR is a clip directory (clip.json/retarget.json) or a native motion directory;\n"
                  "       layers are applied bottom to top in command-line order. OUT_DIR gets clip.json,\n"
                  "       local_rotations_xyzw.f32, local_translations.f32 (+ root_positions.f32 if --native).\n"
@@ -396,6 +398,7 @@ int layers_command(int argc, char **argv) {
     struct Pending {
         AnimationLayer layer;
         std::filesystem::path dir;
+        std::filesystem::path keys; // keyframe layer (JSON) instead of a motion directory
         std::string mask = "full";
         std::string reference = "first";
     };
@@ -429,9 +432,9 @@ int layers_command(int argc, char **argv) {
             fps = std::stof(value());
         } else if (arg == "--input-fps") {
             input_fps = std::stof(value());
-        } else if (arg == "--layer") {
+        } else if (arg == "--layer" || arg == "--key-layer") {
             Pending p;
-            p.dir = value();
+            (arg == "--layer" ? p.dir : p.keys) = value();
             p.layer.name = "layer " + std::to_string(pending.size() + 1);
             pending.push_back(std::move(p));
         } else if (arg == "--name") {
@@ -474,9 +477,23 @@ int layers_command(int argc, char **argv) {
     summary << "[";
     for (std::size_t i = 0; i < pending.size(); ++i) {
         Pending &p = pending[i];
-        auto clip = read_layer_input(p.dir, input_fps);
-        if (!clip) throw std::runtime_error(p.layer.name + ": " + clip.error());
-        p.layer.clip = std::move(*clip);
+        std::string layer_warnings;
+        if (!p.keys.empty()) {
+            // Keyframe layer: offset curves sampled on the stack skeleton, applied additively
+            // against the rest pose (so unkeyed joints and zero offsets change nothing).
+            auto tracks = load_keyframes(p.keys);
+            if (!tracks) throw std::runtime_error(p.layer.name + ": " + tracks.error());
+            auto kc = keyframe_clip(*tracks, *skeleton);
+            if (!kc) throw std::runtime_error(p.layer.name + ": " + kc.error());
+            p.layer.clip = std::move(kc->clip);
+            p.layer.mode = BlendMode::Additive;
+            p.reference = "rest";
+            layer_warnings = string_list(kc->warnings);
+        } else {
+            auto clip = read_layer_input(p.dir, input_fps);
+            if (!clip) throw std::runtime_error(p.layer.name + ": " + clip.error());
+            p.layer.clip = std::move(*clip);
+        }
         if (p.mask == "full") p.layer.mask = full_body_mask();
         else if (p.mask == "upper") p.layer.mask = upper_body_mask(*skeleton);
         else if (p.mask == "lower") p.layer.mask = lower_body_mask(*skeleton);
@@ -496,7 +513,8 @@ int layers_command(int argc, char **argv) {
                 << ",\"fps\":" << num(l.clip.fps) << ",\"duration\":" << num(l.clip.duration()) << ",\"mode\":\""
                 << (l.mode == BlendMode::Override ? "override" : "additive") << "\",\"weight\":" << num(l.weight)
                 << ",\"enabled\":" << (l.enabled ? "true" : "false") << ",\"muted\":" << (l.muted ? "true" : "false")
-                << ",\"mask\":" << quote(l.mask.name) << "}";
+                << ",\"mask\":" << quote(l.mask.name) << ",\"keys\":" << (p.keys.empty() ? "false" : "true")
+                << (layer_warnings.empty() ? "" : ",\"warnings\":" + layer_warnings) << "}";
         if (auto ok = stack.add_layer(std::move(p.layer)); !ok) throw std::runtime_error(ok.error());
     }
     summary << "]";

@@ -6,6 +6,7 @@
 import { LayerPanel } from './layer-panel.js';
 import { MaskEditor } from './animation-mask.js';
 import { Timeline } from './timeline.js';
+import { emptyTracks, keyFrames } from '../viewer/keyframes.js';
 
 // Preset paths on the ground plane (x, z in metres), starting at the origin and heading +Z.
 const circle = Array.from({ length: 8 }, (_, k) => {
@@ -126,6 +127,12 @@ export class MotionPanel {
       onVisual: (weightOf) => this.onMaskVisual?.(weightOf),
       presets: () => this.maskPresets(),
     });
+    $('add-key-layer').addEventListener('click', () => {
+      const base = this.layers.find((l) => l.kind !== 'keys') ?? this.layers[0];
+      this.layers.push({ ...newLayer(this.layers.length, { ...base.config }), name: 'Keys', kind: 'keys', keys: emptyTracks(), blend: 'additive', reference: 'rest' });
+      this.select(this.layers.length - 1);
+      this.schedule();
+    });
     this.timeline = new Timeline($('timeline'), { select: (i) => this.select(i), seek: (t) => onSeek?.(t) });
     this.writeForm(this.layers[0].config);
     this.renderLayers();
@@ -188,6 +195,7 @@ export class MotionPanel {
   select(i, rerender = true) {
     this.active = i;
     this.writeForm(this.activeLayer.config);
+    this.$('motion-controls').hidden = this.activeLayer.kind === 'keys';
     this.$('motion-layer-name').textContent = `${i + 1}. ${this.activeLayer.name}`;
     this.showMaskEditor();
     if (rerender) this.renderLayers();
@@ -257,9 +265,23 @@ export class MotionPanel {
     };
   }
 
+  // Recompute the key ticks shown on keyframe-layer rows (selected joint changed / keys edited).
+  refreshKeyTicks() {
+    if (!this.timelineData) return;
+    const joint = this.keyJoint?.(), fps = this.player.fps;
+    for (const l of this.timelineData.layers) l.keyTimes = l.keys && joint ? keyFrames(l.keys, joint).map((f) => f / fps) : [];
+    this.timeline.set({ ...this.timelineData, active: this.active });
+  }
+
+  // The first enabled motion (non-keyframe) layer: drives overlays and the source skeleton.
+  baseIndex() {
+    const i = this.layers.findIndex((l) => l.enabled && l.kind !== 'keys');
+    return i >= 0 ? i : Math.max(0, this.layers.findIndex((l) => l.kind !== 'keys'));
+  }
+
   isSimple() {
     const l = this.layers[0];
-    return !this.$('foot-lock').checked && this.layers.length === 1 && l.blend === 'override' && l.weight === 1 && l.mask === 'full' && l.enabled && !l.muted;
+    return !this.$('foot-lock').checked && this.layers.length === 1 && l.kind !== 'keys' && l.blend === 'override' && l.weight === 1 && l.mask === 'full' && l.enabled && !l.muted;
   }
 
   // ----- sources / requests -----------------------------------------------------------
@@ -313,6 +335,10 @@ export class MotionPanel {
   stackRequest() { return this.layers.map((l, i) => this.layerRequest(l, i)); }
 
   layerRequest(l, i) {
+    if (l.kind === 'keys') {
+      const mask = l.mask === 'custom' ? (l.customMask || { version: 1, name: 'custom', default: 1, weights: {} }) : l.mask;
+      return { name: l.name || `Keys ${i + 1}`, keys: l.keys, weight: l.weight, mask, enabled: l.enabled, muted: l.muted, wrap: l.wrap };
+    }
     const mask = l.mask === 'custom' ? (l.customMask || { version: 1, name: 'custom', default: 1, weights: {} }) : l.mask;
     return {
       name: l.name || `Layer ${i + 1}`, root_motion: this.rootMotionRequest(l.config), mode: l.blend, weight: l.weight,
@@ -358,12 +384,12 @@ export class MotionPanel {
 
   async apply() {
     const ticket = ++this.request;
-    const missing = this.layers.findIndex((l) => !l.config.source);
+    const missing = this.layers.findIndex((l) => l.kind !== 'keys' && !l.config.source);
     if (missing >= 0) {
       if (this.layers.length > 1) this.status(`Layer ${missing + 1} has no motion source`, true);
       return;
     }
-    const keys = new Set(this.layers.map((l) => this.sources?.get(l.config.source)?.skeleton_key));
+    const keys = new Set(this.layers.filter((l) => l.kind !== 'keys').map((l) => this.sources?.get(l.config.source)?.skeleton_key));
     try {
       if (keys.size !== 1) throw new Error('all layers must use motions of the same skeleton');
       const [key] = keys;
@@ -400,16 +426,18 @@ export class MotionPanel {
   async applyStack(rt) {
     const foot_lock = this.footLockRequest();
     const body = await postJSON('/api/layers', { layers: this.layers.map((l, i) => this.layerRequest(l, i)), ...(rt || {}), ...(foot_lock ? { foot_lock } : {}) });
-    const base = Math.max(0, this.layers.findIndex((l) => l.enabled));
-    const act = body.layers[this.active], baseRm = body.layers[base].root_motion;
+    const base = this.baseIndex();
+    // Overlays follow the active layer, or the base layer when a keyframe layer is active.
+    const shown = this.activeLayer.kind === 'keys' ? base : this.active;
+    const act = body.layers[shown], baseRm = body.layers[base].root_motion;
     const [rotations, translations, stackRoot, baseRoot, baseRot, actRoot, samples, sourceRoot] = await Promise.all([
       f32(body.rotations), f32(body.translations), body.native ? f32(body.root) : null,
       body.native ? null : f32(baseRm.root), body.native ? null : f32(baseRm.rotations),
       f32(act.root_motion.root), act.root_motion.path ? f32(act.root_motion.path) : null,
-      this.sourceRoot(this.activeLayer.config.source),
+      this.sourceRoot(this.layers[shown].config.source),
     ]);
     const meta = body.meta;
-    const activeReq = this.rootMotionRequest(this.activeLayer.config);
+    const activeReq = this.rootMotionRequest(this.layers[shown].config);
     return {
       // Native stacks play on the source skeleton; character stacks show the base layer's
       // source motion beside the character.
@@ -419,7 +447,8 @@ export class MotionPanel {
         samples, waypoints: activeReq.path?.points ?? [], sourceRoot, resultRoot: actRoot,
         meta: body.native ? null : JSON.parse(JSON.stringify(body.layers[base].retarget)),
       },
-      layers: meta.layers.map((l, i) => ({ name: l.name, duration: l.duration, enabled: l.enabled, muted: l.muted, index: i })),
+      layers: meta.layers.map((l, i) => ({ name: l.name, duration: l.duration, enabled: l.enabled, muted: l.muted, index: i,
+        keys: this.layers[i]?.kind === 'keys' ? this.layers[i].keys : null })),
       footLock: meta.foot_lock ?? null,
       fps: meta.fps,
       summary: `${this.layers.length} layer${this.layers.length === 1 ? '' : 's'}, ${meta.frames} frames${meta.foot_lock ? ', feet locked' : ''}`,
@@ -451,6 +480,9 @@ export class MotionPanel {
     // The joint list for a custom mask is known now (character or source skeleton).
     if (this.activeLayer.mask === 'custom') this.showMaskEditor();
     const fps = r.fps || this.player.fps;
+    // Keyframe layers show the keys of the joint being edited.
+    const joint = this.keyJoint?.();
+    for (const l of r.layers) l.keyTimes = l.keys && joint ? keyFrames(l.keys, joint).map((f) => f / fps) : [];
     this.timelineData = {
       layers: r.layers, duration: this.player.duration,
       contacts: fl ? fl.contacts.map((c) => ({ foot: c.foot, start: c.start / fps, end: c.end / fps })) : null,

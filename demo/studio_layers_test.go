@@ -109,6 +109,28 @@ func TestLayersEndpoint(t *testing.T) {
 		t.Fatalf("masks: %d %s", maskRec.Code, maskRec.Body.String())
 	}
 
+	// Keyframe layer on top of the character stack: a 45 degree forearm offset.
+	keyed := post(`{"character":"sample:test_rig.glb","layers":[{"root_motion":` + walk + `},
+		{"name":"pose fix","keys":{"version":1,"fps":30,"tracks":{"LeftForeArm":{"rx":[{"f":0,"v":45}]}}}}]}`)
+	var keyedRes struct {
+		Meta struct {
+			Layers []struct {
+				Keys bool   `json:"keys"`
+				Mode string `json:"mode"`
+			} `json:"layers"`
+		} `json:"meta"`
+	}
+	if keyed.Code != http.StatusOK || json.Unmarshal(keyed.Body.Bytes(), &keyedRes) != nil || len(keyedRes.Meta.Layers) != 2 ||
+		!keyedRes.Meta.Layers[1].Keys || keyedRes.Meta.Layers[1].Mode != "additive" {
+		t.Fatalf("keyframe layer: %d %s", keyed.Code, keyed.Body.String())
+	}
+	if rec := post(`{"layers":[{"keys":{"version":1,"tracks":{}}}]}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("native stack of keys only: %d", rec.Code)
+	}
+	if rec := post(`{"character":"sample:test_rig.glb","layers":[{"keys":{"version":1,"tracks":{"Hips":{"rx":[{"f":0,"v":1,"i":"cubic"}]}}}}]}`); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid keys: %d %s", rec.Code, rec.Body.String())
+	}
+
 	for _, bad := range []string{
 		`{"foot_lock":{"enabled":true,"height":-1},"layers":[{"root_motion":` + walk + `}]}`,
 		`{"layers":[]}`,

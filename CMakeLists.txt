@@ -110,7 +110,7 @@ if(KIMODO_BUILD_ANIM)
     src/anim/types.cpp src/anim/skeleton.cpp src/anim/gltf_import.cpp src/anim/cgltf_impl.cpp
     src/anim/clip.cpp src/anim/root_motion.cpp src/anim/motion_path.cpp
     src/anim/retarget_mapping.cpp src/anim/retarget.cpp src/anim/layers.cpp src/anim/gltf_export.cpp
-    src/anim/ik.cpp)
+    src/anim/ik.cpp src/anim/keyframes.cpp)
   add_library(kimodo::anim ALIAS kimodo_anim)
   target_include_directories(kimodo_anim
     PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
@@ -180,6 +180,9 @@ if(BUILD_TESTING AND KIMODO_BUILD_TESTS AND KIMODO_BUILD_ANIM)
   set_tests_properties(kimodo-anim-footlock-cli PROPERTIES PASS_REGULAR_EXPRESSION "\"unreachable_frames\":0,")
   add_test(NAME kimodo-anim-masks-cli COMMAND kmd-anim masks --character "${KIMODO_TEST_RIGS}/test_rig.glb")
   set_tests_properties(kimodo-anim-masks-cli PROPERTIES PASS_REGULAR_EXPRESSION "\"name\": \"upper\"")
+  add_executable(kimodo-anim-keyframes-test tests/anim/anim_keyframes_test.cpp)
+  target_link_libraries(kimodo-anim-keyframes-test PRIVATE kimodo_anim)
+  add_test(NAME kimodo-anim-keyframes-test COMMAND kimodo-anim-keyframes-test "${KIMODO_TEST_WALK}")
   add_test(NAME kimodo-anim-map-cli COMMAND kmd-anim map soma30 "${KIMODO_TEST_RIGS}/test_rig.glb")
   set_tests_properties(kimodo-anim-map-cli PROPERTIES PASS_REGULAR_EXPRESSION "\"target\": \"LeftLeg\",[ \r\n]*\"source\": \"LeftShin\"")
 endif()

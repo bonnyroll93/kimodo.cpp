@@ -13,6 +13,7 @@ import { RetargetPanel } from './editor/retarget-panel.js';
 import { ExportPanel } from './editor/export-panel.js';
 import { PathEditor } from './viewer/path-editor.js';
 import { SceneFile } from './editor/scene-file.js';
+import { KeyPanel } from './editor/key-panel.js';
 
 const $ = (id) => document.getElementById(id);
 const status = (text, error = false) => {
@@ -37,6 +38,7 @@ function select(index) {
   if (mask?.picking && mask.visible && character && index >= 0 && retargetPanel.enabled)
     mask.toggleJoint(character.joints[index].name, shiftDown);
   selected = character && index >= 0 && index < character.joints.length ? index : -1;
+  keyPanel?.setJoint(selected);
   skeletonView.select(selected);
   hierarchy.select(selected);
   inspector.showJoint(character, selected);
@@ -204,6 +206,16 @@ const exportPanel = new ExportPanel({
   },
 });
 
+// Keyframe layers: bone gizmo, Key / Auto key and the graph editor.
+const keyPanel = new KeyPanel({
+  $, viewport, player, status, motionPanel, retarget: retargetPanel,
+  getCharacter: () => character, onSelectJoint: (i) => select(i),
+});
+motionPanel.keyJoint = () => keyPanel.jointName();
+const syncKeys = () => keyPanel.sync();
+const previousShown = motionPanel.onShown;
+motionPanel.onShown = () => { previousShown?.(); syncKeys(); };
+
 const sceneFile = new SceneFile({
   $, status, viewport, player, motionPanel, retargetPanel, exportPanel, applyVisibility, clearCharacter,
   getCharacter: () => character,
@@ -308,6 +320,12 @@ if (new URLSearchParams(location.search).get('scene')) {
   fetch(new URLSearchParams(location.search).get('scene'))
     .then((r) => r.json())
     .then((scene) => sceneFile.restore(scene, 'linked scene'))
+    .then(() => {
+      const q = new URLSearchParams(location.search);
+      const i = character?.joints.findIndex((j) => j.name === q.get('joint')) ?? -1;
+      if (i >= 0) select(i);
+      if (q.get('graph') === '1') keyPanel.toggleGraph(true);
+    })
     .catch((err) => status(`Cannot open the linked scene: ${err.message || err}`, true));
 }
 

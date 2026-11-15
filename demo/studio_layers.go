@@ -28,6 +28,7 @@ type layerRequest struct {
 	Muted      bool              `json:"muted,omitempty"`
 	Reference  string            `json:"reference,omitempty"` // first (default) | rest | frame index
 	Wrap       string            `json:"wrap,omitempty"`      // clamp (default) | loop
+	Keys       json.RawMessage   `json:"keys,omitempty"`      // keyframe layer: offset curves instead of a motion
 }
 
 type footLockRequest struct {
@@ -170,6 +171,20 @@ func (c studioConfig) layers(ctx context.Context, req layersRequest) (layersResu
 	for i, l := range req.Layers {
 		prefix := "layer " + num(float64(i+1)) + ": "
 		var dir string
+		if len(l.Keys) > 0 && string(l.Keys) != "null" {
+			// Keyframe layer: curves stored by content hash, sampled by kmd-anim on the stack skeleton.
+			path, herr := c.storeJSON("keys", l.Keys)
+			if herr != nil {
+				return layersResult{}, &httpError{herr.status, prefix + herr.message}
+			}
+			opts, herr := c.layerArgs(l, i)
+			if herr != nil {
+				return layersResult{}, herr
+			}
+			layerArgs = append(append(layerArgs, "--key-layer", path), opts...)
+			key = append(append(key, path), opts...)
+			continue
+		}
 		if req.Character != "" {
 			rt, herr := c.retarget(ctx, retargetRequest{RootMotion: l.RootMotion, Character: req.Character, Mapping: req.Mapping, AlignRest: req.AlignRest})
 			if herr != nil {
@@ -197,6 +212,8 @@ func (c studioConfig) layers(ctx context.Context, req layersRequest) (layersResu
 	}
 	if characterPath != "" {
 		args = append(args, "--character", characterPath)
+	} else if skeleton == "" {
+		return layersResult{}, &httpError{http.StatusBadRequest, "without a character the stack needs at least one motion layer"}
 	} else {
 		args = append(args, "--native", skeleton)
 	}
