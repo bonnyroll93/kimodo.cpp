@@ -43,7 +43,7 @@ export class History {
       length: mp.sceneLength,
       rootScope: mp.rootScope,
       sceneRoot: mp.sceneRoot,
-      retarget: { on: $('retarget-on').checked, align: $('align-rest').checked, mapping: this.retarget.mapping ?? null },
+      retarget: { on: $('retarget-on').checked, align: $('align-rest').checked, mapping: this.retarget.mapping ?? null, pose: this.retarget.referencePose ?? null },
       foot: { on: $('foot-lock').checked, hips: $('hip-adjust').checked, h: $('foot-height').value, s: $('foot-speed').value, b: $('foot-blend').value },
       exportName: $('export-name').value,
     });
@@ -100,6 +100,8 @@ export class History {
       $('retarget-on').checked = s.retarget.on && !!this.retarget.character?.joints.length;
       $('align-rest').checked = s.retarget.align;
       this.retarget.mapping = s.retarget.mapping;
+      this.retarget.referencePose = s.retarget.pose ?? null;
+      this.retarget.syncPose();
       this.retarget.sync();
       this.retarget.renderEditor();
       $('foot-lock').checked = s.foot.on;

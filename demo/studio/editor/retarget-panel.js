@@ -20,6 +20,7 @@ export class RetargetPanel {
 
     $('retarget-on').addEventListener('change', () => { this.sync(); this.onChange(); });
     $('align-rest').addEventListener('change', () => { this.alignTouched = true; this.showTPose(false); this.onChange(); });
+    $('clear-tpose').addEventListener('click', () => { this.setReferencePose(null); this.status('Using the automatic T-pose again'); });
     $('show-tpose').addEventListener('click', () => this.showTPose(!this.tposeShown).catch((e) => this.status(`T-pose preview: ${e.message || e}`, true)));
     $('edit-mapping').addEventListener('click', () => {
       $('mapping-editor').hidden = !$('mapping-editor').hidden;
@@ -66,8 +67,10 @@ export class RetargetPanel {
     this.alignTouched = false; // the bind-pose check may turn alignment on for a new character
     this.poseInfo = null;
     this.$('pose-status').textContent = '';
+    this.syncPose();
     this.upload = upload;
     this.mapping = this.mappingCache.get(this.cacheKey()) ?? null;
+    this.referencePose = this.poseCache?.get(this.character?.name ?? '') ?? null; // edited T-pose, per character
     this.diagnostics(null);
     if (character && character.joints.length) this.$('retarget-on').checked = true;
     this.sync();
@@ -128,7 +131,8 @@ export class RetargetPanel {
   async request() {
     if (!this.enabled) return null;
     const mapping = await this.ensureMapping();
-    return { character: await this.ensureCharacterId(), mapping, align_rest: this.$('align-rest').checked };
+    return { character: await this.ensureCharacterId(), mapping, align_rest: this.$('align-rest').checked,
+      ...(this.referencePose ? { reference_pose: this.referencePose } : {}) };
   }
 
   // Bind pose check: not a T-pose -> retarget from the T-pose (unless the user chose otherwise).
@@ -142,7 +146,26 @@ export class RetargetPanel {
       $('align-rest').checked = true;
       this.status(`${this.character.name}: bind pose is an ${info.label} (${arms}) — retargeting from its T-pose ("Retarget from T-pose" turned on)`);
     }
-    $('pose-status').textContent = `Bind pose: ${info.label} (${arms})${info.tpose ? '' : $('align-rest').checked ? ' → retargeted from the T-pose' : ' — turn on "Retarget from T-pose"'}`;
+    const tail = this.referencePose ? ' → retargeted from your edited T-pose'
+      : info.tpose ? '' : $('align-rest').checked ? ' → retargeted from the T-pose' : ' — turn on "Retarget from T-pose"';
+    $('pose-status').textContent = `Bind pose: ${info.label} (${arms})${tail}`;
+  }
+
+  // The character's hand-edited T-pose (null: the automatic one); remembered per character.
+  setReferencePose(pose) {
+    this.referencePose = pose;
+    this.poseCache ??= new Map();
+    if (this.character) this.poseCache.set(this.character.name, pose);
+    this.checkPose();
+    this.syncPose();
+    this.onChange();
+  }
+
+  syncPose() {
+    const custom = !!this.referencePose;
+    this.$('align-rest').disabled = custom;
+    this.$('clear-tpose').hidden = !custom;
+    this.$('edit-tpose').textContent = custom ? 'Edit T-pose (custom)' : 'Edit T-pose';
   }
 
   // T-pose preview: the character as the retargeting sees it at the source's rest.
@@ -159,7 +182,8 @@ export class RetargetPanel {
       return;
     }
     if (!this.character || !this.skeletonKey) throw new Error('load a character and a motion first');
-    const body = { character: await this.ensureCharacterId(), skeleton: this.skeletonKey, mapping: await this.ensureMapping() };
+    const body = { character: await this.ensureCharacterId(), skeleton: this.skeletonKey, mapping: await this.ensureMapping(),
+      ...(this.referencePose ? { reference_pose: this.referencePose } : {}) };
     const r = await fetch('/api/retarget/tpose', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const res = await r.json();
     if (!r.ok) throw new Error(res.error || `HTTP ${r.status}`);

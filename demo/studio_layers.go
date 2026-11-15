@@ -118,6 +118,7 @@ type layersRequest struct {
 	Character string           `json:"character,omitempty"`
 	Mapping   json.RawMessage  `json:"mapping,omitempty"`
 	AlignRest bool             `json:"align_rest,omitempty"`
+	ReferencePose json.RawMessage `json:"reference_pose,omitempty"` // the character's edited T-pose
 	Layers    []layerRequest   `json:"layers"`
 	FootLock  *footLockRequest `json:"foot_lock,omitempty"`
 	Length    float64          `json:"length,omitempty"` // scene length override in seconds (0: the stack's)
@@ -310,7 +311,7 @@ func (c studioConfig) layers(ctx context.Context, req layersRequest) (layersResu
 			continue
 		}
 		if req.Character != "" {
-			rt, herr := c.retarget(ctx, retargetRequest{RootMotion: l.RootMotion, Character: req.Character, Mapping: req.Mapping, AlignRest: req.AlignRest})
+			rt, herr := c.retarget(ctx, retargetRequest{RootMotion: l.RootMotion, Character: req.Character, Mapping: req.Mapping, AlignRest: req.AlignRest, ReferencePose: req.ReferencePose})
 			if herr != nil {
 				return layersResult{}, &httpError{herr.status, prefix + herr.message}
 			}

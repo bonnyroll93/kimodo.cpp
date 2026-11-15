@@ -351,6 +351,27 @@ void mixamo_apose_tests(const Skeleton &soma, const Skeleton &rig) {
     const auto ga = forward_kinematics(rig, aligned->clip.frame(0));
     CHECK(near(normalize(gp[lf].translation - gp[la].translation), rest_dir, 1.e-4F)); // keeps the A-pose
     CHECK(std::fabs(normalize(ga[lf].translation - ga[la].translation).y) < .05F);      // T-pose like the source
+
+    // Reference pose: the aligned T-pose given explicitly reproduces the alignment ...
+    RetargetOptions ref;
+    ref.reference_pose.emplace();
+    for (std::size_t t = 0; t < rig.size(); ++t) ref.reference_pose->rotations[rig.joints[t].name] = aligned->clip.at(0, t).rotation;
+    auto with_ref = retarget(reference_frame(soma), soma, rig, m, ref);
+    CHECK(with_ref.has_value());
+    if (with_ref)
+        for (std::size_t t = 0; t < rig.size(); ++t)
+            CHECK(angle_between(with_ref->clip.at(0, t).rotation, aligned->clip.at(0, t).rotation) < 1.e-3F);
+    // ... and a hand edit (left upper arm raised 20 degrees more in the T-pose) means the source
+    // rest maps to that edited pose.
+    const Quat raise = Quat::from_axis_angle({0, 0, 1}, .35F);
+    ref.reference_pose->rotations["mixamorig:LeftArm"] = normalize(aligned->clip.at(0, la).rotation * raise);
+    auto edited = retarget(reference_frame(soma), soma, rig, m, ref);
+    CHECK(edited.has_value());
+    if (edited) CHECK(angle_between(edited->clip.at(0, la).rotation, ref.reference_pose->rotations["mixamorig:LeftArm"]) < 1.e-3F);
+    // JSON.
+    auto parsed = reference_pose_from_json(R"({"format":"kimodo-reference-pose","version":1,"joints":{"A":[0,0,0,2]}})");
+    CHECK(parsed && parsed->rotations.at("A").w == 1.F);
+    CHECK(!reference_pose_from_json(R"({"joints":{"A":[0,0,0]}})").has_value());
 }
 } // namespace
 

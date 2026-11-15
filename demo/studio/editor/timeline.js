@@ -5,6 +5,7 @@
 //   row: select it (the attribute editor shows its settings) · click empty space: seek.
 // Overlapping clips on the same track cross-fade over the overlap (shown as a gradient).
 // Times snap to frames (Shift: free).
+// Scrubbing: drag in the frame ruler (top row) or grab the playhead's handle and drag.
 // Keyframes (◆ on anim-layer rows; the selected joint's keys, or every keyed frame when no
 // joint is selected): click selects (Shift: add / remove) and seeks, drag moves the
 // selected keys in time, Delete removes them.
@@ -22,6 +23,10 @@ export class Timeline {
     this.layers = [];
     this.playhead = document.createElement('div');
     this.playhead.className = 'tl-playhead';
+    const handle = document.createElement('div');
+    handle.className = 'tl-playhead-handle';
+    handle.title = 'Drag to scrub';
+    this.playhead.append(handle);
     this.drag = null;
     container.addEventListener('pointerdown', (e) => this.down(e));
     container.addEventListener('pointermove', (e) => this.move(e));
@@ -86,6 +91,24 @@ export class Timeline {
     const tracks = document.createElement('div');
     tracks.className = 'tl-tracks';
     this.tracksEl = tracks;
+    // Frame ruler: drag in it to scrub.
+    const rulerLabel = document.createElement('div');
+    rulerLabel.className = 'tl-label ruler';
+    rulerLabel.textContent = 'Frames';
+    const ruler = document.createElement('div');
+    ruler.className = 'tl-track tl-ruler';
+    ruler.title = 'Drag to scrub';
+    const frames = this.duration * this.fps;
+    const step = [1, 2, 5, 10, 15, 30, 60, 150, 300, 600].find((s) => frames / s <= 16) ?? 1200;
+    for (let f = 0; f <= frames + 1e-6; f += step) {
+      const tick = document.createElement('span');
+      tick.className = 'tl-tick';
+      tick.style.left = this.pct(f / this.fps);
+      tick.textContent = f;
+      ruler.append(tick);
+    }
+    labels.append(rulerLabel);
+    tracks.append(ruler);
     // Anim layers (applied last) on top, then tracks from the highest down.
     const keyLayers = [...this.layers.keys()].filter((i) => this.layers[i]?.kind === 'keys').reverse();
     for (const i of keyLayers) {
@@ -234,7 +257,14 @@ export class Timeline {
   }
 
   down(e) {
+    if (this.tracksEl && e.target.closest('.tl-playhead-handle')) { // grab the playhead: scrub
+      this.container.setPointerCapture(e.pointerId);
+      this.drag = { seek: true };
+      this.container.classList.add('scrubbing');
+      return;
+    }
     if (!this.tracksEl || !e.target.closest('.tl-track')) return;
+    if (e.target.closest('.tl-ruler')) this.container.classList.add('scrubbing');
     const tick = e.target.closest('.tl-key');
     if (tick) {
       this.container.setPointerCapture(e.pointerId);
@@ -328,6 +358,7 @@ export class Timeline {
   up() {
     const d = this.drag;
     this.drag = null;
+    this.container.classList.remove('scrubbing');
     if (d?.keys) {
       if (d.delta) {
         const frames = [...this.keySel.frames];

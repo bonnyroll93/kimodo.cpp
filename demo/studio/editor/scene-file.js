@@ -46,6 +46,7 @@ export class SceneFile {
       retarget: {
         enabled: $('retarget-on').checked, align_rest: $('align-rest').checked,
         mapping: retargetPanel.mapping ? structuredClone(retargetPanel.mapping) : null,
+        reference_pose: retargetPanel.referencePose ?? null,
       },
       foot_lock: {
         enabled: $('foot-lock').checked, adjust_hips: $('hip-adjust').checked,
@@ -121,6 +122,8 @@ export class SceneFile {
     const key = motionPanel.sources.get(motionPanel.layers[0].config?.source)?.skeleton_key;
     if (key) await retargetPanel.setSource(key);
     retargetPanel.mapping = scene.retarget?.mapping ? structuredClone(scene.retarget.mapping) : null;
+    retargetPanel.referencePose = scene.retarget?.reference_pose ?? null;
+    retargetPanel.syncPose();
     retargetPanel.sync();
     exportPanel.sync();
     applyVisibility();

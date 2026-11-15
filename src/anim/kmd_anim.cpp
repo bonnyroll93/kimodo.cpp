@@ -98,6 +98,7 @@ int usage() {
                  "       kmd-anim map smplx22|soma30|g1skel34 TARGET.glb [--mapping FILE] [--skin N]\n"
                  "       kmd-anim retarget MOTION_DIR TARGET.glb OUT_DIR [--mapping FILE] [--save-mapping FILE]\n"
                  "           [--root-scale S] [--yaw DEG] [--no-auto-facing] [--align-rest] [--skin N] [--fps N]\n"
+                 "           [--reference-pose POSE.json] [--rest-pose]   (reference pose: the character's T-pose, replaces --align-rest)\n"
                  "       retarget writes OUT_DIR/retarget.json, local_rotations_xyzw.f32 [T,J,4] and\n"
                  "       local_translations.f32 [T,J,3] in the target's joint order. --rest-pose retargets one\n"
                  "       frame of the source's rest pose (T-pose) instead of the motion (with --align-rest: the\n"
@@ -292,7 +293,11 @@ int retarget_command(int argc, char **argv) {
         else if (arg == "--yaw") options.yaw_offset_degrees = std::stof(value());
         else if (arg == "--no-auto-facing") options.auto_facing = false;
         else if (arg == "--align-rest") options.align_rest_directions = true;
-        else if (arg == "--skin") import.skin = std::stoi(value());
+        else if (arg == "--reference-pose") {
+            auto pose = load_reference_pose(value());
+            if (!pose) throw std::runtime_error(pose.error());
+            options.reference_pose = std::move(*pose);
+        } else if (arg == "--skin") import.skin = std::stoi(value());
         else if (arg == "--fps") fps = std::stof(value());
         else throw std::runtime_error("unknown option '" + std::string(arg) + "'");
     }

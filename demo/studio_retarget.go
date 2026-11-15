@@ -127,6 +127,13 @@ func (c studioConfig) retarget(ctx context.Context, req retargetRequest) (retarg
 	if req.AlignRest {
 		extra = append(extra, "--align-rest")
 	}
+	if len(req.ReferencePose) > 0 && string(req.ReferencePose) != "null" {
+		posePath, herr := c.storeJSON("retarget/poses", req.ReferencePose)
+		if herr != nil {
+			return retargetResult{}, herr
+		}
+		extra = append(extra, "--reference-pose", posePath)
+	}
 	if req.RootScale > 0 {
 		extra = append(extra, "--root-scale", num(req.RootScale))
 	}
@@ -153,7 +160,10 @@ type retargetRequest struct {
 	Character  string            `json:"character"`
 	Mapping    json.RawMessage   `json:"mapping,omitempty"`
 	AlignRest  bool              `json:"align_rest,omitempty"`
-	RootScale  float64           `json:"root_scale,omitempty"`
+	// ReferencePose: the character's hand-edited T-pose (kimodo-reference-pose JSON); it
+	// replaces the automatic rest alignment.
+	ReferencePose json.RawMessage `json:"reference_pose,omitempty"`
+	RootScale     float64         `json:"root_scale,omitempty"`
 	Yaw        float64           `json:"yaw,omitempty"`
 }
 
@@ -280,6 +290,7 @@ func registerRetarget(mux *http.ServeMux, c studioConfig) {
 			Character string          `json:"character"`
 			Skeleton  string          `json:"skeleton"`
 			Mapping   json.RawMessage `json:"mapping,omitempty"`
+			Pose      json.RawMessage `json:"reference_pose,omitempty"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
@@ -312,6 +323,15 @@ func registerRetarget(mux *http.ServeMux, c studioConfig) {
 			extra = append(extra, "--mapping", mappingPath)
 			key = append(key, mappingPath)
 		}
+		if len(req.Pose) > 0 && string(req.Pose) != "null" {
+			posePath, herr := c.storeJSON("retarget/poses", req.Pose)
+			if herr != nil {
+				writeError(w, herr.status, herr.message)
+				return
+			}
+			extra = append(extra, "--reference-pose", posePath)
+			key = append(key, posePath)
+		}
 		id := hashID(key...)
 		dir := filepath.Join(c.output, "retarget", id)
 		if herr := c.runCached(r.Context(), dir, "retarget.json", func(out string) []string {
@@ -334,7 +354,7 @@ func registerRetarget(mux *http.ServeMux, c studioConfig) {
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/retarget/"), "/")
 		files := map[string]string{"retarget.json": "retarget.json", "rotations.f32": "local_rotations_xyzw.f32", "translations.f32": "local_translations.f32"}
 		file, ok := "", false
-		if len(parts) == 2 && safePathPart(parts[0]) && parts[0] != "mappings" {
+		if len(parts) == 2 && safePathPart(parts[0]) && parts[0] != "mappings" && parts[0] != "poses" {
 			file, ok = files[parts[1]]
 		}
 		if !ok {

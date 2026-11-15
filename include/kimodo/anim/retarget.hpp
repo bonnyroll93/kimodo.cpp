@@ -15,6 +15,7 @@
 #include <array>
 #include <expected>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -82,6 +83,19 @@ struct MappingDiagnostics {
 [[nodiscard]] std::expected<void, std::string> save_mapping(const std::filesystem::path &path,
                                                             const RetargetMapping &mapping);
 
+// The target's reference pose: the pose of the character that corresponds to the source's
+// rest pose (a T-pose for the native skeletons), as local rotations by joint name in the
+// target skeleton's joint space; joints not listed use their rest rotation. Retargeting
+// with it replaces the automatic rest alignment, so a hand-edited T-pose fixes how the
+// motion lands on the character.
+// JSON: {"format":"kimodo-reference-pose","version":1,"name":"...","joints":{"Hips":[x,y,z,w],...}}
+struct ReferencePose {
+    std::string name;
+    std::map<std::string, Quat, std::less<>> rotations;
+};
+[[nodiscard]] std::expected<ReferencePose, std::string> reference_pose_from_json(std::string_view json);
+[[nodiscard]] std::expected<ReferencePose, std::string> load_reference_pose(const std::filesystem::path &path);
+
 enum class UnmappedPolicy {
     KeepRest, // unmapped target joints keep their rest local rotation (the only MVP policy)
 };
@@ -92,6 +106,7 @@ struct RetargetOptions {
     float yaw_offset_degrees = 0.F; // extra yaw about up, added to the detected one
     float root_scale = 0.F;       // translation scale; 0 = target hip height / source hip height
     bool align_rest_directions = false; // rotate target rest bones onto source rest directions (A/T pose)
+    std::optional<ReferencePose> reference_pose; // overrides align_rest_directions
     UnmappedPolicy unmapped = UnmappedPolicy::KeepRest;
 };
 

@@ -381,6 +381,18 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     (`kmd-anim retarget --rest-pose --align-rest`, `POST /api/retarget/tpose`); changing
     frame or *Hide T-pose* goes back. The exported GLB keeps the character's own bind pose:
     only the animation is computed from the T-pose.
+  - **Edit T-pose** (Retarget panel) opens a mode where the character (mesh and skeleton)
+    is shown in its T-pose with the source skeleton's T-pose overlaid (purple, on the same
+    hips, scaled to the character's hip height and turned to its facing); timeline and
+    play bar are hidden. Select a bone and rotate it with the gizmo until the character
+    matches; *Reset to automatic* starts again from the automatic alignment, *Download* /
+    *Load* exchange the pose JSON, *Cancel* (Esc) leaves without saving. *Save T-pose*
+    makes it the character's **reference pose**: retargeting, layer stacks and export use
+    it instead of the automatic alignment (`kmd-anim retarget --reference-pose POSE.json`,
+    `reference_pose` in `/api/retarget`, `/api/layers`, `/api/export`, `/api/retarget/tpose`;
+    JSON `{"format":"kimodo-reference-pose","version":1,"joints":{"Joint":[x,y,z,w]}}`,
+    local rotations in kmd-anim joint space). It is remembered per character for the
+    session and saved in scenes; *Use automatic* forgets it.
   - Locally opened `.glb` files are uploaded once, on demand. Bones are matched by glTF
     node index, because three.js rewrites names such as `mixamorig:Hips`.
 - **Story mode: anim clips, anim layers and the attribute editor.** The scene is made of
@@ -524,6 +536,8 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     frames of the layer's time; a key landing on another replaces it), Delete removes
     them. With a joint selected only its keys change; otherwise every joint's keys at
     those frames. Undo works as for any edit.
+  - **Scrubbing:** drag in the *Frames* ruler (top row) or grab the playhead's handle and
+    drag to move back and forth; the play bar slider works too.
   - **Mouse:** drag a clip to move it, also onto another track row; drag its left edge to
     trim the start and its right edge to trim the end. Times snap to frames; Shift moves
     freely. Click empty space to seek.

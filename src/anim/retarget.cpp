@@ -109,6 +109,22 @@ std::expected<RetargetResult, std::string> retarget(const AnimationClip &source_
         }
     }
 
+    // A reference pose (hand-edited T-pose) gives the target's global rotation at source rest
+    // directly: ref_global[t] = align[t] * tgt_rest[t] is replaced by its FK.
+    std::vector<Quat> ref_global(nt);
+    if (options.reference_pose) {
+        std::vector<Transform> locals(nt);
+        for (std::size_t t = 0; t < nt; ++t) {
+            locals[t] = target.joints[t].rest_local;
+            if (const auto it = options.reference_pose->rotations.find(target.joints[t].name); it != options.reference_pose->rotations.end())
+                locals[t].rotation = normalize(it->second);
+        }
+        const auto g = forward_kinematics(target, locals);
+        for (std::size_t t = 0; t < nt; ++t) ref_global[t] = normalize(g[t].rotation);
+    } else {
+        for (std::size_t t = 0; t < nt; ++t) ref_global[t] = normalize(align[t] * normalize(tgt_rest[t].rotation));
+    }
+
     // Per-joint constant: target global at source rest = A_t * R_t_rest.
     std::vector<Quat> src_rest_inv(source.size());
     for (std::size_t s = 0; s < source.size(); ++s) src_rest_inv[s] = inverse(normalize(src_rest[s].rotation));
@@ -129,7 +145,7 @@ std::expected<RetargetResult, std::string> retarget(const AnimationClip &source_
             const Quat parent_rot = p >= 0 ? tgt_global[static_cast<std::size_t>(p)].rotation : Quat{};
             if (const int s = src_of[t]; s >= 0) {
                 const Quat delta = normalize(src_global[static_cast<std::size_t>(s)].rotation) * src_rest_inv[static_cast<std::size_t>(s)];
-                const Quat global = C * delta * Ci * align[t] * normalize(tgt_rest[t].rotation) * offset[t];
+                const Quat global = C * delta * Ci * ref_global[t] * offset[t];
                 local.rotation = normalize(inverse(parent_rot) * global);
             }
             if (t == tj) {

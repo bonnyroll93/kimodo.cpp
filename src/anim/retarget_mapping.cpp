@@ -301,6 +301,35 @@ std::expected<RetargetMapping, std::string> load_mapping(const std::filesystem::
     return mapping_from_json(ss.str());
 }
 
+std::expected<ReferencePose, std::string> reference_pose_from_json(std::string_view text) {
+    try {
+        const auto j = nlohmann::json::parse(text);
+        if (j.value("format", std::string{"kimodo-reference-pose"}) != "kimodo-reference-pose")
+            return std::unexpected("not a kimodo reference pose");
+        ReferencePose pose;
+        pose.name = j.value("name", std::string{"T-pose"});
+        if (!j.contains("joints") || !j["joints"].is_object()) return std::unexpected("reference pose: 'joints' object expected");
+        for (const auto &[name, q] : j["joints"].items()) {
+            if (!q.is_array() || q.size() != 4) return std::unexpected("reference pose: '" + name + "' must be [x,y,z,w]");
+            Quat r{q[0].get<float>(), q[1].get<float>(), q[2].get<float>(), q[3].get<float>()};
+            const float n = std::sqrt(r.x * r.x + r.y * r.y + r.z * r.z + r.w * r.w);
+            if (!std::isfinite(n) || n < 1.e-6F) return std::unexpected("reference pose: '" + name + "' is not a rotation");
+            pose.rotations.emplace(name, normalize(r));
+        }
+        return pose;
+    } catch (const std::exception &e) {
+        return std::unexpected(std::string("reference pose JSON: ") + e.what());
+    }
+}
+
+std::expected<ReferencePose, std::string> load_reference_pose(const std::filesystem::path &path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return std::unexpected("cannot open " + path.string());
+    std::stringstream ss;
+    ss << in.rdbuf();
+    return reference_pose_from_json(ss.str());
+}
+
 std::expected<void, std::string> save_mapping(const std::filesystem::path &path, const RetargetMapping &mapping) {
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     out << mapping_to_json(mapping);

@@ -65,6 +65,18 @@ func TestRetargetEndpoints(t *testing.T) {
 	if rec = do(http.MethodGet, tpose.Rotations, nil); rec.Code != http.StatusOK || rec.Body.Len() == 0 {
 		t.Fatalf("tpose rotations: %d", rec.Code)
 	}
+	// A hand-edited reference pose is used as is (here: the left upper arm at identity).
+	pose := `{"format":"kimodo-reference-pose","version":1,"joints":{"mixamorig:LeftArm":[0,0,0,1]}}`
+	rec = do(http.MethodPost, "/api/retarget/tpose", []byte(`{"character":"sample:test_rig_mixamo_apose.glb","skeleton":"soma30","reference_pose":`+pose+`}`))
+	var edited struct {
+		Rotations string `json:"rotations"`
+	}
+	if json.Unmarshal(rec.Body.Bytes(), &edited) != nil || rec.Code != http.StatusOK || edited.Rotations == tpose.Rotations {
+		t.Fatalf("tpose with reference pose: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec = do(http.MethodPost, "/api/retarget/tpose", []byte(`{"character":"sample:test_rig_mixamo_apose.glb","skeleton":"soma30","reference_pose":{"joints":{"x":[1,2]}}}`)); rec.Code == http.StatusOK {
+		t.Fatal("invalid reference pose accepted")
+	}
 
 	// Upload the same rig and retarget with the explicit mapping.
 	glb, err := os.ReadFile("../tests/data/rigs/test_rig.glb")

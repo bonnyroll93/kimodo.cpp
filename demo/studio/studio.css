@@ -300,3 +300,13 @@ body {
 .tl-track .tl-key { pointer-events: auto; cursor: ew-resize; z-index: 2; top: 3px; width: 10px; height: 10px; margin-left: -5px; box-shadow: 0 0 0 1px #0b1015; }
 .tl-track .tl-key:hover { background: #ffd38a; }
 .tl-track .tl-key.selected { background: #fff; box-shadow: 0 0 0 2px var(--accent); }
+/* Edit T-pose mode */
+.tpose-bar { position: absolute; left: 12px; right: 12px; top: 12px; z-index: 4; display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center;
+  padding: 8px 12px; border: 1px solid #c4b5fd; border-radius: 10px; background: #10151bf0; }
+.stage.tpose-editing #timeline, .stage.tpose-editing #playbar, .stage.tpose-editing #graph-editor { display: none !important; }
+/* Timeline scrubbing: frame ruler and playhead handle */
+.tl-track.tl-ruler { background: #0b1015; cursor: col-resize; height: 16px; position: relative; overflow: hidden; }
+.tl-tick { position: absolute; top: 0; bottom: 0; border-left: 1px solid #2b3a46; padding-left: 2px; font-family: var(--mono); font-size: .62rem; color: #5b6b77; pointer-events: none; }
+.tl-label.ruler { cursor: default; height: 16px; }
+.tl-playhead-handle { position: absolute; top: -2px; left: -6px; width: 14px; height: 12px; border-radius: 3px 3px 7px 7px; background: #ffb547; pointer-events: auto; cursor: ew-resize; }
+.timeline.scrubbing, .timeline.scrubbing * { cursor: col-resize !important; }

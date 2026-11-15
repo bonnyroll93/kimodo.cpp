@@ -66,6 +66,19 @@
       </div>
       <div id="library-items" class="library-items grid"></div>
     </div>
+    <div id="tpose-bar" class="tpose-bar" hidden>
+      <strong>Edit T-pose</strong>
+      <span id="tpose-joint" class="key-joint"></span>
+      <span id="tpose-source" class="muted small"></span>
+      <span class="button-row">
+        <button id="tpose-auto" class="button small-button" type="button" title="Start again from the automatic T-pose">Reset to automatic</button>
+        <button id="tpose-download" class="button small-button" type="button" title="Download the pose as JSON">Download</button>
+        <label class="button small-button" title="Load a T-pose JSON">Load<input id="tpose-load" type="file" accept=".json,application/json" hidden></label>
+        <button id="tpose-cancel" class="button small-button" type="button" title="Leave without saving (Esc)">Cancel</button>
+        <button id="tpose-save" class="button primary small-button" type="button" title="Use this T-pose for retargeting, layers and export">Save T-pose</button>
+      </span>
+      <span class="muted small">Purple: the source T-pose, scaled onto the character. Select a bone and rotate it with the gizmo until the character matches; orbit to check from the side.</span>
+    </div>
     <div id="graph-editor" class="graph-editor" hidden>
       <div class="graph-toolbar">
         <strong>Graph editor</strong> <span class="graph-joint muted"></span>
@@ -243,6 +256,10 @@
           <div class="row">
             <span id="pose-status" class="note"></span>
             <button id="show-tpose" class="button small-button" type="button" title="Show the character in the T-pose the retargeting works from (any frame change hides it)">Show T-pose</button>
+          </div>
+          <div class="button-row">
+            <button id="edit-tpose" class="button small-button" type="button" title="Edit the character's T-pose by hand (with the source T-pose overlaid) to improve the retargeting">Edit T-pose</button>
+            <button id="clear-tpose" class="button small-button" type="button" title="Forget the edited T-pose and use the automatic one" hidden>Use automatic</button>
           </div>
           <div id="mapping-status" class="mapping-status"></div>
           <div class="button-row">

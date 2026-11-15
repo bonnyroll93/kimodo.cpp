@@ -93,7 +93,7 @@ export class KeyPanel {
   sync() {
     const on = this.active;
     this.$('key-panel').hidden = !on;
-    const canEdit = on && this.retarget.enabled && this.joint();
+    const canEdit = on && this.retarget.enabled && this.joint() && !this.blocked?.();
     if (canEdit) this.gizmo.attach(this.joint().bone); else this.gizmo.detach();
     if (!on && this.graph.open) this.toggleGraph(false);
     this.updateInfo();

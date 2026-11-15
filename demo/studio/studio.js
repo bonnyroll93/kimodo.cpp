@@ -18,6 +18,7 @@ import { MotionLibrary } from './editor/motion-library.js';
 import { History } from './editor/history.js';
 import { rigSnapshot, jointNameMap, transferScene } from './editor/rig-transfer.js';
 import { restoreBindPose } from './editor/bind-pose.js';
+import { TPoseEditor } from './editor/tpose-editor.js';
 
 const $ = (id) => document.getElementById(id);
 const status = (text, error = false) => {
@@ -43,6 +44,7 @@ function select(index) {
     mask.toggleJoint(character.joints[index].name, shiftDown);
   selected = character && index >= 0 && index < character.joints.length ? index : -1;
   keyPanel?.setJoint(selected);
+  tposeEditor?.setJoint(selected);
   skeletonView.select(selected);
   hierarchy.select(selected);
   inspector.showJoint(character, selected);
@@ -285,7 +287,11 @@ const keyPanel = new KeyPanel({
 });
 motionPanel.keyJoint = () => keyPanel.jointName();
 motionPanel.graphOpen = () => keyPanel.graph.open;
-motionPanel.isDragging = () => !!viewport.gizmoDragging;
+// Edit T-pose mode (hand-tuned reference pose for the retargeting).
+const tposeEditor = new TPoseEditor({ $, viewport, player, retarget: retargetPanel, status, getCharacter: () => character, applyVisibility });
+tposeEditor.onExit = () => { if (player.motion) { player.setFrame(player.frame); motionPanel.schedule(); } };
+keyPanel.blocked = () => tposeEditor.active;
+motionPanel.isDragging = () => !!viewport.gizmoDragging || tposeEditor.active; // results wait until the mode ends
 motionPanel.onKeysEdited = () => { keyPanel.updateInfo(); if (keyPanel.graph.open) keyPanel.graph.draw(); };
 const syncKeys = () => keyPanel.sync();
 const previousShown = motionPanel.onShown;
@@ -481,4 +487,4 @@ if (params.get('load')) {
 }
 
 // Debug hook for automated checks: /studio/?debug=1 exposes the main objects.
-if (new URLSearchParams(location.search).get('debug') === '1') window.__studio = { THREE, player, motionPanel, keyPanel, retargetPanel, getCharacter: () => character, select };
+if (new URLSearchParams(location.search).get('debug') === '1') window.__studio = { THREE, player, motionPanel, keyPanel, retargetPanel, tposeEditor, getCharacter: () => character, select };
