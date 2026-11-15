@@ -23,6 +23,7 @@ import { ControlRig } from './editor/control-rig.js';
 import { Picker } from './editor/picker.js';
 import { PoseTools } from './editor/pose-tools.js';
 import { cleanFeet } from './editor/feet-cleanup.js';
+import { fbxToGlb } from './viewer/fbx-import.js';
 import { ChannelBox, channels } from './editor/channel-box.js';
 import { quatEuler } from './viewer/keyframes.js';
 
@@ -231,9 +232,25 @@ async function open(source, name, serverId = null, { transfer = true } = {}) {
   }
 }
 
+// A local file: GLB / glTF as is, FBX converted to GLB first (viewer/fbx-import.js).
+async function openFile(buffer, name) {
+  if (!/\.fbx$/i.test(name)) return open(buffer, name);
+  status(`Converting ${name} (FBX → GLB)…`);
+  try {
+    const { glb, via } = await fbxToGlb(buffer);
+    const glbName = name.replace(/\.fbx$/i, '.glb');
+    await open(glb, glbName);
+    status(`Opened ${name} (FBX converted to GLB ${via === 'browser' ? 'in the browser' : 'by Blender'})`);
+    return true;
+  } catch (err) {
+    status(`Could not import ${name}: ${err.message || err}`, true);
+    return false;
+  }
+}
+
 $('file').addEventListener('change', async (e) => {
   const file = e.target.files[0];
-  if (file) await open(await file.arrayBuffer(), file.name);
+  if (file) await openFile(await file.arrayBuffer(), file.name);
   e.target.value = '';
 });
 
@@ -283,6 +300,13 @@ const exportPanel = new ExportPanel({
     $('retarget-on').checked = false;
     player.clear();
     pathView.clear();
+    if (/\.fbx$/i.test(file)) { // an FBX export: read back through the FBX import
+      const r = await fetch(url, { cache: 'no-store' });
+      if (!r.ok || !(await openFile(await r.arrayBuffer(), file))) return;
+      selectEmbedded(animation);
+      if (!$('embedded-anim').value) selectEmbedded(character?.gltf.animations[0]?.name || 'unnamed');
+      return;
+    }
     await open(url, file);
     selectEmbedded(animation);
   },
@@ -471,9 +495,9 @@ stage.addEventListener('drop', async (e) => {
   e.preventDefault();
   dragDepth = 0;
   $('drop').hidden = true;
-  const file = [...e.dataTransfer.files].find((f) => /\.(glb|gltf)$/i.test(f.name));
-  if (file) await open(await file.arrayBuffer(), file.name);
-  else status('Drop a .glb or .gltf file.', true);
+  const file = [...e.dataTransfer.files].find((f) => /\.(glb|gltf|fbx)$/i.test(f.name));
+  if (file) await openFile(await file.arrayBuffer(), file.name);
+  else status('Drop a .glb, .gltf or .fbx file.', true);
 });
 
 // Sample rigs served by the demo (tests/data/rigs by default).

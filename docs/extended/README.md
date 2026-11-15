@@ -334,7 +334,7 @@ evaluated curve the viewer draws, so the viewer and the backend cannot disagree.
 Start the demo (e.g. `kimodo_demo_vulkan.bat`, or `go run ./demo -addr 127.0.0.1:8094 ...`)
 and open `http://localhost:8094/studio/`. It works without starting a generation.
 
-- open a `.glb` / `.gltf` with *Open GLB*, drag and drop, or *Sample rigs*
+- open a `.glb` / `.gltf` / `.fbx` with *Open model*, drag and drop, or *Sample rigs*
   (served from `-sample-rigs`, default `tests/data/rigs`);
 - orbit with left-drag, pan with right-drag, zoom with the wheel, `F` to frame;
 - toggle mesh, skeleton lines, joint markers, grid and axes;
@@ -562,12 +562,24 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
   - A single default clip behaves exactly as before. Anything else is baked on the
     server, on the character's skeleton when retargeting, otherwise on the native
     skeleton.
-- **Export.** *Export GLB* bakes the current result (motion, root mode, retarget and
-  layers) onto the loaded character and offers the `.glb` for download.
+- **Export.** *Export* bakes the current result (motion, root mode, retarget and
+  layers) onto the loaded character and offers the file for download, as **GLB** or
+  **FBX** (*Format*). FBX is the same GLB converted by Blender on the server (background
+  mode, `demo/blender_fbx.py`: Y up, -Z forward, cm, animation baked on every frame, no
+  leaf bones, textures embedded), for Maya, MotionBuilder, Unreal, Unity. The demo finds
+  Blender on PATH or in its standard install folder, or takes `-blender PATH`; without it
+  the FBX option is disabled (`GET /api/fbx` tells). Conversions are cached per export and
+  redone when the script changes.
   - *Open exported* loads the written file back into the viewer and plays its animation
     from the file, so you can compare it with the preview.
   - Any loaded GLB that contains animations shows an *Embedded animation* selector. These
     animations play through three.js' `AnimationMixer`, on the same play bar.
+- **FBX import.** *Open model* (or drop) also takes a rigged `.fbx`: it is converted to GLB
+  and then used like any GLB (retarget, layers, export). The conversion runs in the browser
+  first (three.js FBXLoader + GLTFExporter: the FBX's own bone transforms; a rig taller
+  than 10 units is taken as centimetres and scaled to metres), else on the server through
+  Blender (`POST /api/convert/fbx`, raw FBX in, GLB out). The FBX's animations are kept as
+  embedded animations. Materials come through as basic colours (no FBX shading networks).
 - **Anim layers (keyframes).** *+ Keys* adds an anim layer on top of the stack. It holds
   offsets added to the layers below, so joints without keys are untouched.
   - Select a bone of the character (viewport or hierarchy) and pose it with the gizmo:

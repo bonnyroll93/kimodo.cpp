@@ -22,6 +22,7 @@ type studioConfig struct {
 	sampleMotions string                // kmd-generate output directories offered as motion sources
 	output        string                // demo output directory (root-motion results go below it)
 	anim          string                // kmd-anim executable
+	blender       string                // Blender executable for FBX import / export ("" = unavailable)
 	animations    func() []studioMotion // ready gallery animations, may be nil
 	// deleteAnimation removes a generated animation (gallery entry and files), may be nil.
 	deleteAnimation func(id string) error
@@ -36,6 +37,7 @@ func registerStudio(mux *http.ServeMux, c studioConfig) {
 	registerRetarget(mux, c)
 	registerLayers(mux, c)
 	registerExport(mux, c)
+	registerFBX(mux, c)
 	sub, err := fs.Sub(studioFiles, "studio")
 	if err != nil {
 		panic(err)

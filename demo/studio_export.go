@@ -2,7 +2,8 @@ package main
 
 // Kimodo Extended step 5: export the character with the final clip as one GLB.
 //   POST /api/export   {name?, character, mapping?, align_rest?, layers:[...]}   (same stack as /api/layers)
-//   GET  /api/export/<id>/<file>.glb[?download=1]
+//   GET  /api/export/<id>/<file>.glb|.fbx[?download=1]
+// "format":"fbx" also converts the GLB to FBX with Blender (studio_fbx.go).
 // The stack is baked (cached), then `kmd-anim export` copies the character GLB unchanged
 // and appends the clip as an animation.
 
@@ -17,7 +18,8 @@ import (
 
 type exportRequest struct {
 	layersRequest
-	Name string `json:"name,omitempty"`
+	Name   string `json:"name,omitempty"`
+	Format string `json:"format,omitempty"` // glb (default) | fbx
 }
 
 var exportName = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
@@ -45,6 +47,10 @@ func registerExport(mux *http.ServeMux, c studioConfig) {
 		if len(name) > 60 {
 			name = name[:60]
 		}
+		if req.Format != "" && req.Format != "glb" && req.Format != "fbx" {
+			writeError(w, http.StatusBadRequest, "format must be glb or fbx")
+			return
+		}
 		stack, herr := c.layers(r.Context(), req.layersRequest)
 		if herr != nil {
 			writeError(w, herr.status, herr.message)
@@ -59,6 +65,16 @@ func registerExport(mux *http.ServeMux, c studioConfig) {
 			writeError(w, herr.status, herr.message)
 			return
 		}
+		if req.Format == "fbx" { // the same export, converted by Blender
+			fbx := name + ".fbx"
+			if !converted(filepath.Join(dir, fbx)) {
+				if herr := c.blenderConvert(r.Context(), "glb2fbx", filepath.Join(dir, file), filepath.Join(dir, fbx)); herr != nil {
+					writeError(w, herr.status, herr.message)
+					return
+				}
+			}
+			file = fbx
+		}
 		info, err := os.Stat(filepath.Join(dir, file))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "export missing")
@@ -67,14 +83,14 @@ func registerExport(mux *http.ServeMux, c studioConfig) {
 		url := "/api/export/" + id + "/" + file
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id": id, "name": name, "bytes": info.Size(), "url": url, "download": url + "?download=1",
+			"id": id, "name": name, "file": file, "bytes": info.Size(), "url": url, "download": url + "?download=1",
 			"meta": stack.body["meta"],
 		})
 	})
 
 	mux.HandleFunc("/api/export/", func(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/export/"), "/")
-		if len(parts) != 2 || !safePathPart(parts[0]) || !safePathPart(parts[1]) || !strings.HasSuffix(parts[1], ".glb") {
+		if len(parts) != 2 || !safePathPart(parts[0]) || !safePathPart(parts[1]) || !(strings.HasSuffix(parts[1], ".glb") || strings.HasSuffix(parts[1], ".fbx")) {
 			http.NotFound(w, r)
 			return
 		}
@@ -83,7 +99,11 @@ func registerExport(mux *http.ServeMux, c studioConfig) {
 			http.NotFound(w, r)
 			return
 		}
-		w.Header().Set("Content-Type", "model/gltf-binary")
+		if strings.HasSuffix(parts[1], ".fbx") {
+			w.Header().Set("Content-Type", "application/octet-stream")
+		} else {
+			w.Header().Set("Content-Type", "model/gltf-binary")
+		}
 		w.Header().Set("Cache-Control", "no-store")
 		if r.URL.Query().Get("download") == "1" {
 			w.Header().Set("Content-Disposition", `attachment; filename="`+parts[1]+`"`)

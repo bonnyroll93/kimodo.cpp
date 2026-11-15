@@ -480,6 +480,7 @@ func main() {
 	sampleRigs := flag.String("sample-rigs", "tests/data/rigs", "sample rigged GLB characters offered by /studio")
 	sampleMotions := flag.String("sample-motions", "tests/data/baseline", "sample motion directories offered by /studio")
 	animTool := flag.String("anim", "", "kmd-anim post-processing command (default: next to -generator)")
+	blender := flag.String("blender", "", "Blender executable for FBX import / export (default: on PATH or the newest standard install)")
 	flag.Parse()
 	if err := os.MkdirAll(*output, 0755); err != nil {
 		log.Fatal(err)
@@ -789,7 +790,7 @@ func main() {
 	if *animTool == "" {
 		*animTool = defaultAnimTool(*generator)
 	}
-	registerStudio(mux, studioConfig{sampleRigs: *sampleRigs, sampleMotions: *sampleMotions, output: *output, anim: *animTool,
+	registerStudio(mux, studioConfig{sampleRigs: *sampleRigs, sampleMotions: *sampleMotions, output: *output, anim: *animTool, blender: findBlender(*blender),
 		animations: func() []studioMotion { return g.studioMotions() }, deleteAnimation: g.deleteAnimation})
 	log.Fatal(http.ListenAndServe(*addr, mux))
 }

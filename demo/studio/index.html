@@ -18,8 +18,8 @@
 <header class="toolbar">
   <div class="brand"><span class="mark">K</span><div><div class="eyebrow">Kimodo Extended</div><strong>Studio</strong></div></div>
   <div class="tools">
-    <label class="button primary" title="Open a rigged .glb / .gltf (or drop it on the viewport)">
-      Open GLB<input id="file" type="file" accept=".glb,.gltf,model/gltf-binary" hidden>
+    <label class="button primary" title="Open a rigged .glb / .gltf / .fbx (or drop it on the viewport); FBX is converted to GLB">
+      Open model<input id="file" type="file" accept=".glb,.gltf,.fbx,model/gltf-binary" hidden>
     </label>
     <select id="samples" title="Sample rigs served by the demo"><option value="">Sample rigs…</option></select>
     <span class="sep"></span>
@@ -61,7 +61,7 @@
   <section class="stage" id="stage-root">
     <div id="viewport" class="viewport"></div>
     <div id="empty" class="empty">
-      <p><strong>Drop a rigged .glb here</strong></p>
+      <p><strong>Drop a rigged .glb or .fbx here</strong></p>
       <p class="muted">or use <em>Open GLB</em> / <em>Sample rigs</em>. Orbit: left-drag · Pan: right-drag · Zoom: wheel · Select: click a joint</p>
     </div>
     <div id="drop" class="drop" hidden>Drop to load</div>
@@ -349,12 +349,13 @@
       <div class="export">
         <div class="row">
           <label class="field">Export name <input id="export-name" value="Kimodo" maxlength="60"></label>
-          <button id="export-glb" class="button primary small-button" type="button" title="Character + final clip as one GLB">Export GLB</button>
+          <label class="field">Format <select id="export-format" title="GLB, or FBX (converted by Blender on the server)"><option value="glb">GLB</option><option value="fbx">FBX</option></select></label>
+          <button id="export-glb" class="button primary small-button" type="button" title="Character + final clip as one file">Export GLB</button>
         </div>
         <p id="export-hint" class="note"></p>
         <div id="export-result" class="button-row" hidden>
           <a id="export-link" class="button small-button" href="#">Download</a>
-          <button id="open-export" class="button small-button" type="button" title="Load the exported GLB and play its animation">Open exported</button>
+          <button id="open-export" class="button small-button" type="button" title="Load the exported file and play its animation">Open exported</button>
         </div>
       </div>
       </div>
