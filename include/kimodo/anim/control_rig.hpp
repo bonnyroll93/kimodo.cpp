@@ -12,7 +12,8 @@
 //   * the pole (tx, ty, tz in the same follow space) is where the middle joint (elbow,
 //     knee) points; without keys the animation's bend plane is kept.
 // Curves use the keyframe rules of keyframes.hpp, frames at the rig's fps. weight blends
-// the solved chain with the animation (0: untouched).
+// the solved chain with the animation (0: untouched); a keyed blend curve (IK/FK blend,
+// 1 = IK, 0 = FK, ActionForge's "complex" workflow) replaces weight frame by frame.
 
 #include <kimodo/anim/clip.hpp>
 #include <kimodo/anim/keyframes.hpp>
@@ -35,6 +36,7 @@ struct IkLimb {
     bool ik = false;
     ControlSpace follow = ControlSpace::Root;
     float weight = 1.F;
+    Curve blend;                            // keyed IK/FK blend (overrides weight when keyed)
     std::array<Curve, ChannelCount> target; // tx ty tz (position), rx ry rz (rotation)
     std::array<Curve, 3> pole;              // tx ty tz
 };
@@ -46,7 +48,7 @@ struct ControlRig {
 };
 
 // JSON: {"version":1,"fps":30,"hips":"Hips","limbs":[{"name":"left_arm",
-//   "chain":["LeftArm","LeftForeArm","LeftHand"],"ik":true,"follow":"root"|"hips","weight":1,
+//   "chain":["LeftArm","LeftForeArm","LeftHand"],"ik":true,"follow":"root"|"hips","weight":1,"blend":[keys],
 //   "target":{"tx":[keys],...,"rz":[keys]},"pole":{"tx":[keys],"ty":[keys],"tz":[keys]}}]}
 // (keys as in keyframes.hpp: {"f","v","i","a","l","r"})
 [[nodiscard]] std::expected<ControlRig, std::string> control_rig_from_json(std::string_view json);

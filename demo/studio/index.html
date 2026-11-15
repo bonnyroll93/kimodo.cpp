@@ -141,6 +141,7 @@
     <div class="layers-form" id="rig-panel">
       <div id="rig-limbs" class="rig-limbs"><p class="note">Load a character and retarget a motion onto it to use the control rig.</p></div>
       <div id="rig-selected" class="key-joint"></div>
+      <div id="rig-xform" class="rig-xform" hidden></div>
       <div class="button-row">
         <button id="rig-move" class="button small-button on" type="button" title="Move the picked control (W)">Move</button>
         <button id="rig-rotate" class="button small-button" type="button" title="Rotate the picked IK control (E)">Rotate</button>
@@ -148,7 +149,11 @@
         <button id="rig-delete-key" class="button small-button" type="button" title="Delete the picked control's key at the current frame">Delete key</button>
         <button id="rig-reset" class="button small-button" type="button" title="Delete every key of the picked limb's IK control and pole (back to the animation)">Reset limb</button>
       </div>
-      <p class="note">IK on: the hand / foot follows its box control (keyed), the elbow / knee points at its pole (diamond). Without keys a control follows the animation. Auto key: moving a control keys it.</p>
+      <div class="button-row">
+        <button id="rig-match-ik" class="button small-button" type="button" title="Key the picked limb's IK control and pole on the FK (animated) hand / foot at this frame">Match IK → FK</button>
+        <button id="rig-match-fk" class="button small-button" type="button" title="Key the picked limb's bones on the selected anim layer so the FK pose is the IK pose at this frame">Match FK → IK</button>
+      </div>
+      <p class="note">IK on: the hand / foot follows its box control (keyed), the elbow / knee points at its pole (diamond). Without keys a control follows the animation. Moving a control or typing a Transform value keys it. IK/FK blend: 1 = IK, 0 = FK; key it (◆) to switch over time, and use Match to snap one onto the other first.</p>
     </div>
     <div class="panel-head"><h2>Anim layers</h2><span class="button-row"><button id="add-key-layer" class="button small-button" type="button" title="Add an anim layer on top: pose bones with the gizmo and key them">+ Keys</button></span></div>
     <div class="layers-form">

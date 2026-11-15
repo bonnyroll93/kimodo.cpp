@@ -412,6 +412,16 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     foot reaches it (planted where it is constant) and takes its rotation, and the
     elbow / knee points at the pole. *follows Root / Hips* sets the space the controls
     are keyed in: Root keeps a hand fixed in the scene, Hips carries it with the body.
+    Changing it converts the keys: on every keyed frame the control stays where it was.
+  - **Transform**: the picked control's Move X/Y/Z (and Rot X/Y/Z for the box) at the
+    current frame, in its follow space; typing a value keys the control.
+  - **IK/FK blend** (ActionForge's "complex" workflow): a slider per limb, 1 = IK, 0 = FK.
+    Not keyed it applies to the whole animation (`weight`); ◆ keys it at the current frame
+    (`blend` curve, it then animates the switch), ✕ deletes that key.
+  - **Match IK → FK** keys the IK control and pole on the FK (animated, without the rig)
+    hand / foot at this frame; **Match FK → IK** keys the limb's three bones on the
+    selected anim layer so the FK pose is the IK pose shown. Snap first, then key the blend,
+    and the limb does not jump when switching.
   - The picked control's keys appear in the timeline (◆ row; click one to go there).
   - The rig is applied after all the layers and before foot locking (`control_rig` in
     `/api/layers` and `/api/export`; `kmd-anim layers --control-rig RIG.json`;

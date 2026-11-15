@@ -96,6 +96,26 @@ void tests(const Skeleton &soma, const AnimationClip &walk) {
     CHECK(length(got - want) < 5.e-3F || length(got - w40[static_cast<std::size_t>(la)].translation) > .5F);
     CHECK(length(got - hand0) > .5F); // travelled with the walk
 
+    // Keyed IK/FK blend: FK at frame 0, IK from frame 20 (overrides weight, even weight 0).
+    auto blended = control_rig_from_json(R"({"limbs":[{"name":"b","chain":["A","B","C"],
+        "blend":[{"f":0,"v":0,"i":"linear"},{"f":20,"v":1}]}]})");
+    CHECK(blended && blended->limbs[0].blend.keys.size() == 2);
+    ControlRig brig{.fps = 30.F, .hips = "Hips", .limbs = {arm}};
+    brig.limbs[0].weight = 0.F;
+    brig.limbs[0].blend = blended->limbs[0].blend;
+    const Vec3 hand20 = forward_kinematics(soma, walk.frame(20))[static_cast<std::size_t>(lh)].translation;
+    brig.limbs[0].target[PosX] = flat(hand20.x + .1F);
+    brig.limbs[0].target[PosY] = flat(hand20.y);
+    brig.limbs[0].target[PosZ] = flat(hand20.z);
+    AnimationClip mixed = walk;
+    auto mr = apply_control_rig(mixed, soma, brig);
+    CHECK(mr && mr->solved.size() == 1);
+    CHECK(angle_between(mixed.at(0, static_cast<std::size_t>(la)).rotation, walk.at(0, static_cast<std::size_t>(la)).rotation) < 1.e-6F);
+    CHECK(length(forward_kinematics(soma, mixed.frame(20))[static_cast<std::size_t>(lh)].translation - Vec3{hand20.x + .1F, hand20.y, hand20.z}) < 2.e-3F ||
+          mr->unreachable_frames > 0);
+    CHECK(angle_between(mixed.at(10, static_cast<std::size_t>(la)).rotation, walk.at(10, static_cast<std::size_t>(la)).rotation) > 1.e-5F);
+    CHECK(!control_rig_from_json(R"({"limbs":[{"chain":["A","B","C"],"blend":{"f":0}}]})").has_value());
+
     // JSON.
     auto parsed = control_rig_from_json(R"({"version":1,"fps":30,"hips":"Hips","limbs":[{"name":"left_arm",
         "chain":["LeftArm","LeftForeArm","LeftHand"],"ik":true,"follow":"hips","target":{"tx":[{"f":0,"v":0.1}]},

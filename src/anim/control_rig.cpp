@@ -3,6 +3,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <fstream>
 #include <span>
 #include <sstream>
@@ -44,6 +45,11 @@ std::expected<ControlRig, std::string> control_rig_from_json(std::string_view te
             else return std::unexpected("control rig: " + limb.name + ": follow must be root or hips");
             limb.weight = l.value("weight", 1.F);
             if (!(limb.weight >= 0.F && limb.weight <= 1.F)) return std::unexpected("control rig: " + limb.name + ": weight must be 0..1");
+            if (l.contains("blend") && !l["blend"].is_null()) {
+                auto blend = curves(nlohmann::json{{"tx", l["blend"]}});
+                if (!blend) return std::unexpected("control rig: " + limb.name + ": blend: " + blend.error());
+                limb.blend = (*blend)[PosX];
+            }
             auto target = curves(l.value("target", nlohmann::json()));
             if (!target) return std::unexpected("control rig: " + limb.name + ": target: " + target.error());
             limb.target = *target;
@@ -77,7 +83,7 @@ std::expected<ControlRigReport, std::string> apply_control_rig(AnimationClip &cl
     struct Chain { const IkLimb *limb; int a, b, c; };
     std::vector<Chain> chains;
     for (const IkLimb &l : rig.limbs) {
-        if (!l.ik || l.weight <= 0.F) continue;
+        if (!l.ik || (l.weight <= 0.F && !keyed(l.blend))) continue;
         const int a = s.find(l.chain[0]), b = s.find(l.chain[1]), c = s.find(l.chain[2]);
         if (a < 0 || b < 0 || c < 0) { report.warnings.push_back(l.name + ": chain joints not found"); continue; }
         if (s.joints[static_cast<std::size_t>(b)].parent != a || s.joints[static_cast<std::size_t>(c)].parent != b) {
@@ -94,6 +100,8 @@ std::expected<ControlRigReport, std::string> apply_control_rig(AnimationClip &cl
         const float kf = static_cast<float>(f) * scale;
         for (const Chain &ch : chains) {
             const IkLimb &l = *ch.limb;
+            const float w = keyed(l.blend) ? std::clamp(l.blend.evaluate(kf), 0.F, 1.F) : l.weight;
+            if (w <= 0.F) continue; // FK on this frame
             const auto g = forward_kinematics(s, local);
             Transform space; // follow space -> skeleton space
             if (l.follow == ControlSpace::Hips) {
@@ -123,10 +131,10 @@ std::expected<ControlRigReport, std::string> apply_control_rig(AnimationClip &cl
                 }
             }
             if (!reached) ++report.unreachable_frames;
-            if (l.weight < 1.F)
+            if (w < 1.F)
                 for (const int j : {ch.a, ch.b, ch.c}) {
                     const auto k = static_cast<std::size_t>(j);
-                    local[k].rotation = slerp(before[k].rotation, local[k].rotation, l.weight);
+                    local[k].rotation = slerp(before[k].rotation, local[k].rotation, w);
                 }
         }
     }
