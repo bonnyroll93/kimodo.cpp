@@ -88,7 +88,7 @@ void full_and_in_place_tests(const MotionArrays &walk, const Skeleton &soma) {
     float max_drift = 0.F;
     for (std::size_t f = 0; f < ip.frames(); ++f) {
         const Vec3 t = ip.at(f, 0).translation;
-        max_drift = std::max(max_drift, length(AxisConvention{}.horizontal(t - start)));
+        max_drift = std::max(max_drift, length(AxisConvention{}.horizontal(t))); // on the origin
         CHECK(t.y == original.at(f, 0).translation.y);
         for (std::size_t j = 0; j < ip.joint_count; ++j) {
             const Quat a = ip.at(f, j).rotation, b = original.at(f, j).rotation;
@@ -96,7 +96,13 @@ void full_and_in_place_tests(const MotionArrays &walk, const Skeleton &soma) {
         }
     }
     CHECK(max_drift < 1.e-5F);
-    CHECK(ip.at(0, 0).translation.x == start.x && ip.at(0, 0).translation.z == start.z); // initial root kept
+    CHECK(ip.at(0, 0).translation.x == 0.F && ip.at(0, 0).translation.z == 0.F); // at the origin
+    // at_origin = false: it stays where it starts.
+    RootMotionSettings keep = in_place;
+    keep.in_place.at_origin = false;
+    AnimationClip kp = original;
+    CHECK(apply_root_motion(kp, keep).has_value());
+    for (std::size_t f = 0; f < kp.frames(); ++f) CHECK(length(AxisConvention{}.horizontal(kp.at(f, 0).translation - start)) < 1.e-5F);
 
     // Deterministic.
     AnimationClip ip2 = original;
@@ -121,7 +127,7 @@ void full_and_in_place_tests(const MotionArrays &walk, const Skeleton &soma) {
     CHECK(apply_root_motion(zup, zs).has_value());
     for (std::size_t f = 0; f < zup.frames(); ++f) {
         CHECK(near(zup.at(f, 0).translation.x, 0.F, 1.e-6F));
-        CHECK(near(zup.at(f, 0).translation.y, .9F, 1.e-6F));
+        CHECK(near(zup.at(f, 0).translation.y, 0.F, 1.e-6F)); // on the origin (Y is horizontal here)
         CHECK(zup.at(f, 0).translation.z == .1F);
     }
 

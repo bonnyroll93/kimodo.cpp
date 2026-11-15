@@ -184,6 +184,8 @@ int root_motion(int argc, char **argv) {
             settings.in_place.lock_lateral = l == "both" || l == "lateral";
             if (!settings.in_place.lock_forward && !settings.in_place.lock_lateral)
                 throw std::runtime_error("--lock must be both, forward or lateral");
+        } else if (arg == "--keep-start") { // InPlace: stay where frame 0 is instead of the origin
+            settings.in_place.at_origin = false;
         } else if (arg == "--points") {
             path_spec().points = parse_points(value());
         } else if (arg == "--interp") {

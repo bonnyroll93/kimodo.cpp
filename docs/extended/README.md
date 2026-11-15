@@ -344,7 +344,9 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
 - **Motion** panel:
   - Pick a sample motion (from `-sample-motions`, default `tests/data/baseline`) or a
     finished generation from the gallery.
-  - Choose Full, In place or Path. Path offers presets (straight, S-curve, corner,
+  - Choose Full, In place or Path. In place removes the horizontal travel and keeps the
+    character on the origin (x = z = 0; `kmd-anim root-motion … --keep-start` keeps frame
+    0's position instead). Path offers presets (straight, S-curve, corner,
     zig-zag, circle loop) or your own waypoints, with a curve type, a timing mode and
     orientation along the path.
   - **Loopable** makes the clip seamless: its last frame ends on its first pose. It does

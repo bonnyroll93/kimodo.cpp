@@ -416,7 +416,11 @@ func (c studioConfig) rootMotion(ctx context.Context, req rootMotionRequest) (ro
 	if err != nil {
 		return rootMotionResult{}, &httpError{http.StatusBadRequest, err.Error()}
 	}
-	id := hashID(append([]string{source.ID}, args...)...)
+	key := append([]string{source.ID}, args...)
+	if req.Mode == "inplace" {
+		key = append(key, "inplace-at-origin") // kmd-anim InPlace now centres on the origin (older results did not)
+	}
+	id := hashID(key...)
 	dir := filepath.Join(c.output, "root-motion", id)
 	if herr := c.runCached(ctx, dir, "local_rotations_xyzw.f32", func(out string) []string {
 		return append([]string{"root-motion", source.dir, out}, args...)

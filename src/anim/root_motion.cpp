@@ -27,9 +27,9 @@ std::expected<void, std::string> validate(const RootMotionSettings &s) {
 std::expected<void, std::string> make_in_place(AnimationClip &clip, const AxisConvention &axes,
                                                const InPlaceOptions &options) {
     if (clip.frames() == 0) return std::unexpected("clip has no frames");
-    const Vec3 start = clip.at(0, 0).translation;
+    const Vec3 start = options.at_origin ? Vec3{} : clip.at(0, 0).translation;
     const Vec3 lateral = axes.lateral();
-    for (std::size_t f = 1; f < clip.frames(); ++f) {
+    for (std::size_t f = 0; f < clip.frames(); ++f) {
         Vec3 &t = clip.at(f, 0).translation;
         const Vec3 d = t - start;
         Vec3 remove{};

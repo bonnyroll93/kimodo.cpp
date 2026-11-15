@@ -19,6 +19,8 @@ enum class RootMotionMode {
 struct InPlaceOptions {
     bool lock_forward = true; // remove travel along AxisConvention::forward
     bool lock_lateral = true; // remove travel along AxisConvention::lateral()
+    bool at_origin = true;    // the locked components are 0 (the character stays on the origin);
+                              // false: they keep frame 0's value (it stays where it starts)
 };
 
 struct RootMotionSettings {
@@ -34,8 +36,9 @@ struct RootMotionSettings {
 // Mode/path consistency and axis sanity (unit, perpendicular).
 [[nodiscard]] std::expected<void, std::string> validate(const RootMotionSettings &settings);
 
-// InPlace: root translation at frame f becomes t0 + (t_f - t0) with the locked horizontal
-// components removed; height and every rotation are untouched; frame 0 is unchanged.
+// InPlace: the locked horizontal components of the root translation become 0 on every frame
+// (at_origin: the character walks on the spot at the origin), or keep frame 0's value
+// (at_origin = false); height and every rotation are untouched.
 [[nodiscard]] std::expected<void, std::string> make_in_place(AnimationClip &clip, const AxisConvention &axes = {},
                                                              const InPlaceOptions &options = {});
 
