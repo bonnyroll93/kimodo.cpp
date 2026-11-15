@@ -11,6 +11,7 @@ import { MotionPathView } from './viewer/motion-path-view.js';
 import { MotionPanel } from './editor/motion-panel.js';
 import { RetargetPanel } from './editor/retarget-panel.js';
 import { ExportPanel } from './editor/export-panel.js';
+import { PathEditor } from './viewer/path-editor.js';
 
 const $ = (id) => document.getElementById(id);
 const status = (text, error = false) => {
@@ -122,6 +123,29 @@ $('file').addEventListener('change', async (e) => {
   if (file) await open(await file.arrayBuffer(), file.name);
   e.target.value = '';
 });
+
+// In-viewport MotionPath editing for the active layer.
+const pathEditor = new PathEditor(viewport, {
+  getPath: () => motionPanel.editablePath(),
+  setPoints: (points) => motionPanel.setPathPoints(points),
+  view: () => motionPanel.displayView(),
+  onToggle: (on) => {
+    $('edit-path').classList.toggle('on', on);
+    $('edit-path').textContent = on ? 'Done editing' : 'Edit in viewport';
+    $('edit-path-hint').hidden = !on;
+    if (on) status('Path editing: drag waypoints, click the ground to add, double-click to remove, Esc to finish');
+  },
+});
+$('edit-path').addEventListener('click', () => {
+  if (!pathEditor.active && motionPanel.mode !== 'path') {
+    document.querySelector('input[name="root-mode"][value="path"]').checked = true;
+    motionPanel.formChanged();
+  }
+  pathEditor.toggle();
+});
+motionPanel.onShown = () => pathEditor.refresh();
+for (const r of document.querySelectorAll('input[name="root-mode"]'))
+  r.addEventListener('change', () => { if (r.checked && r.value !== 'path' && pathEditor.active) pathEditor.toggle(false); });
 
 const exportPanel = new ExportPanel({
   $, status, motionPanel, retarget: retargetPanel,
@@ -244,6 +268,7 @@ motionPanel.loadSources().then(() => {
   if (params.get('timing')) $('timing').value = params.get('timing');
   if (params.get('align') === '1') $('align-rest').checked = true;
   if (params.get('footlock') === '1') { $('foot-lock').checked = true; $('foot-opts').hidden = false; }
+  if (params.get('editpath') === '1') setTimeout(() => $('edit-path').click(), 0);
   $('motion-source').value = motion;
   motionPanel.activeLayer.config = motionPanel.readForm();
   // stack=demo: a second, additive upper-body layer (in place) at half weight; mask=... overrides its mask.

@@ -190,6 +190,7 @@ export class MotionPanel {
     else this.maskEditor.hide();
     if (rerender) this.renderLayers();
     else if (this.timelineData) this.timeline.set({ ...this.timelineData, active: i });
+    this.onShown?.(); // the path editor follows the active layer
   }
 
   renderLayers() {
@@ -285,12 +286,40 @@ export class MotionPanel {
     };
   }
 
-  // Source-space ground points -> character space (see RetargetResult in retarget.hpp).
+  // Source-space ground points -> character space (see RetargetResult in retarget.hpp), and back.
   overlayMap(meta) {
-    if (!meta) return { map: undefined, ground: 0 };
+    if (!meta) return { map: undefined, inverse: (x, z) => [x, z], ground: 0 };
     const yaw = (meta.facing_yaw_degrees * Math.PI) / 180, c = Math.cos(yaw), s = Math.sin(yaw);
-    const [sx, , sz] = meta.source_reference, [tx, , tz] = meta.target_reference, k = meta.root_scale;
-    return { map: (x, z) => [tx + k * (c * (x - sx) + s * (z - sz)), tz + k * (-s * (x - sx) + c * (z - sz))], ground: meta.target_ground };
+    const [sx, , sz] = meta.source_reference, [tx, , tz] = meta.target_reference, k = meta.root_scale || 1;
+    return {
+      map: (x, z) => [tx + k * (c * (x - sx) + s * (z - sz)), tz + k * (-s * (x - sx) + c * (z - sz))],
+      inverse: (x, z) => {
+        const ux = (x - tx) / k, uz = (z - tz) / k;
+        return [sx + c * ux - s * uz, sz + s * ux + c * uz];
+      },
+      ground: meta.target_ground,
+    };
+  }
+
+  // For the in-viewport path editor: the active layer's path and the current display mapping.
+  editablePath() {
+    const c = this.activeLayer.config;
+    if (c.mode !== 'path') return null;
+    try {
+      return { points: parsePoints(c.points), interpolation: c.interp, loop: c.loop };
+    } catch {
+      return null;
+    }
+  }
+
+  displayView() {
+    return this.view ?? { map: (x, z) => [x, z], inverse: (x, z) => [x, z], ground: 0 };
+  }
+
+  setPathPoints(points) {
+    this.$('path-points').value = points.map(([x, z]) => `${x} ${z}`).join('\n');
+    this.$('path-preset').value = 'custom';
+    this.formChanged();
   }
 
   async apply() {
@@ -378,7 +407,8 @@ export class MotionPanel {
     } else {
       this.player.setTarget(null);
     }
-    const { map, ground } = this.overlayMap(r.overlay.meta);
+    const { map, inverse, ground } = this.overlayMap(r.overlay.meta);
+    this.view = { map: map ?? ((x, z) => [x, z]), inverse, ground };
     this.sourceRootShown = r.overlay.sourceRoot;
     this.samples = r.overlay.samples;
     this.pathView.show({ ...r.overlay, map, ground });
@@ -400,5 +430,6 @@ export class MotionPanel {
             `, hips −${(fl.max_hip_drop * 100).toFixed(1)} cm${fl.unreachable_frames ? `, ${fl.unreachable_frames} frames out of reach` : ''}` : '');
     this.status(`Motion: ${r.summary}${rt ? ' · retargeted' : ''}`);
     this.onLoaded?.(first);
+    this.onShown?.();
   }
 }

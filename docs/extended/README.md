@@ -350,6 +350,18 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     scrubbing and loop. Space toggles play/pause.
   - The viewport shows the source root trail (dashed), the evaluated path (cyan), its
     waypoints and the resulting root trail (purple).
+- **Edit the path in the viewport.** In Path mode, *Edit in viewport* shows the active
+  layer's waypoints as handles on the ground.
+  - Drag a handle to move it; an orange preview of the curve follows live, and on release
+    the path is recomputed by `kmd-anim`.
+  - Click the ground to insert a waypoint into the nearest segment, or after the last
+    point if that is closer.
+  - Double-click a handle, or select it and press Delete, to remove it. Press Esc to
+    finish.
+  - Orbiting still works on empty space.
+  - With retargeting, points are edited in the character's space and converted back to
+    the motion's space, so the waypoint text stays the source of truth.
+  - Deep link: `…&mode=path&editpath=1`.
 - **Retarget onto character.** Load a character, keep *Retarget onto character* on, and
   the current motion (after Full / In place / Path) is retargeted on the server and played
   on the character's mesh.

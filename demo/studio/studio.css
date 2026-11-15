@@ -193,6 +193,7 @@ body {
 .tl-track.foot.left .tl-contact { background: #5ee6becc; }
 .tl-track.foot.right .tl-contact { background: #ffb547cc; }
 .tl-label.foot { cursor: default; }
+#edit-path.on { background: #ffb54733; border-color: #ffb547; color: #ffb547; }
 .status {
   padding: 6px 16px; border-top: 1px solid var(--line); background: var(--panel);
   color: var(--muted); font-size: .8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

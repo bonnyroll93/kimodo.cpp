@@ -85,7 +85,11 @@
         </label>
       </div>
       <div id="path-opts" class="opts" hidden>
-        <label class="field">Preset <select id="path-preset"></select></label>
+        <div class="row">
+          <label class="field">Preset <select id="path-preset"></select></label>
+          <button id="edit-path" class="button small-button" type="button" title="Edit the waypoints directly in the viewport">Edit in viewport</button>
+        </div>
+        <p id="edit-path-hint" class="note" hidden>Drag a waypoint to move it · click the ground to add one · double-click (or Delete) to remove · Esc to finish. Orbit still works on empty space.</p>
         <label class="field">Waypoints <span class="muted">(x z per line, metres)</span>
           <textarea id="path-points" rows="5" spellcheck="false"></textarea>
         </label>
