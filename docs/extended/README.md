@@ -407,7 +407,10 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
   joint's key values at this frame (Additive offset or Override pose); otherwise the
   selected joint's local transform, read only. Type a value (Enter) or drag a channel's
   name left / right (Shift ×10, Alt ×0.1); a change keys the object (or poses the bone in
-  Edit T-pose). ▾ folds it.
+  Edit T-pose). With an anim layer selected and nothing else, it shows the layer's
+  **Weight** (keyable). *Reset translate* / *Reset rotate* put that group back: offsets
+  and anim-layer keys to 0, a T-pose bone to the automatic T-pose, an IK control or pole
+  back onto the animation (FK) at this frame. ▾ folds it.
 - **Layout (after ActionForge).** Left column: *Outliner* (skeleton tree and inspector) |
   *Picker*. Right column: *Animate* (Rig, Anim layers, Attribute editor, Motion) | *Setup*
   (Character & retarget, foot locking, Export, character stats). The chosen tabs are
@@ -423,11 +426,36 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     immediate feedback; the bake then does the same in `kmd-anim`.
   - A control without keys follows the animation (IK changes nothing); keyed, the hand /
     foot reaches it (planted where it is constant) and takes its rotation, and the
-    elbow / knee points at the pole. *follows Root / Hips* sets the space the controls
-    are keyed in: Root keeps a hand fixed in the scene, Hips carries it with the body.
-    Changing it converts the keys: on every keyed frame the control stays where it was.
-  - **Transform**: the picked control's Move X/Y/Z (and Rot X/Y/Z for the box) at the
-    current frame, in its follow space; typing a value keys the control.
+    elbow / knee points at the pole. *follows World / Root / Hips* sets the space the
+    controls are keyed in: **World** (default) nothing moves them — a planted foot stays
+    put whatever the hips, the root control or the layers below do; **Root** the root
+    control (ground circle) carries them; **Hips** they move with the hips. Changing it
+    converts the keys (base and layers): on every keyed frame the control stays where it was.
+  - **Controls on anim layers (Maya-style).** Keys go to the selected anim layer; select
+    *BaseAnimation* (bottom of the anim layer list) to key the rig itself. A key is
+    computed so the control ends where you put it: an offset on an Additive layer (divided
+    by the layer's weight), the value on an Override layer. kmd-anim composes the base and
+    the layers (`layers` in the rig JSON, see `control_rig.hpp`): additive adds the
+    position / pole / blend / offset and turns the rotation, override moves each keyed
+    group towards the layer's value by its weight; a group the base does not key starts
+    from the animation, so a layer can offset a control that follows it. It returns every
+    control's composed and base value per frame (`control_rig.f32`, `/api/layers/<id>/controls.f32`),
+    which is what the viewport and the channel box show.
+  - **Layer members and weight.** Each anim layer lists its members (joints and rig
+    controls: what it keys, plus what you add): *+ Sel* adds the selected joint or picked
+    control, *− Sel* (or × on a member) removes it and deletes its keys on that layer, a
+    click on a member selects it. The layer weight is keyable: ◆ keys it at the current
+    frame (the slider then edits the key there), ✕ deletes that key; joint layers bake it
+    (`"weight":[keys]` in the keyframes JSON, `AnimationLayer::weight_samples`) and rig
+    layers use it too.
+  - **Clean up feet** (Rig › Feet: Height, Speed as % of the leg length, Blend frames):
+    finds the feet's ground contacts on the FK animation (ankle near its lowest height and
+    slow; 1-2 frame gaps filled, contacts under 3 frames dropped) and bakes IK keys on every
+    frame on the override layer *Feet cleanup* (reused when present): during a contact the
+    foot holds the contact's ground position (its height still follows the animation, so
+    the heel / toe roll stays), easing in and out over Blend frames; elsewhere it follows
+    the animation. Both legs switch to IK following World, so the feet stay planted when
+    the hips or root move afterwards; weight, mute or edit the layer like any other.
   - **IK/FK blend** (ActionForge's "complex" workflow): a slider per limb, 1 = IK, 0 = FK.
     Not keyed it applies to the whole animation (`weight`); ◆ keys it at the current frame
     (`blend` curve, it then animates the switch), ✕ deletes that key.

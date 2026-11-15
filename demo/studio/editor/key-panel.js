@@ -186,6 +186,12 @@ export class KeyPanel {
         this.pending = { joint: name, frame: f, values: { ...values, [k]: v }, translated: k[0] === 't' || !!this.pending?.translated };
         this.keyCurrent();
       },
+      // Reset: 0 (Additive: no offset; Override: the rest pose) for that group, keyed.
+      reset: (g) => {
+        const zero = Object.fromEntries(['x', 'y', 'z'].map((a) => [`${g}${a}`, 0]));
+        this.pending = { joint: name, frame: f, values: { ...values, ...zero }, translated: g === 't' || !!this.pending?.translated };
+        this.keyCurrent();
+      },
     };
   }
 

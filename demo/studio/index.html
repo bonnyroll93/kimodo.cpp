@@ -167,7 +167,14 @@
         <button id="pose-paste-mirror" class="button small-button" type="button" disabled title="Key the copied pose mirrored (left ↔ right) on the selected anim layer at this frame">Paste mirrored</button>
         <button id="pose-mirror" class="button small-button" type="button" title="Mirror the pose shown (left ↔ right) and key it on the selected anim layer">Mirror</button>
       </div>
-      <p class="note">IK on: the hand / foot follows its box control (keyed), the elbow / knee points at its pole (diamond). Without keys a control follows the animation. Moving a control or typing a value in the channel box keys it. IK/FK blend: 1 = IK, 0 = FK; key it (◆) to switch over time, and use Match to snap one onto the other first.</p>
+      <div class="pose-row feet-row">
+        <span class="pose-label">Feet</span>
+        <label title="A foot is in contact while its ankle is this close to its lowest height (% of the leg length)">Height <input id="feet-height" type="number" value="6" min="1" max="40" step="1">%</label>
+        <label title="… and moves slower than this (% of the leg length per second)">Speed <input id="feet-speed" type="number" value="50" min="5" max="300" step="5">%</label>
+        <label title="Frames to ease in / out of each contact">Blend <input id="feet-blend" type="number" value="4" min="0" max="20" step="1">f</label>
+        <button id="feet-clean" class="button primary small-button" type="button" title="Find the feet's ground contacts and bake IK keys that hold them in place (override layer &quot;Feet cleanup&quot;, legs in IK following World)">Clean up feet</button>
+      </div>
+      <p class="note">IK on: the hand / foot follows its box control (keyed), the elbow / knee points at its pole (diamond). Without keys a control follows the animation; keys go to the selected anim layer (BaseAnimation: the rig itself). Moving a control or typing a value in the channel box keys it. IK/FK blend: 1 = IK, 0 = FK; key it (◆) to switch over time, and use Match to snap one onto the other first.</p>
     </div>
     <div class="panel-head"><h2>Anim layers</h2><span class="button-row"><button id="add-key-layer" class="button small-button" type="button" title="Add an anim layer on top: pose bones with the gizmo and key them">+ Keys</button></span></div>
     <div class="layers-form">

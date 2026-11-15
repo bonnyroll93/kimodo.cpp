@@ -56,11 +56,13 @@ enum Channel { RotX, RotY, RotZ, PosX, PosY, PosZ, ChannelCount };
 struct KeyframeTracks {
     float fps = 30.F;
     std::map<std::string, std::array<Curve, ChannelCount>, std::less<>> joints; // by joint name
+    Curve weight; // keyed layer weight (0..1, layer frames); empty: the layer's own weight
     [[nodiscard]] float last_frame() const;
 };
 
 // JSON: {"version":1,"fps":30,"tracks":{"Joint":{"rx":[{"f":0,"v":12.5,"i":"bezier","a":true,
-//        "l":[-2,0],"r":[2,0]}], "ry":[...], ...}}}   ("i": constant|linear|bezier, "a": auto)
+//        "l":[-2,0],"r":[2,0]}], "ry":[...], ...}}, "weight":[keys]}   ("i": constant|linear|bezier, "a": auto;
+//        weight: optional animated layer weight)
 [[nodiscard]] std::expected<KeyframeTracks, std::string> keyframes_from_json(std::string_view json);
 [[nodiscard]] std::string keyframes_to_json(const KeyframeTracks &tracks);
 [[nodiscard]] std::expected<KeyframeTracks, std::string> load_keyframes(const std::filesystem::path &path);

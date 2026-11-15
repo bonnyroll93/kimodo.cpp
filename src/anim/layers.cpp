@@ -200,6 +200,16 @@ float AnimationStack::layer_end(const Resolved &r) const {
     return tm.start + r.segment / tm.speed * static_cast<float>(tm.repeat);
 }
 
+float layer_weight(const AnimationLayer &l, float t) noexcept {
+    const auto &s = l.weight_samples;
+    if (s.empty()) return l.weight;
+    const float x = std::max(0.F, (t - l.timing.start) * l.timing.speed * l.weight_fps);
+    const auto i = static_cast<std::size_t>(x);
+    if (i + 1 >= s.size()) return std::clamp(s.back(), 0.F, 1.F);
+    const float u = x - static_cast<float>(i);
+    return std::clamp(s[i] + (s[i + 1] - s[i]) * u, 0.F, 1.F);
+}
+
 bool AnimationStack::sample_layer(std::size_t index, float t, std::vector<Transform> &out, float &weight) const {
     const Resolved &r = layers_[index];
     const AnimationLayer &l = r.layer;
@@ -303,13 +313,14 @@ std::vector<Transform> AnimationStack::evaluate_below(std::size_t index, float t
     for (std::size_t li = 0; li < index && li < layers_.size(); ++li) {
         const Resolved &r = layers_[li];
         const AnimationLayer &l = r.layer;
-        if (!l.enabled || l.muted || l.weight <= 0.F) continue;
+        const float lw = layer_weight(l, t);
+        if (!l.enabled || l.muted || lw <= 0.F) continue;
         float fade = 1.F;
         if (!sample_layer(li, t, sample, fade) || fade <= 0.F) continue;
         for (std::size_t j = 0; j < pose.size(); ++j) {
             const int track = r.track[j];
             if (track < 0) continue;
-            const float w = std::clamp(l.weight * fade * r.mask[j], 0.F, 1.F);
+            const float w = std::clamp(lw * fade * r.mask[j], 0.F, 1.F);
             if (w <= 0.F) continue;
             const Transform &s = sample[static_cast<std::size_t>(track)];
             if (l.mode == BlendMode::Override) {

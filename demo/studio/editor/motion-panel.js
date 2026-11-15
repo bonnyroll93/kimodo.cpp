@@ -11,7 +11,7 @@
 import { LayerPanel } from './layer-panel.js';
 import { MaskEditor } from './animation-mask.js';
 import { Timeline } from './timeline.js';
-import { emptyTracks, keyFrames } from '../viewer/keyframes.js';
+import { emptyTracks, keyFrames, evaluate, setKey } from '../viewer/keyframes.js';
 
 // Preset paths on the ground plane (x, z in metres), starting at the origin and heading +Z.
 const circle = Array.from({ length: 8 }, (_, k) => {
@@ -142,9 +142,53 @@ export class MotionPanel {
       },
       remove: (i) => this.remove(i),
       canRemove: (i) => this.canRemove(i),
+      // Animated layer weight (anim layers).
+      weightAt: (i) => this.weightAt(i),
+      weightKeyed: (i) => {
+        const k = this.layers[i].weightKeys;
+        if (!k?.length) return 'none';
+        const f = Math.round(this.keyFrame(this.player.frame, i));
+        return k.some((x) => Math.round(x.f) === f) ? 'here' : 'animated';
+      },
+      setWeight: (i, v, final) => this.setWeight(i, v, final),
+      keyWeight: (i) => {
+        const l = this.layers[i];
+        setKey((l.weightKeys ??= []), Math.round(this.keyFrame(this.player.frame, i)), this.weightAt(i));
+        this.status(`${l.name}: weight keyed at frame ${this.player.frame}`);
+        this.renderLayers();
+        this.schedule();
+      },
+      unkeyWeight: (i) => {
+        const l = this.layers[i], f = Math.round(this.keyFrame(this.player.frame, i));
+        l.weightKeys = (l.weightKeys ?? []).filter((k) => Math.round(k.f) !== f);
+        if (!l.weightKeys.length) delete l.weightKeys;
+        this.renderLayers();
+        this.schedule();
+      },
+      // Members (Maya-style): joints and rig controls of the layer.
+      members: (i) => this.memberIds(this.layers[i]).map((id) => ({ id, label: this.memberLabel?.(id) ?? id.replace(/^joint:/, '') })),
+      addSelected: (i) => {
+        const id = this.selection?.();
+        if (!id) { this.status('Select a joint or pick a rig control first', true); return; }
+        const l = this.layers[i];
+        l.members = [...new Set([...(l.members ?? []), id])];
+        this.status(`${this.memberLabel?.(id) ?? id} added to "${l.name}"`);
+        this.renderLayers();
+        this.onMembers?.();
+      },
+      removeSelected: (i) => {
+        const id = this.selection?.();
+        if (!id) { this.status('Select a joint or pick a rig control first', true); return; }
+        this.removeMember(i, id);
+      },
+      removeMember: (i, id) => this.removeMember(i, id),
+      pickMember: (id) => this.pickMember?.(id),
+      selectBase: () => this.select(this.baseIndex()),
+      baseActive: () => !isKeys(this.activeLayer),
     };
     this.layerPanel = new LayerPanel($('layers-list'), rowCallbacks, { empty: 'No anim layers yet.' });
     this.attrPanel = new LayerPanel($('attr-row'), rowCallbacks, { reorder: false });
+    this.player.onChange(() => { this.layerPanel.syncWeights(); this.attrPanel.syncWeights(); });
     this.maskEditor = new MaskEditor({
       $, status,
       onChange: (mask) => { this.layers[this.active].customMask = mask; this.schedule(); },
@@ -271,6 +315,48 @@ export class MotionPanel {
     if (rerender) this.renderLayers();
     else this.renderAttributes();
     this.onShown?.(); // the path editor follows the active clip
+  }
+
+  // ----- anim layers: animated weight and members ------------------------------------------
+  weightAt(i, stackFrame = this.player.frame) {
+    const l = this.layers[i];
+    if (!l?.weightKeys?.length) return l?.weight ?? 1;
+    return Math.min(1, Math.max(0, evaluate(l.weightKeys, this.keyFrame(stackFrame, i))));
+  }
+  setWeight(i, v, final) {
+    const l = this.layers[i];
+    if (l.weightKeys?.length) setKey(l.weightKeys, Math.round(this.keyFrame(this.player.frame, i)), v);
+    else l.weight = v;
+    if (final) { this.renderLayers(); this.schedule(); }
+  }
+  // Members: the explicit list plus everything the layer keys.
+  memberIds(l) {
+    const ids = new Set(l.members ?? []);
+    for (const j of Object.keys(l.keys?.tracks ?? {})) ids.add(`joint:${j}`);
+    const any = (c) => Object.values(c ?? {}).some((k) => k?.length);
+    for (const [id, c] of Object.entries(l.rig?.limbs ?? {})) {
+      if (any(c.target) || c.blend?.length) ids.add(`ctl:${id}:ik`);
+      if (any(c.pole)) ids.add(`ctl:${id}:pole`);
+    }
+    for (const k of ['hips', 'root']) if (any(l.rig?.body?.[k])) ids.add(`ctl:body:${k}`);
+    return [...ids];
+  }
+  removeMember(i, id) {
+    const l = this.layers[i];
+    l.members = (l.members ?? []).filter((m) => m !== id);
+    if (id.startsWith('joint:')) delete l.keys?.tracks?.[id.slice(6)];
+    else {
+      const [, limb, kind] = id.split(':');
+      if (limb === 'body') delete l.rig?.body?.[kind];
+      else if (l.rig?.limbs?.[limb]) {
+        if (kind === 'ik') { delete l.rig.limbs[limb].target; delete l.rig.limbs[limb].blend; } else delete l.rig.limbs[limb].pole;
+      }
+    }
+    this.status(`${this.memberLabel?.(id) ?? id} removed from "${l.name}" (its keys there are deleted)`);
+    this.renderLayers();
+    this.refreshKeyTicks();
+    this.onMembers?.();
+    this.schedule();
   }
 
   renderLayers() {
@@ -511,14 +597,15 @@ export class MotionPanel {
     this.schedule();
   }
 
-  addKeyLayer() {
+  addKeyLayer(name = null, blend = 'additive') {
     const base = this.layers[this.activeClip()];
     const n = this.layers.filter(isKeys).length;
-    const l = { ...newLayer(n ? `Keys ${n + 1}` : 'Keys', { ...base.config }), kind: 'keys', bind: null, keys: emptyTracks(), blend: 'additive', reference: 'rest' };
+    const l = { ...newLayer(name ?? (n ? `Keys ${n + 1}` : 'Keys'), { ...base.config }), kind: 'keys', bind: null, keys: emptyTracks(), blend, reference: 'rest' };
     delete l.track;
     this.layers.push(l);
     this.select(this.layers.length - 1);
     this.schedule();
+    return this.layers.length - 1;
   }
 
   // Joints a custom mask is edited for: the character when retargeting, else the source skeleton.
@@ -734,7 +821,7 @@ export class MotionPanel {
   layerRequest(l, i, eff = timingOf(l)) {
     const { auto_blend, ...timing } = eff;
     const mask = l.mask === 'custom' ? (l.customMask || { version: 1, name: 'custom', default: 1, weights: {} }) : l.mask;
-    if (isKeys(l)) return { name: l.name || `Keys ${i + 1}`, keys: l.keys, mode: l.blend === 'override' ? 'override' : 'additive', weight: l.weight, mask, enabled: l.enabled, muted: l.muted, wrap: l.wrap, timing };
+    if (isKeys(l)) return { name: l.name || `Keys ${i + 1}`, keys: l.weightKeys?.length ? { ...l.keys, weight: l.weightKeys } : l.keys, mode: l.blend === 'override' ? 'override' : 'additive', weight: l.weight, mask, enabled: l.enabled, muted: l.muted, wrap: l.wrap, timing };
     return {
       name: l.name || `Clip ${i + 1}`, root_motion: this.rootMotionRequest(l.config), mode: l.blend, weight: l.weight,
       mask, enabled: l.enabled, muted: l.muted, reference: l.reference, wrap: l.wrap, timing,
@@ -835,6 +922,7 @@ export class MotionPanel {
     // Overlays follow the selected clip, or the base clip when an anim layer is selected.
     const shown = isKeys(this.activeLayer) ? base : this.active;
     const act = body.layers[pos.get(shown)], baseRm = body.layers[pos.get(base)].root_motion;
+    const controls = await this.controlsOf(body);
     const [rotations, translations, stackRoot, baseRoot, baseRot, actRoot, samples, sourceRoot] = await Promise.all([
       f32(body.rotations), f32(body.translations), body.native ? f32(body.root) : null,
       body.native ? null : f32(baseRm.root), body.native ? null : f32(baseRm.rotations),
@@ -854,7 +942,7 @@ export class MotionPanel {
         meta: body.native ? null : JSON.parse(JSON.stringify(body.layers[pos.get(base)].retarget)),
       },
       durations: meta.layers.map((l, k) => [order[k], l.duration]),
-      footLock: meta.foot_lock ?? null,
+      footLock: meta.foot_lock ?? null, controls,
       fps: meta.fps,
       summary: `${clips} clip${clips === 1 ? '' : 's'} on ${this.trackCount} track${this.trackCount === 1 ? '' : 's'}` +
         `${animLayers ? `, ${animLayers} anim layer${animLayers === 1 ? '' : 's'}` : ''}, ${meta.frames} frames${meta.foot_lock ? ', feet locked' : ''}`,
@@ -865,6 +953,7 @@ export class MotionPanel {
   // body.scene = the composed clips before the root motion (durations, source root trail).
   async sceneResult(body, order) {
     const rm = body.layers[0].root_motion;
+    const controls = await this.controlsOf(body);
     const [rotations, translations, stackRoot, sceneRoot, sceneRot, samples, sourceRoot] = await Promise.all([
       f32(body.rotations), f32(body.translations), body.native ? f32(body.root) : null,
       f32(rm.root), body.native ? null : f32(rm.rotations), rm.path ? f32(rm.path) : null, f32(body.scene.root),
@@ -879,14 +968,23 @@ export class MotionPanel {
         meta: body.native ? null : JSON.parse(JSON.stringify(body.layers[0].retarget)) },
       durations: [...body.scene.meta.layers.map((l, k) => [clipOrder[k], l.duration]),
         ...meta.layers.slice(1).map((l, k) => [keyOrder[k], l.duration])],
-      footLock: meta.foot_lock ?? null,
+      footLock: meta.foot_lock ?? null, controls,
       fps: meta.fps,
       summary: `${clips} clip${clips === 1 ? '' : 's'}, scene root ${req.mode}${keyOrder.length ? `, ${keyOrder.length} anim layer(s)` : ''}, ${meta.frames} frames${meta.foot_lock ? ', feet locked' : ''}`,
     };
   }
 
+  // Per-frame control rig values of a result (control_rig.f32; see control_rig.hpp).
+  async controlsOf(body) {
+    const cr = body.meta?.control_rig;
+    if (!body.controls || !cr?.stride) return null;
+    return { data: await f32(body.controls), stride: cr.stride, limbs: cr.limbs ?? [] };
+  }
+
   show(def, rt, r) {
     const first = !this.shownOnce;
+    this.controlsData = r.controls ?? null;
+    this.onControls?.();
     this.shownOnce = true;
     if (this.player.embedded) { // a Motion/Layers result replaces an embedded animation preview
       this.player.setEmbedded(null);

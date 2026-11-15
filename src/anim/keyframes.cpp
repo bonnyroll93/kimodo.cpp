@@ -83,6 +83,32 @@ Quat euler_xyz_degrees(float x, float y, float z) noexcept {
                      Quat::from_axis_angle({0, 0, 1}, z * deg));
 }
 
+namespace {
+// One curve: [{"f","v","i","a","l","r"}...] (label: for errors).
+std::expected<Curve, std::string> parse_curve(const nlohmann::json &keys, const std::string &label) {
+    Curve curve;
+    if (!keys.is_array()) return std::unexpected(label + " must be an array of keys");
+    for (const auto &k : keys) {
+        Keyframe key;
+        key.frame = k.at("f").get<float>();
+        key.value = k.at("v").get<float>();
+        if (!std::isfinite(key.frame) || !std::isfinite(key.value) || key.frame < 0.F)
+            return std::unexpected("invalid key in " + label);
+        const std::string interp = k.value("i", std::string("bezier"));
+        if (interp == "constant") key.interpolation = KeyInterpolation::Constant;
+        else if (interp == "linear") key.interpolation = KeyInterpolation::Linear;
+        else if (interp == "bezier") key.interpolation = KeyInterpolation::Bezier;
+        else return std::unexpected("unknown interpolation '" + interp + "'");
+        key.auto_tangent = k.value("a", true);
+        if (k.contains("l")) key.left = {k["l"][0].get<float>(), k["l"][1].get<float>()};
+        if (k.contains("r")) key.right = {k["r"][0].get<float>(), k["r"][1].get<float>()};
+        curve.keys.push_back(key);
+    }
+    curve.sort();
+    return curve;
+}
+} // namespace
+
 std::expected<KeyframeTracks, std::string> keyframes_from_json(std::string_view text) {
     try {
         const auto j = nlohmann::json::parse(text);
@@ -90,6 +116,11 @@ std::expected<KeyframeTracks, std::string> keyframes_from_json(std::string_view 
         KeyframeTracks t;
         t.fps = j.value("fps", 30.F);
         if (!(t.fps > 0.F) || !std::isfinite(t.fps)) return std::unexpected("keyframes fps must be positive");
+        if (j.contains("weight") && !j["weight"].is_null()) {
+            auto w = parse_curve(j["weight"], "weight");
+            if (!w) return std::unexpected(w.error());
+            t.weight = std::move(*w);
+        }
         if (!j.contains("tracks")) return t;
         if (!j["tracks"].is_object()) return std::unexpected("\"tracks\" must be an object");
         for (const auto &[joint, channels] : j["tracks"].items()) {
@@ -98,23 +129,9 @@ std::expected<KeyframeTracks, std::string> keyframes_from_json(std::string_view 
             for (int c = 0; c < ChannelCount; ++c) {
                 const std::string name(channel_names[static_cast<std::size_t>(c)]);
                 if (!channels.contains(name)) continue;
-                for (const auto &k : channels[name]) {
-                    Keyframe key;
-                    key.frame = k.at("f").get<float>();
-                    key.value = k.at("v").get<float>();
-                    if (!std::isfinite(key.frame) || !std::isfinite(key.value) || key.frame < 0.F)
-                        return std::unexpected("invalid key in " + joint + "." + name);
-                    const std::string interp = k.value("i", std::string("bezier"));
-                    if (interp == "constant") key.interpolation = KeyInterpolation::Constant;
-                    else if (interp == "linear") key.interpolation = KeyInterpolation::Linear;
-                    else if (interp == "bezier") key.interpolation = KeyInterpolation::Bezier;
-                    else return std::unexpected("unknown interpolation '" + interp + "'");
-                    key.auto_tangent = k.value("a", true);
-                    if (k.contains("l")) key.left = {k["l"][0].get<float>(), k["l"][1].get<float>()};
-                    if (k.contains("r")) key.right = {k["r"][0].get<float>(), k["r"][1].get<float>()};
-                    curves[static_cast<std::size_t>(c)].keys.push_back(key);
-                }
-                curves[static_cast<std::size_t>(c)].sort();
+                auto curve = parse_curve(channels[name], joint + "." + name);
+                if (!curve) return std::unexpected(curve.error());
+                curves[static_cast<std::size_t>(c)] = std::move(*curve);
             }
         }
         return t;

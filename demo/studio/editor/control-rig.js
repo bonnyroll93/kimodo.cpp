@@ -2,18 +2,24 @@
 // is FK until its IK is turned on, for the whole animation; "complex" workflow: the IK/FK blend
 // slider of a limb (keyable, 1 = IK, 0 = FK) mixes both, with Match IK to FK / FK to IK snaps.
 //   * IK on: the end joint (hand, foot) follows its box control and the middle joint (elbow,
-//     knee) points at its pole (diamond). Controls are keyed in their follow space (Root or
-//     Hips) at the current frame; without keys a control follows the animation.
+//     knee) points at its pole (diamond). Controls are keyed in their follow space at the
+//     current frame; without keys a control follows the animation. Follow spaces: World
+//     (nothing moves the control: a planted foot stays put whatever the hips or the root do),
+//     Root (the root control carries it) or Hips (it moves with the hips).
 //   * FK: bones are posed with the anim layers' gizmo (Animate › Anim layers, + Keys).
 //   * Body controls: the hips box (offset of the hips: lower them and the IK feet stay on the
 //     ground) and the root circle on the ground (offset of the whole character). Their
-//     values are offsets (0 = the animation), keyed like the limb controls.
-//   * Channel box: the picked control's values in its follow space; typing one keys it.
-//   * Changing a limb's follow space converts its keys (the control stays where it was on
-//     every keyed frame).
+//     values are offsets (0 = the animation).
+//   * Anim layers (Maya-style): keys go to the selected anim layer (BaseAnimation selected: to
+//     the rig's own curves). A key is computed so the control ends where you put it: on an
+//     additive layer as an offset (divided by the layer weight), on an override layer as the
+//     value (Maya does the same). kmd-anim composes base + layers (control_rig.hpp) and returns
+//     every control's value per frame (control_rig.f32), which is what the controls show.
+//   * Channel box: the picked control's values (composed) in its follow space; typing keys it.
+//   * Changing a limb's follow space converts its keys (base and layers).
 // The rig is sent with every stack (control_rig in /api/layers, /api/export) and solved by
-// kmd-anim after the layers (include/kimodo/anim/control_rig.hpp), so preview and export
-// match; while a control is dragged the chain is solved here for immediate feedback.
+// kmd-anim after the layers, so preview and export match; while a control is dragged the
+// chain is solved here for immediate feedback.
 import * as THREE from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { evaluate, setKey, quatEuler, eulerQuat, offsetAt, channelsOf, CHANNELS } from '../viewer/keyframes.js';
@@ -27,11 +33,19 @@ export const LIMBS = [
   { id: 'right_leg', label: 'Right leg', src: ['RightLeg', 'RightShin', 'RightFoot'] },
 ];
 const POS = ['tx', 'ty', 'tz'], ROT = ['rx', 'ry', 'rz'];
-export const emptyRig = () => ({ limbs: Object.fromEntries(LIMBS.map((l) => [l.id, { ik: false, follow: 'root', weight: 1, target: {}, pole: {} }])) });
+const newLimb = () => ({ ik: false, follow: 'world', weight: 1, target: {}, pole: {} });
+export const emptyRig = () => ({ limbs: Object.fromEntries(LIMBS.map((l) => [l.id, newLimb()])) });
 const hasKeys = (ch, names) => names.some((c) => ch?.[c]?.length);
 const ALL = [...POS, ...ROT];
 const isBody = (p) => p?.limb === 'body';
 const keyedFrames = (curves, names) => [...new Set(names.flatMap((c) => (curves?.[c] ?? []).map((k) => Math.round(k.f))))].sort((a, b) => a - b);
+const V3 = (d, p) => new THREE.Vector3(d[p], d[p + 1], d[p + 2]);
+const Q4 = (d, p) => new THREE.Quaternion(d[p], d[p + 1], d[p + 2], d[p + 3]);
+const evalV = (curves, f) => new THREE.Vector3(...POS.map((k) => (curves[k]?.length ? evaluate(curves[k], f) : 0)));
+const evalE = (curves, f) => ROT.map((k) => (curves[k]?.length ? evaluate(curves[k], f) : 0));
+const anyKeys = (c) => Object.values(c ?? {}).some((k) => Array.isArray(k) && k.length);
+const rotOf = (M) => new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().extractRotation(M));
+export const FOLLOWS = [['world', 'World'], ['root', 'Root'], ['hips', 'Hips']];
 
 async function f32(url) {
   const r = await fetch(url, { cache: 'no-store' });
@@ -42,7 +56,8 @@ async function f32(url) {
 export class ControlRig {
   constructor({ $, viewport, player, motionPanel, retarget, status, getCharacter, onPick }) {
     Object.assign(this, { $, viewport, player, motionPanel, retarget, status, getCharacter, onPick });
-    this.picked = null; // {limb, kind: 'ik' | 'pole'}
+    this.picked = null; // {limb, kind: 'ik' | 'pole'} or {limb: 'body', kind: 'hips' | 'root'}
+    this.stale = false; // edited since the last result (the server's control values are old)
     this.group = new THREE.Group();
     this.group.name = 'control-rig';
     viewport.scene.add(this.group);
@@ -81,19 +96,37 @@ export class ControlRig {
   }
 
   get data() { return (this.motionPanel.controlRig ??= emptyRig()); }
-  limb(id) { return (this.data.limbs[id] ??= { ik: false, follow: 'root', weight: 1, target: {}, pole: {} }); }
+  limb(id) { return (this.data.limbs[id] ??= newLimb()); }
   body() { return (this.data.body ??= { hips: {}, root: {} }); }
-  // Key curves of a control ({limb, kind}).
+  // Base (BaseAnimation) key curves of a control.
   curvesOf(p) {
     if (isBody(p)) return (this.body()[p.kind] ??= {});
     const l = this.limb(p.limb);
     return p.kind === 'ik' ? l.target : l.pole;
   }
-  // Body control offsets on a frame ({tx..rz}, 0 where not keyed).
+  // Base body offsets on a frame ({tx..rz}, 0 where not keyed).
   offsetsAt(kind, f = this.player.frame) {
     const c = this.body()[kind] ?? {};
     return Object.fromEntries(ALL.map((k) => [k, c[k]?.length ? evaluate(c[k], f) : 0]));
   }
+
+  // ---- where keys go: the selected anim layer, else the base -------------------------------
+  store() {
+    const mp = this.motionPanel, i = mp.active, l = mp.layers[i];
+    if (l?.kind !== 'keys') return { layer: null, f: this.player.frame, w: 1, name: 'BaseAnimation' };
+    return { layer: l, i, f: Math.round(mp.keyFrame(this.player.frame, i)), w: mp.weightAt(i), name: l.name, additive: l.blend !== 'override' };
+  }
+  layerRig(layer) { return (layer.rig ??= { limbs: {}, body: {} }); }
+  curvesFor(st, p) {
+    if (!st.layer) return this.curvesOf(p);
+    const rig = this.layerRig(st.layer);
+    if (isBody(p)) return ((rig.body ??= {})[p.kind] ??= {});
+    const l = ((rig.limbs ??= {})[p.limb] ??= {});
+    return p.kind === 'ik' ? (l.target ??= {}) : (l.pole ??= {});
+  }
+  // Store frame <-> stack frame (anim layers have their own time).
+  toStack(st, f) { return st.layer ? Math.round(this.motionPanel.stackFrame(f, st.i)) : f; }
+  toStore(st, f) { return st.layer ? Math.round(this.motionPanel.keyFrame(f, st.i)) : f; }
 
   // Character joints of each limb (via the retarget mapping: source joint -> character joint).
   chains() {
@@ -110,7 +143,7 @@ export class ControlRig {
     return out;
   }
 
-  // /api/layers "control_rig" (null when no limb has IK on).
+  // /api/layers "control_rig" (null when nothing is on or keyed).
   request() {
     const ch = this.chains();
     if (!ch) return null;
@@ -118,46 +151,113 @@ export class ControlRig {
     for (const L of LIMBS) {
       const l = this.limb(L.id);
       if (!l.ik || !ch[L.id]) continue;
-      limbs.push({ name: L.id, chain: ch[L.id].map((j) => j.name), ik: true, follow: l.follow, weight: l.weight, target: l.target, pole: l.pole,
+      limbs.push({ name: L.id, chain: ch[L.id].map((j) => j.name), ik: true, follow: l.follow ?? 'world', weight: l.weight, target: l.target, pole: l.pole,
         ...(l.blend?.length ? { blend: l.blend } : {}) });
     }
     const body = this.body(), rootOn = hasKeys(body.root, ALL), hipsOn = hasKeys(body.hips, ALL);
-    return limbs.length || rootOn || hipsOn ? { version: 1, fps: 30, hips: ch.hips.name, limbs,
-      ...(rootOn ? { root_control: body.root } : {}), ...(hipsOn ? { hips_control: body.hips } : {}) } : null;
+    const mp = this.motionPanel, eff = mp.effective(), layers = [];
+    for (const i of mp.stackOrder()) {
+      const l = mp.layers[i];
+      if (l.kind !== 'keys' || !l.enabled || l.muted || !l.rig) continue;
+      const lr = l.rig, rl = {};
+      for (const [id, c] of Object.entries(lr.limbs ?? {})) if (anyKeys(c.target) || anyKeys(c.pole) || c.blend?.length) rl[id] = c;
+      const hk = anyKeys(lr.body?.hips), rk = anyKeys(lr.body?.root);
+      if (!Object.keys(rl).length && !hk && !rk) continue;
+      const t = eff.get(i) ?? {};
+      layers.push({ name: l.name, mode: l.blend === 'override' ? 'override' : 'additive', weight: l.weight,
+        ...(l.weightKeys?.length ? { weight_keys: l.weightKeys } : {}), start: t.start ?? 0, speed: t.speed ?? 1, ...(t.end > (t.start ?? 0) ? { end: t.end } : {}),
+        limbs: rl, ...(hk ? { hips_control: lr.body.hips } : {}), ...(rk ? { root_control: lr.body.root } : {}) });
+    }
+    return limbs.length || rootOn || hipsOn || layers.length ? { version: 1, fps: 30, hips: ch.hips.name, limbs,
+      ...(rootOn ? { root_control: body.root } : {}), ...(hipsOn ? { hips_control: body.hips } : {}), ...(layers.length ? { layers } : {}) } : null;
   }
   active() { return !!this.request(); }
-  // IK/FK blend of a limb on a frame (the keyed curve, else its weight).
+  // IK/FK blend of a limb on a frame (base: the keyed curve, else its weight).
   blendAt(l, f = this.player.frame) { return l.blend?.length ? THREE.MathUtils.clamp(evaluate(l.blend, f), 0, 1) : l.weight ?? 1; }
   label(id, kind) {
     if (id === 'body') return kind === 'hips' ? 'Hips control' : 'Root control';
     return `${LIMBS.find((L) => L.id === id).label}${kind ? ` ${kind === 'ik' ? 'IK control' : 'pole'}` : ''}`;
   }
+  memberLabel(mid) {
+    if (mid.startsWith('joint:')) return mid.slice(6);
+    const [, limb, kind] = mid.split(':');
+    return limb === 'body' ? this.label('body', kind) : LIMBS.some((L) => L.id === limb) ? this.label(limb, kind) : mid;
+  }
+  // A new result arrived (its control values are current).
+  onResult() { this.stale = false; clearTimeout(this.staleTimer); }
+
+  // ---- control values from the last result (control_rig.f32) -------------------------------
+  srv(f = this.player.frame) {
+    const c = this.motionPanel.controlsData;
+    if (!c || this.stale) return null;
+    const frames = Math.floor(c.data.length / c.stride);
+    if (!frames) return null;
+    const d = c.data, o = Math.min(frames - 1, Math.max(0, f)) * c.stride;
+    const read = (p) => ({ pos: V3(d, p), rot: Q4(d, p + 3), pole: V3(d, p + 7), blend: d[p + 10] });
+    const limbs = {};
+    c.limbs.forEach((name, n) => { const p = o + n * 22; limbs[name] = { ...read(p), base: read(p + 11) }; });
+    const b = o + c.limbs.length * 22, body = (p) => ({ t: V3(d, p), q: Q4(d, p + 3) });
+    return { limbs, hips: { ...body(b), base: body(b + 7) }, root: { ...body(b + 14), base: body(b + 21) } };
+  }
+
+  // Body offsets (composed and base) on the frame shown.
+  bodyComposed(kind) {
+    const s = this.srv()?.[kind];
+    if (s) return s;
+    const o = this.offsetsAt(kind), v = { t: new THREE.Vector3(o.tx, o.ty, o.tz), q: eulerQuat(o.rx, o.ry, o.rz) };
+    return { ...v, base: v };
+  }
 
   // ---- spaces ----------------------------------------------------------------------------
-  // Follow space -> world matrix on the frame shown (Root: the character's skeleton space,
-  // Hips: the hips' world position and rotation, no scale).
+  // Follow space -> world matrix on the frame shown. World: the character's skeleton space;
+  // Root: that, moved by the root control (about the hips' ground point); Hips: the hips'
+  // world position and rotation, no scale.
   spaceMatrix(follow, ch) {
     const character = this.getCharacter();
     character.root.updateMatrixWorld(true);
-    if (follow !== 'hips') return character.root.matrixWorld.clone();
-    const hips = ch.hips.bone;
-    return new THREE.Matrix4().compose(hips.getWorldPosition(new THREE.Vector3()), hips.getWorldQuaternion(new THREE.Quaternion()), new THREE.Vector3(1, 1, 1));
+    const S = character.root.matrixWorld.clone();
+    if (follow === 'hips') {
+      const hips = ch.hips.bone;
+      return new THREE.Matrix4().compose(hips.getWorldPosition(new THREE.Vector3()), hips.getWorldQuaternion(new THREE.Quaternion()), new THREE.Vector3(1, 1, 1));
+    }
+    if (follow !== 'root') return S;
+    const r = this.bodyComposed('root');
+    if (r.t.lengthSq() < 1e-12 && Math.abs(r.q.w) > 1 - 1e-9) return S;
+    const ground = ch.hips.bone.getWorldPosition(new THREE.Vector3()).applyMatrix4(S.clone().invert());
+    const pivot = new THREE.Vector3(ground.x - r.t.x, 0, ground.z - r.t.z);
+    const t = pivot.clone().add(r.t).sub(pivot.clone().applyQuaternion(r.q));
+    return S.multiply(new THREE.Matrix4().compose(t, r.q, new THREE.Vector3(1, 1, 1)));
+  }
+  toSpace(follow, ch, pos, rot = null) {
+    const inv = this.spaceMatrix(follow, ch).invert();
+    return { pos: pos.clone().applyMatrix4(inv), rot: rot ? rotOf(inv).multiply(rot) : null };
+  }
+  fromSpace(follow, ch, pos, rot = null) {
+    const M = this.spaceMatrix(follow, ch);
+    return { pos: pos.clone().applyMatrix4(M), rot: rot ? rotOf(M).multiply(rot) : null };
   }
 
-  // World transform of a control on the current frame.
-  controlWorld(id, kind, ch, f = this.player.frame, follow = this.limb(id).follow) {
+  // A limb control's values in its follow space on the frame shown: composed and base.
+  limbValues(id, kind, ch) {
+    const s = this.srv()?.limbs[id];
+    if (s) return kind === 'ik' ? { pos: s.pos, rot: s.rot, base: { pos: s.base.pos, rot: s.base.rot } } : { pos: s.pole, rot: null, base: { pos: s.base.pole, rot: null } };
+    const w = this.localWorld(id, kind, ch), v = this.toSpace(this.limb(id).follow, ch, w.pos, w.rot);
+    return { ...v, base: v };
+  }
+  // Without a result: the base curves, else the animation (the bones).
+  localWorld(id, kind, ch, f = this.player.frame, follow = this.limb(id).follow) {
     const l = this.limb(id), [a, b, c] = ch[id];
-    const M = this.spaceMatrix(follow, ch);
     const curves = kind === 'ik' ? l.target : l.pole;
-    const pos = hasKeys(curves, POS)
-      ? new THREE.Vector3(...POS.map((k) => evaluate(curves[k] ?? [], f))).applyMatrix4(M)
-      : kind === 'ik' ? c.bone.getWorldPosition(new THREE.Vector3()) : this.defaultPole(a, b, c);
-    let rot = c.bone.getWorldQuaternion(new THREE.Quaternion());
-    if (kind === 'ik' && hasKeys(curves, ROT)) {
-      const mq = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().extractRotation(M));
-      rot = mq.multiply(eulerQuat(...ROT.map((k) => evaluate(curves[k] ?? [], f))));
-    }
+    let pos = kind === 'ik' ? c.bone.getWorldPosition(new THREE.Vector3()) : this.defaultPole(a, b, c);
+    let rot = kind === 'ik' ? c.bone.getWorldQuaternion(new THREE.Quaternion()) : null;
+    if (hasKeys(curves, POS)) pos = this.fromSpace(follow, ch, evalV(curves, f)).pos;
+    if (kind === 'ik' && hasKeys(curves, ROT)) rot = this.fromSpace(follow, ch, new THREE.Vector3(), eulerQuat(...evalE(curves, f))).rot;
     return { pos, rot };
+  }
+  // World transform of a control on the frame shown (what the controls draw).
+  controlWorld(id, kind, ch) {
+    const v = this.limbValues(id, kind, ch);
+    return this.fromSpace(this.limb(id).follow, ch, v.pos, v.rot ?? new THREE.Quaternion());
   }
 
   // Where the elbow / knee points now: out from the shoulder-hand line, one upper-bone away.
@@ -215,9 +315,7 @@ export class ControlRig {
     p.y = 0;
     return p.applyMatrix4(M);
   }
-  rootRotation() {
-    return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().extractRotation(this.getCharacter().root.matrixWorld));
-  }
+  rootRotation() { return rotOf(this.getCharacter().root.matrixWorld); }
 
   update() {
     const ch = this.chains();
@@ -231,14 +329,17 @@ export class ControlRig {
       this.controlSize = Math.max(0.02, (box.max.y - box.min.y) * 0.06);
     }
     this.ensureMeshes(this.controlSize);
+    const hold = this.stale; // edited: keep the controls where they were put until the result is back
     for (const L of LIMBS) {
       const on = !!ch[L.id] && this.limb(L.id).ik;
       for (const kind of ['ik', 'pole', 'line']) this.controls.get(`${L.id}:${kind}`).visible = on;
       if (!on) continue;
       const ik = this.controls.get(`${L.id}:ik`), pole = this.controls.get(`${L.id}:pole`), line = this.controls.get(`${L.id}:line`);
       const dragged = this.dragging && this.picked?.limb === L.id;
-      if (!(dragged && this.picked.kind === 'ik')) { const w = this.controlWorld(L.id, 'ik', ch); ik.position.copy(w.pos); ik.quaternion.copy(w.rot); }
-      if (!(dragged && this.picked.kind === 'pole')) pole.position.copy(this.controlWorld(L.id, 'pole', ch).pos);
+      if (!hold || !this.placed) {
+        if (!(dragged && this.picked.kind === 'ik')) { const w = this.controlWorld(L.id, 'ik', ch); ik.position.copy(w.pos); ik.quaternion.copy(w.rot); }
+        if (!(dragged && this.picked.kind === 'pole')) pole.position.copy(this.controlWorld(L.id, 'pole', ch).pos);
+      }
       const picked = (k) => this.picked?.limb === L.id && this.picked.kind === k;
       ik.material.color.set(picked('ik') ? 0xffffff : 0xffb547);
       pole.material.color.set(picked('pole') ? 0xffffff : 0xc4b5fd);
@@ -249,15 +350,15 @@ export class ControlRig {
     const hips = this.controls.get('body:hips'), ring = this.controls.get('body:root');
     hips.visible = ring.visible = true;
     const draggedBody = this.dragging && isBody(this.picked);
-    if (!(draggedBody && this.picked.kind === 'hips')) {
+    if (!(draggedBody && this.picked.kind === 'hips') && (!hold || !this.placed)) {
       ch.hips.bone.getWorldPosition(hips.position);
       ch.hips.bone.getWorldQuaternion(hips.quaternion);
     }
-    if (!(draggedBody && this.picked.kind === 'root')) {
+    if (!(draggedBody && this.picked.kind === 'root') && (!hold || !this.placed)) {
       ring.position.copy(this.groundUnderHips(ch));
-      const o = this.offsetsAt('root');
-      ring.quaternion.copy(this.rootRotation().multiply(eulerQuat(o.rx, o.ry, o.rz)));
+      ring.quaternion.copy(this.rootRotation().multiply(this.bodyComposed('root').q));
     }
+    if (!hold) this.placed = true;
     hips.material.color.set(this.picked?.limb === 'body' && this.picked.kind === 'hips' ? 0xffffff : 0x5eead4);
     ring.material.color.set(this.picked?.limb === 'body' && this.picked.kind === 'root' ? 0xffffff : 0x5eead4);
   }
@@ -284,6 +385,8 @@ export class ControlRig {
     this.renderPanel();
     this.onPick?.(p);
   }
+  // The picked control as a layer member id.
+  memberId() { return this.picked ? `ctl:${this.picked.limb}:${this.picked.kind}` : null; }
 
   setMode(mode) {
     this.gizmo.setMode(mode);
@@ -292,13 +395,12 @@ export class ControlRig {
     this.$('rig-rotate').classList.toggle('on', mode === 'rotate');
   }
 
-  // Live feedback while dragging: solve the chain here on the character's bones.
   dragStart() {
     const p = this.picked, ch = this.chains();
     if (!isBody(p) || !ch) { this.start = null; return; }
     const m = this.controls.get(`body:${p.kind}`), character = this.getCharacter();
     const bones = p.kind === 'hips' ? [ch.hips.bone] : character.joints.filter((j) => j.parent < 0).map((j) => j.bone);
-    this.start = { pos: m.position.clone(), quat: m.quaternion.clone(),
+    this.start = { pos: m.position.clone(), quat: m.quaternion.clone(), composed: this.bodyComposed(p.kind),
       bones: bones.map((b) => ({ b, p: b.getWorldPosition(new THREE.Vector3()), q: b.getWorldQuaternion(new THREE.Quaternion()) })) };
   }
 
@@ -308,6 +410,7 @@ export class ControlRig {
     return { dp: m.position.clone().sub(s.pos), dq: m.quaternion.clone().multiply(s.quat.clone().invert()) };
   }
 
+  // Live feedback while dragging: solve the chain here on the character's bones.
   preview() {
     if (!this.dragging || !this.picked) return;
     if (isBody(this.picked)) {
@@ -328,109 +431,158 @@ export class ControlRig {
 
   dragEnd() {
     if (!this.picked) return;
-    if (isBody(this.picked)) { if (this.start) this.keyBody(this.picked.kind, this.bodyValues()); this.start = null; return; }
+    if (isBody(this.picked)) {
+      if (this.start) { const w = this.bodyWanted(); this.commitBody(this.picked.kind, w.t, w.q); }
+      this.start = null;
+      return;
+    }
     this.key(this.picked.limb, this.picked.kind);
   }
 
-  // Offsets after the drag: the change (world) brought to skeleton space, on top of the keyed offset.
-  bodyValues() {
-    const o = this.offsetsAt(this.picked.kind);
-    if (!this.start) return o;
+  // Composed body offset wanted after the drag: the change (world) in skeleton space, on top.
+  bodyWanted() {
+    const c = this.start?.composed ?? this.bodyComposed(this.picked.kind);
+    if (!this.start) return { t: c.t.clone(), q: c.q.clone() };
     const { dp, dq } = this.bodyDelta();
     const inv = this.getCharacter().root.matrixWorld.clone().invert();
     const t = this.start.pos.clone().add(dp).applyMatrix4(inv).sub(this.start.pos.clone().applyMatrix4(inv));
     const mq = this.rootRotation();
     const dqs = mq.clone().invert().multiply(dq).multiply(mq);
-    const e = quatEuler(dqs.multiply(eulerQuat(o.rx, o.ry, o.rz)), [o.rx, o.ry, o.rz]);
-    return { tx: o.tx + t.x, ty: o.ty + t.y, tz: o.tz + t.z, rx: e[0], ry: e[1], rz: e[2] };
+    return { t: c.t.clone().add(t), q: dqs.multiply(c.q) };
+  }
+  bodyEuler(q, near = [0, 0, 0]) { return quatEuler(q, near); }
+
+  // ---- keying (Maya-style: the control ends where it is put) -------------------------------
+  // Key a limb control so its composed value becomes wantPos / wantRot (follow space; null:
+  // leave that group alone) on the selected layer (or the base).
+  commitLimb(id, kind, wantPos, wantRot = null, quiet = false) {
+    const ch = this.chains();
+    if (!ch?.[id]) return;
+    const st = this.store();
+    if (st.layer && st.w < 1e-3) { this.status(`"${st.name}" has weight 0 here: raise it to key on it`, true); return; }
+    const cur = this.limbValues(id, kind, ch), curves = this.curvesFor(st, { limb: id, kind }), f = st.f;
+    if (wantPos) {
+      const d = wantPos.clone().sub(cur.pos);
+      let p;
+      if (!st.layer) p = cur.base.pos.clone().add(d);
+      else p = (hasKeys(curves, POS) ? evalV(curves, f) : st.additive ? new THREE.Vector3() : cur.pos.clone()).add(d.multiplyScalar(1 / st.w));
+      POS.forEach((k, n) => setKey((curves[k] ??= []), f, p.getComponent(n)));
+    }
+    if (wantRot && kind === 'ik') {
+      const C = cur.rot, D = wantRot, near = evalE(curves, f);
+      let q;
+      if (!st.layer) q = D.clone().multiply(C.clone().invert()).multiply(cur.base.rot);
+      else if (hasKeys(curves, ROT)) q = eulerQuat(...near).multiply(C.clone().invert()).multiply(D);
+      else q = st.additive ? C.clone().invert().multiply(D) : D.clone();
+      const e = quatEuler(q, near);
+      ROT.forEach((k, n) => setKey((curves[k] ??= []), f, e[n]));
+    }
+    if (!quiet) this.status(`Keyed ${this.label(id, kind)} on ${st.name} at frame ${this.player.frame}`);
+    this.changed();
   }
 
-  keyBody(kind, v, quiet = false) {
-    const c = this.curvesOf({ limb: 'body', kind }), f = this.player.frame;
-    for (const k of ALL) setKey((c[k] ??= []), f, v[k]);
-    if (!quiet) this.status(`Keyed ${this.label('body', kind)} at frame ${f}`);
+  // Key a body control so its composed offset becomes wantT / wantQ (null: leave alone).
+  commitBody(kind, wantT, wantQ, quiet = false) {
+    const st = this.store();
+    if (st.layer && st.w < 1e-3) { this.status(`"${st.name}" has weight 0 here: raise it to key on it`, true); return; }
+    const cur = this.bodyComposed(kind), curves = this.curvesFor(st, { limb: 'body', kind }), f = st.f;
+    const t = wantT ?? cur.t, q = wantQ ?? cur.q;
+    const d = t.clone().sub(cur.t);
+    let p;
+    if (!st.layer) p = cur.base.t.clone().add(d);
+    else p = (hasKeys(curves, POS) ? evalV(curves, f) : st.additive ? new THREE.Vector3() : cur.t.clone()).add(d.multiplyScalar(1 / st.w));
+    const near = evalE(curves, f);
+    let r;
+    if (!st.layer) r = q.clone().multiply(cur.q.clone().invert()).multiply(cur.base.q);
+    else if (hasKeys(curves, ROT)) r = eulerQuat(...near).multiply(cur.q.clone().invert()).multiply(q);
+    else r = st.additive ? cur.q.clone().invert().multiply(q) : q.clone();
+    const e = quatEuler(r, near);
+    POS.forEach((k, n) => setKey((curves[k] ??= []), f, p.getComponent(n)));
+    ROT.forEach((k, n) => setKey((curves[k] ??= []), f, e[n]));
+    if (!quiet) this.status(`Keyed ${this.label('body', kind)} on ${st.name} at frame ${this.player.frame}`);
+    this.changed();
+  }
+
+  // Key the IK/FK blend so the composed blend becomes v.
+  commitBlend(id, v) {
+    const st = this.store(), l = this.limb(id);
+    const cur = this.srv()?.limbs[id]?.blend ?? this.blendAt(l);
+    if (!st.layer) {
+      if (l.blend?.length) setKey(l.blend, st.f, v); else l.weight = v;
+    } else {
+      if (st.w < 1e-3) { this.status(`"${st.name}" has weight 0 here: raise it to key on it`, true); return; }
+      const lc = ((this.layerRig(st.layer).limbs ??= {})[id] ??= {});
+      const old = lc.blend?.length ? evaluate(lc.blend, st.f) : st.additive ? 0 : cur;
+      setKey((lc.blend ??= []), st.f, old + (v - cur) / st.w);
+    }
     this.changed();
   }
 
   // Timeline: move the picked control's key at frame f by delta frames (replacing a key there).
   moveKey(f, delta) {
     if (!this.picked || !delta) return;
-    const curves = this.curvesOf(this.picked), to = Math.max(0, f + delta);
+    const st = this.store(), curves = this.curvesFor(st, this.picked);
+    const from = this.toStore(st, f), to = Math.max(0, this.toStore(st, f + delta));
+    if (from === to) return;
     for (const k of Object.keys(curves)) {
-      const keys = curves[k].filter((x) => Math.round(x.f) !== to || to === f);
-      for (const x of keys) if (Math.round(x.f) === f) x.f = to;
+      const keys = curves[k].filter((x) => Math.round(x.f) !== to);
+      for (const x of keys) if (Math.round(x.f) === from) x.f = to;
       keys.sort((a, b) => a.f - b.f);
       curves[k] = keys;
     }
-    this.player.setFrame(to);
-    this.status(`Moved the ${this.label(this.picked.limb, this.picked.kind)} key from frame ${f} to ${to}`);
+    this.player.setFrame(this.toStack(st, to));
+    this.status(`Moved the ${this.label(this.picked.limb, this.picked.kind)} key (${st.name}) to frame ${this.player.frame}`);
     this.changed();
   }
 
-  // Key a control where it is now, in its follow space, at the current frame.
+  // Key a control where its mesh is now.
   key(id, kind, quiet = false) {
     const ch = this.chains();
     if (!ch?.[id]) return;
-    const l = this.limb(id), f = this.player.frame;
     const m = this.controls.get(`${id}:${kind}`);
-    const v = this.spaceValues(l, kind, m.position, m.quaternion, ch, f);
-    const curves = kind === 'ik' ? l.target : l.pole;
-    for (const k of kind === 'ik' ? [...POS, ...ROT] : POS) setKey((curves[k] ??= []), f, v[k]);
-    if (!quiet) this.status(`Keyed ${this.label(id, kind)} at frame ${f}`);
-    this.changed();
-  }
-
-  // World position / rotation -> {tx..rz} in the limb's follow space (rotation: Euler near the keys).
-  spaceValues(l, kind, pos, rot, ch, f, follow = l.follow, near = null) {
-    const inv = this.spaceMatrix(follow, ch).invert();
-    const p = pos.clone().applyMatrix4(inv);
-    const out = { tx: p.x, ty: p.y, tz: p.z };
-    if (kind === 'ik') {
-      const curves = l.target;
-      const mq = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().extractRotation(inv));
-      const e = quatEuler(mq.multiply(rot), near ?? ROT.map((k) => (curves[k]?.length ? evaluate(curves[k], f) : 0)));
-      ROT.forEach((k, n) => { out[k] = e[n]; });
-    }
-    return out;
-  }
-
-  // {tx..rz} in the follow space -> the control mesh (world).
-  placeControl(id, kind, v, ch) {
-    const M = this.spaceMatrix(this.limb(id).follow, ch), m = this.controls.get(`${id}:${kind}`);
-    m.position.set(v.tx, v.ty, v.tz).applyMatrix4(M);
-    if (kind === 'ik') {
-      const mq = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().extractRotation(M));
-      m.quaternion.copy(mq.multiply(eulerQuat(v.rx, v.ry, v.rz)));
-    }
+    const v = this.toSpace(this.limb(id).follow, ch, m.position, kind === 'ik' ? m.quaternion : null);
+    this.commitLimb(id, kind, v.pos, v.rot, quiet);
   }
 
   // ---- follow space conversion -----------------------------------------------------------
   // Re-key a limb's controls in another follow space: on every keyed frame the control stays
-  // where it was (between keys it now interpolates in the new space).
+  // where it was (between keys it now interpolates in the new space). Base and override layer
+  // values are positions; additive layer offsets are turned with the space.
   setFollow(id, follow) {
-    const ch = this.chains(), l = this.limb(id);
-    if (l.follow === follow) return;
+    const ch = this.chains(), l = this.limb(id), old = l.follow ?? 'world';
+    if (old === follow) return;
     if (!ch?.[id]) { l.follow = follow; this.changed(); return; }
-    const f0 = this.player.frame, out = [];
-    for (const kind of ['ik', 'pole']) {
-      const curves = kind === 'ik' ? l.target : l.pole;
-      for (const names of kind === 'ik' ? [POS, ROT] : [POS]) {
+    const mp = this.motionPanel, f0 = this.player.frame;
+    const sets = [{ st: { layer: null }, target: l.target, pole: l.pole, additive: false }];
+    for (const [i, layer] of mp.layers.entries()) {
+      const c = layer.kind === 'keys' ? layer.rig?.limbs?.[id] : null;
+      if (c) sets.push({ st: { layer, i }, target: c.target ?? {}, pole: c.pole ?? {}, additive: layer.blend !== 'override' });
+    }
+    // Space change at a stack frame: new <- old (a matrix in world terms).
+    const change = (f) => {
+      this.player.setFrame(f);
+      return this.spaceMatrix(follow, ch).invert().multiply(this.spaceMatrix(old, ch));
+    };
+    let frames = 0;
+    for (const s of sets) {
+      for (const [curves, kind] of [[s.target, 'ik'], [s.pole, 'pole']]) {
+        const pf = keyedFrames(curves, POS), rf = kind === 'ik' ? keyedFrames(curves, ROT) : [];
+        const pos = pf.map((f) => { const M = change(this.toStack(s.st, f)), v = evalV(curves, f);
+          return s.additive ? v.applyQuaternion(rotOf(M)) : v.applyMatrix4(M); });
         let near = null;
-        for (const f of keyedFrames(curves, names)) {
-          this.player.setFrame(f); // the follow space (hips) on that frame
-          const w = this.controlWorld(id, kind, ch, f);
-          const v = this.spaceValues(l, kind, w.pos, w.rot, ch, f, follow, near);
-          if (names === ROT) near = ROT.map((k) => v[k]);
-          out.push({ curves, names, f, v });
-        }
+        const rot = rf.map((f) => { const M = change(this.toStack(s.st, f));
+          const q = eulerQuat(...evalE(curves, f));
+          const e = quatEuler(s.additive ? q : rotOf(M).multiply(q), near ?? evalE(curves, f));
+          near = e;
+          return e; });
+        pf.forEach((f, n) => POS.forEach((k, c) => setKey(curves[k], f, pos[n].getComponent(c))));
+        rf.forEach((f, n) => ROT.forEach((k, c) => setKey(curves[k], f, rot[n][c])));
+        frames += pf.length + rf.length;
       }
     }
-    for (const { curves, names } of out) for (const k of names) curves[k] = [];
-    for (const { curves, names, f, v } of out) for (const k of names) setKey(curves[k], f, v[k]);
-    for (const curves of [l.target, l.pole]) for (const k of Object.keys(curves)) if (!curves[k].length) delete curves[k];
     l.follow = follow;
     this.player.setFrame(f0);
-    this.status(`${this.label(id)}: controls now follow ${follow === 'hips' ? 'the hips' : 'the root'} (${new Set(out.map((o) => o.f)).size} keyed frame(s) converted)`);
+    this.status(`${this.label(id)}: controls now follow ${follow === 'hips' ? 'the hips' : follow === 'root' ? 'the root control' : 'the world'} (${frames} key(s) converted)`);
     this.changed();
   }
 
@@ -451,15 +603,17 @@ export class ControlRig {
     return arrays;
   }
 
-  // Run fn with the character showing the FK pose of the current frame.
-  withFK(arrays, fn) {
+  // Run fn with the character showing the FK pose (of `frames`, or the current frame).
+  withFK(arrays, fn, frames = null) {
     const t = this.player.target;
     if (!t || arrays.rotations.length !== t.rotations.length) throw new Error('the FK pose does not match the shown animation (wait for it to update)');
     const keep = [t.rotations, t.translations];
     t.rotations = arrays.rotations;
     t.translations = arrays.translations;
-    this.player.applyTarget(this.player.frame);
-    try { return fn(); } finally {
+    try {
+      if (!frames) { this.player.applyTarget(this.player.frame); return fn(); }
+      return frames.map((f) => { this.player.applyTarget(f); return fn(f); });
+    } finally {
       [t.rotations, t.translations] = keep;
       this.player.applyTarget(this.player.frame);
     }
@@ -478,22 +632,21 @@ export class ControlRig {
     if (!id || !ch?.[id]) return;
     this.player.play(false);
     try {
-      const arrays = await this.fkArrays();
-      this.withFK(arrays, () => {
-        const [a, b, c] = ch[id];
-        this.placeWorld(id, 'ik', c.bone.getWorldPosition(new THREE.Vector3()), c.bone.getWorldQuaternion(new THREE.Quaternion()));
-        this.placeWorld(id, 'pole', this.defaultPole(a, b, c));
-        this.key(id, 'ik', true);
-        this.key(id, 'pole', true);
-      });
+      const fk = await this.fkWorld(id, ch);
+      const l = this.limb(id), ik = this.toSpace(l.follow, ch, fk.pos, fk.rot), pole = this.toSpace(l.follow, ch, fk.pole);
+      this.commitLimb(id, 'ik', ik.pos, ik.rot, true);
+      this.commitLimb(id, 'pole', pole.pos, null, true);
       this.status(`${this.label(id)}: IK control and pole matched to the FK pose at frame ${this.player.frame}`);
     } catch (err) { this.status(`Match IK to FK failed: ${err.message || err}`, true); }
   }
 
-  placeWorld(id, kind, pos, rot = null) {
-    const m = this.controls.get(`${id}:${kind}`);
-    m.position.copy(pos);
-    if (rot) m.quaternion.copy(rot);
+  // FK end joint (position, rotation) and pole of a limb on the current frame (world).
+  async fkWorld(id, ch) {
+    const arrays = await this.fkArrays();
+    return this.withFK(arrays, () => {
+      const [a, b, c] = ch[id];
+      return { pos: c.bone.getWorldPosition(new THREE.Vector3()), rot: c.bone.getWorldQuaternion(new THREE.Quaternion()), pole: this.defaultPole(a, b, c) };
+    });
   }
 
   // Match FK to IK: key the limb's bones on the selected anim layer (at this frame) so the FK
@@ -529,31 +682,37 @@ export class ControlRig {
   }
 
   keyPicked() {
-    if (!this.picked) return;
-    if (isBody(this.picked)) this.keyBody(this.picked.kind, this.offsetsAt(this.picked.kind));
-    else this.key(this.picked.limb, this.picked.kind);
+    const p = this.picked, ch = this.chains();
+    if (!p || !ch) return;
+    if (isBody(p)) { const c = this.bodyComposed(p.kind); this.commitBody(p.kind, c.t, c.q); return; }
+    if (!ch[p.limb]) return;
+    const v = this.limbValues(p.limb, p.kind, ch);
+    this.commitLimb(p.limb, p.kind, v.pos, v.rot);
   }
 
   deleteKeyAtFrame() {
     if (!this.picked) return;
-    const f = this.player.frame, curves = this.curvesOf(this.picked);
-    for (const k of Object.keys(curves)) curves[k] = curves[k].filter((x) => Math.round(x.f) !== f);
+    const st = this.store(), curves = this.curvesFor(st, this.picked);
+    for (const k of Object.keys(curves)) curves[k] = curves[k].filter((x) => Math.round(x.f) !== st.f);
+    this.status(`Deleted the ${this.label(this.picked.limb, this.picked.kind)} key at frame ${this.player.frame} (${st.name})`);
     this.changed();
   }
 
+  // Delete every key of the picked control (its limb's IK control and pole) on the selected
+  // layer / the base.
   resetLimb() {
     const id = this.picked?.limb;
     if (!id) { this.status('Pick a control first (viewport or Picker)', true); return; }
+    const st = this.store();
     if (id === 'body') {
-      this.body()[this.picked.kind] = {};
-      this.status(`${this.label('body', this.picked.kind)}: no offset (back to the animation)`);
+      if (st.layer) delete this.layerRig(st.layer).body?.[this.picked.kind]; else this.body()[this.picked.kind] = {};
+      this.status(`${this.label('body', this.picked.kind)}: its keys on ${st.name} are deleted`);
       this.changed();
       return;
     }
-    const l = this.limb(id);
-    l.target = {};
-    l.pole = {};
-    this.status(`${LIMBS.find((L) => L.id === id).label}: IK control and pole follow the animation again`);
+    if (st.layer) delete this.layerRig(st.layer).limbs?.[id];
+    else { const l = this.limb(id); l.target = {}; l.pole = {}; }
+    this.status(`${LIMBS.find((L) => L.id === id).label}: IK control and pole keys on ${st.name} are deleted`);
     this.changed();
   }
 
@@ -565,18 +724,21 @@ export class ControlRig {
   }
 
   changed() {
+    this.stale = true;
+    clearTimeout(this.staleTimer); // a failed request must not freeze the controls
+    this.staleTimer = setTimeout(() => { this.stale = false; }, 10000);
     this.renderPanel();
-    this.motionPanel.renderTimeline();
+    this.motionPanel.renderLayers();
     this.motionPanel.schedule();
   }
 
-  // Frames keyed on the picked control (timeline row).
+  // Frames keyed on the picked control on the selected layer / the base (timeline row).
   pickedKeyFrames() {
     if (!this.picked) return null;
-    const curves = this.curvesOf(this.picked);
+    const st = this.store(), curves = this.curvesFor(st, this.picked);
     const set = new Set();
-    for (const keys of Object.values(curves)) for (const k of keys) set.add(Math.round(k.f));
-    return { label: this.label(this.picked.limb, this.picked.kind), frames: [...set].sort((a, b) => a - b) };
+    for (const keys of Object.values(curves)) for (const k of keys) set.add(this.toStack(st, Math.round(k.f)));
+    return { label: `${this.label(this.picked.limb, this.picked.kind)} · ${st.name}`, frames: [...set].sort((a, b) => a - b) };
   }
 
   // ---- Animate › Rig panel ---------------------------------------------------------------
@@ -607,38 +769,42 @@ export class ControlRig {
         seg.append(b);
       }
       const follow = document.createElement('select');
-      follow.title = 'What the IK control and the pole follow';
-      follow.append(new Option('follows Root', 'root'), new Option('follows Hips', 'hips'));
-      follow.value = l.follow;
+      follow.title = 'What the IK control and the pole follow: World (nothing: planted), Root (the root control) or Hips';
+      for (const [v, t] of FOLLOWS) follow.append(new Option(`follows ${t}`, v));
+      follow.value = l.follow ?? 'world';
       follow.disabled = !l.ik;
       follow.addEventListener('change', () => this.setFollow(L.id, follow.value));
       const keys = document.createElement('span');
       keys.className = 'keys';
       const nT = new Set(Object.values(l.target).flat().map((k) => Math.round(k.f))).size;
       const nP = new Set(Object.values(l.pole).flat().map((k) => Math.round(k.f))).size;
-      keys.textContent = !ch[L.id] ? 'chain not found in the mapping' : l.ik ? `IK control: ${nT ? `${nT} key(s)` : 'follows the animation'} · pole: ${nP ? `${nP} key(s)` : 'follows the animation'}` +
-        (l.blend?.length ? ` · blend: ${l.blend.length} key(s)` : '') : 'FK';
+      const onLayers = this.motionPanel.layers.filter((x) => x.kind === 'keys' && x.rig?.limbs?.[L.id] &&
+        (anyKeys(x.rig.limbs[L.id].target) || anyKeys(x.rig.limbs[L.id].pole) || x.rig.limbs[L.id].blend?.length)).map((x) => x.name);
+      keys.textContent = !ch[L.id] ? 'chain not found in the mapping' : l.ik ? `base: IK ${nT ? `${nT} key(s)` : 'follows the animation'} · pole ${nP ? `${nP} key(s)` : 'follows'}` +
+        (l.blend?.length ? ` · blend ${l.blend.length} key(s)` : '') + (onLayers.length ? ` · layers: ${onLayers.join(', ')}` : '') : 'FK';
       row.addEventListener('click', (e) => { if (e.target === row || e.target === name || e.target === keys) { if (l.ik) this.pick({ limb: L.id, kind: 'ik' }); } });
       const blend = document.createElement('div');
       blend.className = 'rig-blend';
       blend.hidden = !l.ik;
       const fkL = document.createElement('span'); fkL.textContent = 'FK';
+      const bv = this.srv()?.limbs[L.id]?.blend ?? this.blendAt(l);
       const slider = document.createElement('input');
-      Object.assign(slider, { type: 'range', min: 0, max: 1, step: 0.05, value: this.blendAt(l), title: 'IK/FK blend on this frame (keyed: Key blend; not keyed: the whole animation)' });
+      Object.assign(slider, { type: 'range', min: 0, max: 1, step: 0.05, value: bv, title: 'IK/FK blend on this frame (keyed on the selected layer, or the whole animation when the base has no blend keys)' });
       slider.dataset.blend = L.id;
       const ikL = document.createElement('span'); ikL.textContent = 'IK';
-      const val = document.createElement('span'); val.className = 'blend-val'; val.textContent = this.blendAt(l).toFixed(2);
-      slider.addEventListener('input', () => {
-        const v = Number(slider.value);
-        if (l.blend?.length) setKey(l.blend, this.player.frame, v); else l.weight = v;
-        val.textContent = v.toFixed(2);
-      });
-      slider.addEventListener('change', () => this.changed());
+      const val = document.createElement('span'); val.className = 'blend-val'; val.textContent = bv.toFixed(2);
+      slider.addEventListener('input', () => { val.textContent = Number(slider.value).toFixed(2); });
+      slider.addEventListener('change', () => this.commitBlend(L.id, Number(slider.value)));
       const kb = document.createElement('button');
-      Object.assign(kb, { type: 'button', className: 'icon-button', textContent: '◆', title: 'Key the IK/FK blend at the current frame (then it is animated)' });
-      kb.addEventListener('click', () => { setKey((l.blend ??= []), this.player.frame, Number(slider.value)); this.status(`${L.label}: IK/FK blend keyed at frame ${this.player.frame}`); this.changed(); });
+      Object.assign(kb, { type: 'button', className: 'icon-button', textContent: '◆', title: 'Key the IK/FK blend at the current frame (on the selected layer / the base)' });
+      kb.addEventListener('click', () => {
+        const st = this.store(), v = Number(slider.value);
+        if (st.layer) this.commitBlend(L.id, v);
+        else { setKey((l.blend ??= []), st.f, v); this.changed(); }
+        this.status(`${L.label}: IK/FK blend keyed at frame ${this.player.frame} (${st.name})`);
+      });
       const xb = document.createElement('button');
-      Object.assign(xb, { type: 'button', className: 'icon-button', textContent: '✕', title: 'Delete the blend key at the current frame', hidden: !l.blend?.length });
+      Object.assign(xb, { type: 'button', className: 'icon-button', textContent: '✕', title: 'Delete the base blend key at the current frame', hidden: !l.blend?.length });
       xb.addEventListener('click', () => { l.blend = (l.blend ?? []).filter((k) => Math.round(k.f) !== this.player.frame); this.changed(); });
       blend.append(fkL, slider, ikL, val, kb, xb);
       row.append(name, seg, follow, blend, keys);
@@ -650,7 +816,7 @@ export class ControlRig {
     bname.textContent = 'Body';
     const bseg = document.createElement('span');
     bseg.className = 'seg';
-    for (const [kind, text, tip] of [['hips', 'Hips', 'Hips box: offset of the hips (IK feet stay planted)'], ['root', 'Root', 'Ground circle: offset of the whole character']]) {
+    for (const [kind, text, tip] of [['hips', 'Hips', 'Hips box: offset of the hips (IK feet in World stay planted)'], ['root', 'Root', 'Ground circle: offset of the whole character']]) {
       const b = document.createElement('button');
       Object.assign(b, { type: 'button', textContent: text, title: tip, className: isBody(this.picked) && this.picked.kind === kind ? 'on' : '' });
       b.addEventListener('click', () => this.pick({ limb: 'body', kind }));
@@ -659,58 +825,90 @@ export class ControlRig {
     const bkeys = document.createElement('span');
     bkeys.className = 'keys';
     const nk = (c) => new Set(Object.values(c ?? {}).flat().map((k) => Math.round(k.f))).size;
-    bkeys.textContent = `hips: ${nk(this.body().hips) ? `${nk(this.body().hips)} key(s)` : 'no offset'} · root: ${nk(this.body().root) ? `${nk(this.body().root)} key(s)` : 'no offset'}`;
+    bkeys.textContent = `base: hips ${nk(this.body().hips) ? `${nk(this.body().hips)} key(s)` : 'no offset'} · root ${nk(this.body().root) ? `${nk(this.body().root)} key(s)` : 'no offset'}`;
     body.append(bname, bseg, document.createElement('span'), bkeys);
     host.prepend(body);
-    this.$('rig-selected').textContent = !this.picked ? ''
-      : isBody(this.picked) ? `Picked: ${this.label('body', this.picked.kind)} (offset from the animation)`
-      : `Picked: ${this.label(this.picked.limb, this.picked.kind)} (follows ${this.limb(this.picked.limb).follow})`;
+    const st = this.store();
+    this.$('rig-selected').textContent = !this.picked ? `Keys go to: ${st.name}`
+      : isBody(this.picked) ? `Picked: ${this.label('body', this.picked.kind)} (offset) · keys go to ${st.name}`
+      : `Picked: ${this.label(this.picked.limb, this.picked.kind)} (follows ${this.limb(this.picked.limb).follow ?? 'world'}) · keys go to ${st.name}`;
   }
 
-  // Channel box: the picked control's values (live while it is dragged); a change keys it.
+  // Channel box: the picked control's composed values (live while it is dragged); a change keys it.
   channelSpec() {
     const p = this.picked, ch = this.chains();
     if (!p || !(isBody(p) ? ch : ch?.[p.limb])) return null;
-    let v;
-    if (this.dragging && isBody(p)) v = this.bodyValues();
-    else if (this.dragging) {
-      const m = this.controls.get(`${p.limb}:${p.kind}`);
-      v = this.spaceValues(this.limb(p.limb), p.kind, m.position, m.quaternion, ch, this.player.frame);
-    } else v = this.currentValues();
+    const v = this.currentValues(true);
     if (!v) return null;
-    const keys = p.kind === 'pole' ? POS : ALL;
-    const keyed = keyedFrames(this.curvesOf(p), keys).includes(this.player.frame);
+    const keys = p.kind === 'pole' ? POS : ALL, st = this.store();
+    const keyed = keyedFrames(this.curvesFor(st, p), keys).includes(st.f);
     return {
       id: `rig:${p.limb}:${p.kind}`,
       title: this.label(p.limb, p.kind),
-      subtitle: `${isBody(p) ? 'offset from the animation' : `follows ${this.limb(p.limb).follow}`} · frame ${this.player.frame}${keyed ? ' · keyed' : ''}`,
+      subtitle: `${isBody(p) ? 'offset' : `follows ${this.limb(p.limb).follow ?? 'world'}`} · keys → ${st.name} · frame ${this.player.frame}${keyed ? ' · keyed' : ''}`,
       channels: keys.map((k) => ({ k, label: LABELS[k], value: v[k] })),
       set: (k, value, final) => {
         if (!final) return;
         const now = this.currentValues();
         if (!now) return;
         now[k] = value;
-        if (isBody(p)) { this.keyBody(p.kind, now); return; }
-        this.placeControl(p.limb, p.kind, now, ch);
-        this.key(p.limb, p.kind);
+        this.commitValues(p, now);
       },
+      reset: (group) => this.resetChannels(group),
     };
   }
 
-  // Values of the picked control on the frame shown, in its follow space.
-  currentValues() {
+  // Key the picked control at channel values {tx..rz} (composed, follow space / offset).
+  commitValues(p, v) {
+    const ch = this.chains();
+    if (isBody(p)) { this.commitBody(p.kind, new THREE.Vector3(v.tx, v.ty, v.tz), eulerQuat(v.rx, v.ry, v.rz)); return; }
+    this.commitLimb(p.limb, p.kind, new THREE.Vector3(v.tx, v.ty, v.tz), p.kind === 'ik' ? eulerQuat(v.rx, v.ry, v.rz) : null);
+    if (!ch) return;
+  }
+
+  // Channel box Reset: body offsets to 0; limb controls back onto the animation (FK).
+  async resetChannels(group) {
     const p = this.picked, ch = this.chains();
-    if (isBody(p)) return ch ? this.offsetsAt(p.kind) : null;
-    if (!p || !ch?.[p.limb]) return null;
-    const l = this.limb(p.limb), w = this.controlWorld(p.limb, p.kind, ch);
-    return this.spaceValues(l, p.kind, w.pos, w.rot, ch, this.player.frame);
+    if (!p || !ch) return;
+    if (isBody(p)) {
+      this.commitBody(p.kind, group === 't' ? new THREE.Vector3() : null, group === 'r' ? new THREE.Quaternion() : null);
+      return;
+    }
+    if (group === 'r' && p.kind === 'pole') return;
+    try {
+      const fk = await this.fkWorld(p.limb, ch), l = this.limb(p.limb);
+      if (p.kind === 'pole') { this.commitLimb(p.limb, 'pole', this.toSpace(l.follow, ch, fk.pole).pos); return; }
+      const v = this.toSpace(l.follow, ch, fk.pos, fk.rot);
+      this.commitLimb(p.limb, 'ik', group === 't' ? v.pos : null, group === 'r' ? v.rot : null);
+      this.status(`${this.label(p.limb, p.kind)}: ${group === 't' ? 'position' : 'rotation'} back on the animation at frame ${this.player.frame}`);
+    } catch (err) { this.status(`Reset failed: ${err.message || err}`, true); }
+  }
+
+  // Composed values of the picked control on the frame shown, as channels {tx..rz}.
+  currentValues(live = false) {
+    const p = this.picked, ch = this.chains();
+    if (!p || !ch) return null;
+    if (isBody(p)) {
+      const c = live && this.dragging && this.start ? this.bodyWanted() : this.bodyComposed(p.kind);
+      const e = quatEuler(c.q, evalE(this.curvesOf(p), this.player.frame));
+      return { tx: c.t.x, ty: c.t.y, tz: c.t.z, rx: e[0], ry: e[1], rz: e[2] };
+    }
+    if (!ch[p.limb]) return null;
+    let v;
+    if (live && this.dragging) {
+      const m = this.controls.get(`${p.limb}:${p.kind}`);
+      v = this.toSpace(this.limb(p.limb).follow, ch, m.position, p.kind === 'ik' ? m.quaternion : null);
+    } else v = this.limbValues(p.limb, p.kind, ch);
+    const out = { tx: v.pos.x, ty: v.pos.y, tz: v.pos.z };
+    if (p.kind === 'ik') { const e = quatEuler(v.rot, evalE(this.curvesOf(p), this.player.frame)); ROT.forEach((k, n) => { out[k] = e[n]; }); }
+    return out;
   }
 
   // Refresh the frame-dependent widgets (blend sliders) when the frame changes.
   syncValues() {
     for (const s of this.$('rig-limbs').querySelectorAll('input[data-blend]')) {
       if (document.activeElement === s) continue;
-      const v = this.blendAt(this.limb(s.dataset.blend));
+      const v = this.srv()?.limbs[s.dataset.blend]?.blend ?? this.blendAt(this.limb(s.dataset.blend));
       s.value = v;
       s.nextElementSibling.nextElementSibling.textContent = v.toFixed(2);
     }

@@ -198,6 +198,13 @@ export class TPoseEditor {
         this.dirty = true;
         this.mirror(j.index);
       },
+      reset: () => { // rotation back to the automatic T-pose
+        j.bone.quaternion.copy(this.auto[j.index]);
+        j.bone.updateMatrixWorld(true);
+        this.euler.set(j.index, [0, 0, 0]);
+        this.dirty = true;
+        this.mirror(j.index);
+      },
     };
   }
 

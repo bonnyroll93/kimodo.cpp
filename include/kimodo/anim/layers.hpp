@@ -83,6 +83,11 @@ struct AnimationLayer {
     AnimationClip clip;
     BlendMode mode = BlendMode::Override;
     float weight = 1.F;
+    // Animated weight (Maya-style keyable layer weight): samples per layer frame (layer time
+    // (t - timing.start) * timing.speed, weight_fps per second), linear between them, held
+    // at the ends; when present it replaces weight.
+    std::vector<float> weight_samples;
+    float weight_fps = 30.F;
     bool enabled = true;
     bool muted = false;
     AnimationMask mask = full_body_mask();
@@ -98,6 +103,9 @@ struct AnimationLayer {
 inline constexpr unsigned ChannelRotation = 1U, ChannelTranslation = 2U, ChannelScale = 4U, ChannelAll = 7U;
 
 // Samples a clip at time t (seconds): linear/slerp interpolation between frames.
+// The layer's weight at stack time t (weight, or the animated weight samples).
+[[nodiscard]] float layer_weight(const AnimationLayer &layer, float t) noexcept;
+
 [[nodiscard]] std::vector<Transform> sample_clip(const AnimationClip &clip, float t, TimeWrap wrap = TimeWrap::Clamp);
 
 class AnimationStack {

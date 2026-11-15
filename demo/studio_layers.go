@@ -3,7 +3,7 @@ package main
 // Kimodo Extended step 4: animation layer stacks baked by `kmd-anim layers`.
 //   POST /api/layers   {character?, mapping?, align_rest?, layers:[{name, root_motion, mode, weight,
 //                       mask: "full"|"upper"|"lower"|{custom mask JSON}, enabled, muted, reference, wrap}]}
-//   GET  /api/layers/<id>/{clip.json,rotations.f32,translations.f32,root.f32}
+//   GET  /api/layers/<id>/{clip.json,rotations.f32,translations.f32,root.f32,controls.f32}
 // Every layer goes through the root-motion step and, with a character, the retarget step
 // (both cached); the stack is then baked on the character's skeleton or, without a
 // character, on the native skeleton of the motions.
@@ -361,6 +361,7 @@ func (c studioConfig) layers(ctx context.Context, req layersRequest) (layersResu
 			return layersResult{}, herr
 		}
 		args = append(args, "--control-rig", rigPath)
+		key = append(key, "controls-v2") // results also hold control_rig.f32
 	}
 	id := hashID(append(key, args...)...)
 	dir := filepath.Join(c.output, "layers", id)
@@ -380,6 +381,9 @@ func (c studioConfig) layers(ctx context.Context, req layersRequest) (layersResu
 	}
 	if characterPath == "" {
 		body["root"] = "/api/layers/" + id + "/root.f32"
+	}
+	if info, err := os.Stat(filepath.Join(dir, "control_rig.f32")); err == nil && info.Mode().IsRegular() {
+		body["controls"] = "/api/layers/" + id + "/controls.f32" // per-frame control values (control_rig.hpp)
 	}
 	return layersResult{id: id, dir: dir, characterPath: characterPath, body: body}, nil
 }
@@ -437,7 +441,7 @@ func registerLayers(mux *http.ServeMux, c studioConfig) {
 	mux.HandleFunc("/api/layers/", func(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/layers/"), "/")
 		files := map[string]string{"clip.json": "clip.json", "rotations.f32": "local_rotations_xyzw.f32",
-			"translations.f32": "local_translations.f32", "root.f32": "root_positions.f32"}
+			"translations.f32": "local_translations.f32", "root.f32": "root_positions.f32", "controls.f32": "control_rig.f32"}
 		file, ok := "", false
 		if len(parts) == 2 && safePathPart(parts[0]) {
 			file, ok = files[parts[1]]

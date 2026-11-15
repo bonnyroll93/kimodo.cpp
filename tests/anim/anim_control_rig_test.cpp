@@ -3,6 +3,7 @@
 #include <kimodo/anim/clip.hpp>
 #include <kimodo/anim/control_rig.hpp>
 #include <kimodo/anim/ik.hpp>
+#include <kimodo/anim/layers.hpp>
 
 #include <cmath>
 #include <iostream>
@@ -158,8 +159,106 @@ void tests(const Skeleton &soma, const AnimationClip &walk) {
         const Vec3 rel_w = w1[static_cast<std::size_t>(lh)].translation - w1[hj].translation;
         const Vec3 rel_g = g1[static_cast<std::size_t>(lh)].translation - g1[hj].translation;
         CHECK(length(rel_g - rotate(euler_xyz_degrees(0.F, 90.F, 0.F), rel_w)) < 1.e-3F);
+        // Follow spaces with the root control moved 1 m: Root carries the hand, World does not.
+        {
+            IkLimb wl = arm; // target keyed at hand0
+            wl.follow = ControlSpace::World;
+            IkLimb rl = arm;
+            rl.follow = ControlSpace::Root;
+            ControlRig wrig{.fps = 30.F, .hips = "Hips", .limbs = {wl}};
+            wrig.root_control[PosX] = flat(.1F);
+            ControlRig rrig = wrig;
+            rrig.limbs = {rl};
+            AnimationClip cw = walk, cr = walk;
+            auto a = apply_control_rig(cw, soma, wrig), b = apply_control_rig(cr, soma, rrig);
+            CHECK(a && b);
+            const Vec3 hw = forward_kinematics(soma, cw.frame(0))[static_cast<std::size_t>(lh)].translation;
+            const Vec3 hr = forward_kinematics(soma, cr.frame(0))[static_cast<std::size_t>(lh)].translation;
+            CHECK(length(hw - hand0) < 2.e-3F);
+            CHECK(length(hr - (hand0 + Vec3{.1F, 0.F, 0.F})) < 2.e-3F);
+            CHECK(control_rig_from_json(R"({"limbs":[{"chain":["A","B","C"],"follow":"world"}]})").has_value());
+        }
         auto pj = control_rig_from_json(R"({"hips":"Hips","root_control":{"tx":[{"f":0,"v":1}]},"hips_control":{"ty":[{"f":0,"v":-0.1}]}})");
         CHECK(pj && pj->root_control[PosX].keys.size() == 1 && pj->hips_control[PosY].keys.size() == 1);
+    }
+
+    // Anim layers on the controls.
+    {
+        // An additive layer lifts a hand that follows the animation (base unkeyed) by 5 cm.
+        IkLimb free_arm{.name = "left_arm", .chain = {"LeftArm", "LeftForeArm", "LeftHand"}, .ik = true};
+        ControlRigLayer up{.name = "up"};
+        up.limbs["left_arm"].target[PosY] = flat(.05F);
+        ControlRig lr{.fps = 30.F, .hips = "Hips", .limbs = {free_arm}, .layers = {up}};
+        AnimationClip lifted = walk;
+        auto rr = apply_control_rig(lifted, soma, lr);
+        CHECK(rr && rr->stride == kControlLimbStride + kControlBodyStride && rr->controls.size() == rr->stride * walk.frames());
+        const Vec3 h5 = forward_kinematics(soma, walk.frame(5))[static_cast<std::size_t>(lh)].translation;
+        const Vec3 l5 = forward_kinematics(soma, lifted.frame(5))[static_cast<std::size_t>(lh)].translation;
+        CHECK(length(l5 - (h5 + Vec3{0.F, .05F, 0.F})) < 2.e-3F || (rr && rr->unreachable_frames > 0));
+        // The output: composed position = animation + 5 cm, base position = the animation.
+        if (rr) {
+            const float *o = rr->controls.data() + 5 * rr->stride;
+            CHECK(std::abs(o[1] - (h5.y + .05F)) < 1.e-4F && std::abs(o[12] - h5.y) < 1.e-4F);
+            CHECK(std::abs(o[10] - 1.F) < 1.e-6F); // blend
+        }
+        // Override layer at weight 0.5 between a keyed base (hand0) and the layer value.
+        IkLimb keyed_arm = free_arm;
+        keyed_arm.target[PosX] = flat(hand0.x);
+        keyed_arm.target[PosY] = flat(hand0.y);
+        keyed_arm.target[PosZ] = flat(hand0.z);
+        ControlRigLayer over{.name = "over", .additive = false, .weight = .5F};
+        over.limbs["left_arm"].target[PosY] = flat(hand0.y + .1F);
+        ControlRig orig{.fps = 30.F, .hips = "Hips", .limbs = {keyed_arm}, .layers = {over}};
+        AnimationClip half = walk;
+        auto hr = apply_control_rig(half, soma, orig);
+        CHECK(hr && std::abs(hr->controls[1] - (hand0.y + .05F)) < 1.e-4F && std::abs(hr->controls[0] - hand0.x) < 1.e-5F);
+        // Keyed layer weight: 0 at frame 0, 1 from frame 10 (layer time).
+        ControlRigLayer anim_w = up;
+        anim_w.weight_curve.keys = {Keyframe{.frame = 0.F, .value = 0.F, .interpolation = KeyInterpolation::Linear},
+                                    Keyframe{.frame = 10.F, .value = 1.F, .interpolation = KeyInterpolation::Linear}};
+        ControlRig wr{.fps = 30.F, .hips = "Hips", .limbs = {free_arm}, .layers = {anim_w}};
+        AnimationClip ramp = walk;
+        auto wres = apply_control_rig(ramp, soma, wr);
+        CHECK(wres.has_value());
+        if (wres) {
+            const Vec3 a0 = forward_kinematics(soma, walk.frame(0))[static_cast<std::size_t>(lh)].translation;
+            const Vec3 a5 = forward_kinematics(soma, walk.frame(5))[static_cast<std::size_t>(lh)].translation;
+            CHECK(std::abs(wres->controls[1] - a0.y) < 1.e-4F);                          // weight 0
+            CHECK(std::abs(wres->controls[5 * wres->stride + 1] - (a5.y + .025F)) < 1.e-3F); // weight 0.5
+        }
+        // Layers JSON, and a body offset on a layer.
+        auto pj = control_rig_from_json(R"({"hips":"Hips","layers":[{"name":"L","mode":"override","weight":0.5,
+            "weight_keys":[{"f":0,"v":1}],"start":1,"speed":2,"limbs":{"left_arm":{"target":{"ty":[{"f":0,"v":1}]},"blend":[{"f":0,"v":0}]}},
+            "hips_control":{"ty":[{"f":0,"v":-0.1}]}}]})");
+        CHECK(pj && pj->layers.size() == 1 && !pj->layers[0].additive && pj->layers[0].weight_curve.keys.size() == 1 &&
+              pj->layers[0].start == 1.F && pj->layers[0].limbs.at("left_arm").target[PosY].keys.size() == 1 &&
+              pj->layers[0].limbs.at("left_arm").blend.keys.size() == 1 && pj->layers[0].hips_control[PosY].keys.size() == 1);
+        CHECK(!control_rig_from_json(R"({"layers":[{"mode":"multiply"}]})").has_value());
+        ControlRigLayer low{.name = "low"};
+        low.hips_control[PosY] = flat(-.1F);
+        ControlRig body_layer{.fps = 30.F, .hips = "Hips", .layers = {low}};
+        AnimationClip dropped = walk;
+        auto dr = apply_control_rig(dropped, soma, body_layer);
+        CHECK(dr && dr->solved.size() == 1 && dr->solved[0] == "hips");
+        const int hj = soma.find("Hips");
+        if (hj >= 0)
+            CHECK(std::abs(forward_kinematics(soma, dropped.frame(3))[static_cast<std::size_t>(hj)].translation.y -
+                           (forward_kinematics(soma, walk.frame(3))[static_cast<std::size_t>(hj)].translation.y - .1F)) < 1.e-4F);
+    }
+
+    // Animated anim layer weight (joint layers): samples per layer frame.
+    {
+        AnimationLayer l;
+        l.weight = .3F;
+        CHECK(std::abs(layer_weight(l, 1.F) - .3F) < 1.e-6F);
+        l.weight_samples = {0.F, 1.F};
+        l.weight_fps = 10.F;
+        l.timing.start = 1.F;
+        CHECK(std::abs(layer_weight(l, 1.F) - 0.F) < 1.e-6F);
+        CHECK(std::abs(layer_weight(l, 1.05F) - .5F) < 1.e-4F);
+        CHECK(std::abs(layer_weight(l, 3.F) - 1.F) < 1.e-6F);
+        auto kt = keyframes_from_json(R"({"version":1,"weight":[{"f":0,"v":0},{"f":5,"v":1}],"tracks":{}})");
+        CHECK(kt && kt->weight.keys.size() == 2);
     }
 
     // JSON.

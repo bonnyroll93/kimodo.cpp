@@ -6,8 +6,9 @@
 //   otherwise: the selected joint's local transform (read only)
 // Type a value (Enter) or drag a channel's name left / right to change it; a change keys
 // (or, in Edit T-pose, poses) the object.
-// A provider returns null or {id, title, subtitle, channels: [{k, label, value, readOnly}], set(k, v, final)}.
-const STEP = { t: 0.002, r: 0.5, s: 0.005 }; // per pixel of label drag
+// Reset Translate / Reset Rotate: the provider's reset('t' | 'r') (0, the rest or the animation).
+// A provider returns null or {id, title, subtitle, channels: [{k, label, value, readOnly}], set(k, v, final), reset?(group)}.
+const STEP = { t: 0.002, r: 0.5, s: 0.005, w: 0.005 }; // per pixel of label drag
 const fmt = (k, v) => (k[0] === 'r' ? v.toFixed(2) : v.toFixed(3));
 
 export class ChannelBox {
@@ -34,7 +35,7 @@ export class ChannelBox {
     const spec = this.spec();
     this.host.hidden = !spec;
     if (!spec) { this.key = null; return; }
-    const key = `${spec.id}|${spec.channels.map((c) => `${c.k}${c.readOnly ? 'r' : ''}`).join(',')}`;
+    const key = `${spec.id}|${spec.channels.map((c) => `${c.k}${c.readOnly ? 'r' : ''}`).join(',')}|${spec.reset ? 'reset' : ''}`;
     if (key !== this.key) this.build(spec, key);
     this.current = spec;
     this.title.textContent = spec.title;
@@ -95,7 +96,21 @@ export class ChannelBox {
       rows.append(row);
       this.inputs.set(c.k, input);
     }
-    this.host.replaceChildren(head, this.title, this.sub, rows);
+    const parts = [head, this.title, this.sub, rows];
+    if (spec.reset && !this.collapsed) {
+      const resets = document.createElement('div');
+      resets.className = 'cb-resets';
+      for (const [g, text, tip] of [['t', 'Reset translate', 'Translate channels back to 0 (offsets), the rest pose or the animation'],
+        ['r', 'Reset rotate', 'Rotate channels back to 0 (offsets), the rest / T-pose or the animation']]) {
+        if (!spec.channels.some((c) => c.k[0] === g && !c.readOnly)) continue;
+        const b = document.createElement('button');
+        Object.assign(b, { type: 'button', className: 'icon-button', textContent: text, title: tip });
+        b.addEventListener('click', () => this.current?.reset?.(g));
+        resets.append(b);
+      }
+      if (resets.children.length) parts.push(resets);
+    }
+    this.host.replaceChildren(...parts);
   }
 
   // Virtual slider: drag a channel's name; live where the provider allows it, set on release.
@@ -126,5 +141,5 @@ export class ChannelBox {
 }
 
 // Channel list helpers.
-export const LABELS = { tx: 'Translate X', ty: 'Translate Y', tz: 'Translate Z', rx: 'Rotate X', ry: 'Rotate Y', rz: 'Rotate Z', sx: 'Scale X', sy: 'Scale Y', sz: 'Scale Z' };
+export const LABELS = { w: 'Weight', tx: 'Translate X', ty: 'Translate Y', tz: 'Translate Z', rx: 'Rotate X', ry: 'Rotate Y', rz: 'Rotate Z', sx: 'Scale X', sy: 'Scale Y', sz: 'Scale Z' };
 export const channels = (values, keys, readOnly = false) => keys.map((k) => ({ k, label: LABELS[k], value: values[k] ?? 0, readOnly }));

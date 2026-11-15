@@ -25,6 +25,7 @@
 #include <kimodo/anim/skeleton.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -544,6 +545,13 @@ int layers_command(int argc, char **argv) {
             auto kc = keyframe_clip(*tracks, *skeleton);
             if (!kc) throw std::runtime_error(p.layer.name + ": " + kc.error());
             p.layer.clip = std::move(kc->clip);
+            if (!tracks->weight.keys.empty()) { // keyable layer weight, sampled per layer frame
+                const float last = tracks->weight.keys.back().frame;
+                p.layer.weight_fps = tracks->fps;
+                p.layer.weight_samples.resize(static_cast<std::size_t>(std::ceil(last)) + 1);
+                for (std::size_t k = 0; k < p.layer.weight_samples.size(); ++k)
+                    p.layer.weight_samples[k] = std::clamp(tracks->weight.evaluate(static_cast<float>(k)), 0.F, 1.F);
+            }
             // Additive (default): offsets on top of the layers below. Override (--mode override):
             // keyed joints take rest * offset, only in the channels they have keys for.
             if (p.layer.mode == BlendMode::Override && p.mode_set) p.layer.channels = std::move(kc->channels);
@@ -583,11 +591,16 @@ int layers_command(int argc, char **argv) {
     summary << "]";
     AnimationClip baked = stack.bake(fps, length);
     std::string rig_meta;
+    std::vector<float> controls; // per-frame control values (control_rig.f32) for editors
     if (control_rig) { // IK limbs, after the layers and before foot locking
         auto r = apply_control_rig(baked, *skeleton, *control_rig);
         if (!r) throw std::runtime_error(r.error());
+        std::vector<std::string> limb_names;
+        for (const IkLimb &l : control_rig->limbs) limb_names.push_back(l.name);
         rig_meta = ",\"control_rig\":{\"solved\":" + string_list(r->solved) + ",\"warnings\":" + string_list(r->warnings) +
-                   ",\"unreachable_frames\":" + std::to_string(r->unreachable_frames) + "}";
+                   ",\"unreachable_frames\":" + std::to_string(r->unreachable_frames) + ",\"limbs\":" + string_list(limb_names) +
+                   ",\"stride\":" + std::to_string(r->stride) + ",\"controls\":\"control_rig.f32\"}";
+        controls = std::move(r->controls);
     }
     std::string foot_meta;
     if (lock_feet) {
@@ -599,6 +612,11 @@ int layers_command(int argc, char **argv) {
     const std::string extra = "{\"skeleton\":" + quote(skeleton->source) + ",\"duration\":" + num(stack.duration()) + ",\"length\":" + num(length) +
                               ",\"layers\":" + summary.str() + rig_meta + foot_meta + "}";
     if (auto ok = write_clip_dir(out, baked, *skeleton, extra); !ok) throw std::runtime_error(ok.error());
+    if (control_rig) {
+        std::ofstream f(out / "control_rig.f32", std::ios::binary);
+        f.write(reinterpret_cast<const char *>(controls.data()), static_cast<std::streamsize>(controls.size() * sizeof(float)));
+        if (!f) throw std::runtime_error("cannot write control_rig.f32");
+    }
     if (native) // also the kmd-generate layout, so native results play like any generated motion
         if (auto ok = write_motion_dir(out, clip_to_motion(baked)); !ok) throw std::runtime_error(ok.error());
     std::ifstream meta(out / "clip.json", std::ios::binary);

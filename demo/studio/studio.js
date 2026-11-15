@@ -22,6 +22,7 @@ import { TPoseEditor } from './editor/tpose-editor.js';
 import { ControlRig } from './editor/control-rig.js';
 import { Picker } from './editor/picker.js';
 import { PoseTools } from './editor/pose-tools.js';
+import { cleanFeet } from './editor/feet-cleanup.js';
 import { ChannelBox, channels } from './editor/channel-box.js';
 import { quatEuler } from './viewer/keyframes.js';
 
@@ -306,6 +307,23 @@ const picker = new Picker({ host: $('picker'), retarget: retargetPanel, rig: con
 motionPanel.controlRigRequest = () => controlRig.request();
 motionPanel.rigRow = () => controlRig.pickedKeyFrames();
 motionPanel.moveRigKey = (f, delta) => controlRig.moveKey(f, delta);
+// Anim layer members (Maya-style): the selection, labels, picking a member.
+motionPanel.selection = () => controlRig.memberId() ?? (character && selected >= 0 ? `joint:${character.joints[selected].name}` : null);
+motionPanel.memberLabel = (id) => controlRig.memberLabel(id);
+motionPanel.pickMember = (id) => {
+  if (id.startsWith('joint:')) { const i = character?.joints.findIndex((j) => j.name === id.slice(6)) ?? -1; if (i >= 0) select(i); return; }
+  const [, limb, kind] = id.split(':');
+  if (limb !== 'body' && !controlRig.limb(limb).ik) { controlRig.setIK(limb, true); return; }
+  controlRig.pick({ limb, kind });
+};
+motionPanel.onControls = () => controlRig.onResult();
+$('feet-clean').addEventListener('click', async () => {
+  const num = (id, d) => { const v = Number($(id).value); return Number.isFinite(v) && v > 0 ? v : d; };
+  try {
+    await cleanFeet({ rig: controlRig, motionPanel, player, status, getCharacter: () => character },
+      { height: num('feet-height', 6) / 100, speed: num('feet-speed', 50) / 100, blend: Math.round(num('feet-blend', 4)) });
+  } catch (err) { status(`Feet cleanup failed: ${err.message || err}`, true); }
+});
 const poseTools = new PoseTools({ $, player, motionPanel, status, getCharacter: () => character, selectedJoint: () => selected });
 poseTools.onKeyed = () => keyPanel.updateInfo();
 
@@ -314,6 +332,14 @@ const channelBox = new ChannelBox({ host: $('channel-box'), viewport });
 channelBox.add(() => tposeEditor.channelSpec());
 channelBox.add(() => (tposeEditor.active ? null : controlRig.channelSpec()));
 channelBox.add(() => keyPanel.channelSpec());
+channelBox.add(() => { // the selected anim layer's weight (keyable), when nothing else is edited
+  const i = motionPanel.active, l = motionPanel.layers[i];
+  if (tposeEditor.active || l?.kind !== 'keys' || (character && selected >= 0)) return null;
+  const keyed = !!l.weightKeys?.length;
+  return { id: `layer:${l.id}`, title: l.name, subtitle: `anim layer weight${keyed ? ' (animated: typing keys it here)' : ' · ◆ in the layer row animates it'}`,
+    channels: [{ k: 'w', label: 'Weight', value: motionPanel.weightAt(i) }],
+    set: (k, v, final) => motionPanel.setWeight(i, Math.min(1, Math.max(0, v)), final) };
+});
 channelBox.add(() => {
   const j = character?.joints[selected];
   if (!j || tposeEditor.active) return null;

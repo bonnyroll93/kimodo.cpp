@@ -2,6 +2,11 @@
 // additive reference and time wrap. Used for the anim-layer list (keyframe layers, with
 // reordering) and for the single row of the item shown in the attribute editor. Pure view:
 // state lives in MotionPanel.layers and every edit goes through the callbacks.
+// Anim layers (Maya-style): the members (joints and rig controls; + Sel / − Sel add or remove
+// the selected object, − also deletes its keys on the layer) and a keyable weight (◆ keys it
+// at the current frame, ✕ deletes that key; once keyed the slider edits the key there).
+// The list ends with BaseAnimation: the clips and the rig's own keys (keys go there when it is
+// selected).
 
 const el = (tag, props = {}, ...children) => {
   const node = Object.assign(document.createElement(tag), props);
@@ -10,7 +15,10 @@ const el = (tag, props = {}, ...children) => {
 };
 
 export class LayerPanel {
-  // callbacks: select(i), change(i, patch), move(i, delta), remove(i), canRemove(i)
+  // callbacks: select(i), change(i, patch), move(i, delta), remove(i), canRemove(i),
+  //   weightAt(i), weightKeyed(i) -> 'none' | 'animated' | 'here', setWeight(i, v, final), keyWeight(i), unkeyWeight(i),
+  //   members(i) -> [{id, label}], addSelected(i), removeSelected(i), removeMember(i, id), pickMember(id),
+  //   selectBase(), baseActive()
   constructor(container, callbacks, { reorder = true, empty = '' } = {}) {
     this.container = container;
     this.cb = callbacks;
@@ -62,15 +70,33 @@ export class LayerPanel {
         blend.title = 'Additive: keys are offsets added to the clips. Override: keyed joints take the keyed pose ' +
           '(only the keyed channels; switching mode reinterprets existing keys)';
       }
-      const weight = el('input', { type: 'range', min: 0, max: 1, step: 0.01, value: l.weight, title: 'Weight' });
-      const weightText = el('span', { className: 'weight-text', textContent: l.weight.toFixed(2) });
-      weight.addEventListener('input', () => { weightText.textContent = Number(weight.value).toFixed(2); });
-      weight.addEventListener('change', () => this.cb.change(i, { weight: Number(weight.value) }));
+      const w0 = keys && this.cb.weightAt ? this.cb.weightAt(i) : l.weight;
+      const weight = el('input', { type: 'range', min: 0, max: 1, step: 0.01, value: w0, title: 'Weight (animated: the value at this frame)' });
+      weight.dataset.weightOf = i;
+      const weightText = el('span', { className: 'weight-text', textContent: w0.toFixed(2) });
+      if (keys && this.cb.setWeight) {
+        weight.addEventListener('input', () => { weightText.textContent = Number(weight.value).toFixed(2); this.cb.setWeight(i, Number(weight.value), false); });
+        weight.addEventListener('change', () => this.cb.setWeight(i, Number(weight.value), true));
+      } else {
+        weight.addEventListener('input', () => { weightText.textContent = Number(weight.value).toFixed(2); });
+        weight.addEventListener('change', () => this.cb.change(i, { weight: Number(weight.value) }));
+      }
       const mask = el('select', { title: 'Joint mask' });
       mask.append(new Option('Full body', 'full'), new Option('Upper body', 'upper'), new Option('Lower body', 'lower'), new Option('Custom…', 'custom'));
       mask.value = l.mask;
       mask.addEventListener('change', () => this.cb.change(i, { mask: mask.value }));
-      const controls = el('div', { className: 'layer-controls' }, blend, weight, weightText, mask);
+      const controls = el('div', { className: 'layer-controls' }, blend, weight, weightText);
+      if (keys && this.cb.keyWeight) {
+        const state = this.cb.weightKeyed(i);
+        const kw = el('button', { type: 'button', className: `icon-button weight-key${state === 'here' ? ' on' : state === 'animated' ? ' animated' : ''}`, textContent: '◆',
+          title: 'Key the layer weight at the current frame (an animated weight)' });
+        kw.dataset.weightKey = i;
+        kw.addEventListener('click', () => this.cb.keyWeight(i));
+        const uw = el('button', { type: 'button', className: 'icon-button', textContent: '✕', title: 'Delete the weight key at the current frame', hidden: state === 'none' });
+        uw.addEventListener('click', () => this.cb.unkeyWeight(i));
+        controls.append(kw, uw);
+      }
+      controls.append(mask);
 
       const extra = el('div', { className: 'layer-controls' });
       if (l.blend === 'additive' && !keys) {
@@ -88,9 +114,55 @@ export class LayerPanel {
       wrap.addEventListener('change', () => this.cb.change(i, { wrap: wrap.value }));
       extra.append(wrap);
       row.append(head, controls, extra);
+      if (keys && this.cb.members) {
+        const members = el('div', { className: 'layer-members' });
+        const list = this.cb.members(i);
+        members.append(el('span', { className: 'members-label', textContent: list.length ? 'Members' : 'No members yet' }));
+        for (const m of list) {
+          const chip = el('span', { className: 'member', title: `${m.label}: click to select it` },
+            el('span', { textContent: m.label }));
+          chip.addEventListener('click', () => this.cb.pickMember(m.id));
+          const x = el('button', { type: 'button', className: 'member-x', textContent: '×', title: `Remove ${m.label} from this layer (deletes its keys here)` });
+          x.addEventListener('click', (e) => { e.stopPropagation(); this.cb.removeMember(i, m.id); });
+          chip.append(x);
+          members.append(chip);
+        }
+        const add = el('button', { type: 'button', className: 'icon-button', textContent: '+ Sel', title: 'Add the selected joint or rig control to this layer' });
+        add.addEventListener('click', () => this.cb.addSelected(i));
+        const rem = el('button', { type: 'button', className: 'icon-button', textContent: '− Sel', title: 'Remove the selected joint or rig control from this layer (deletes its keys here)' });
+        rem.addEventListener('click', () => this.cb.removeSelected(i));
+        members.append(add, rem);
+        row.append(members);
+      }
       this.container.append(row);
     });
+    if (this.reorder && this.cb.selectBase) { // BaseAnimation (bottom of the stack)
+      const base = el('div', { className: `layer base-layer${this.cb.baseActive() ? ' active' : ''}` },
+        el('div', { className: 'layer-head' }, el('span', { className: 'layer-index', textContent: 'B' }),
+          el('span', { className: 'base-name', textContent: 'BaseAnimation' }),
+          el('span', { className: 'note', textContent: 'clips + rig keys' })));
+      base.title = 'The clips and the control rig\'s own keys: select it to key controls on the base';
+      base.addEventListener('click', () => this.cb.selectBase());
+      this.container.prepend(base);
+    }
     // Top of the list is the top of the stack (applied last).
     this.container.append(...[...this.container.children].reverse());
+  }
+
+  // Weight sliders follow the current frame (animated weights).
+  syncWeights() {
+    if (!this.cb.weightAt) return;
+    for (const s of this.container.querySelectorAll('input[data-weight-of]')) {
+      if (document.activeElement === s) continue;
+      const i = Number(s.dataset.weightOf), v = this.cb.weightAt(i);
+      s.value = v;
+      if (s.nextElementSibling) s.nextElementSibling.textContent = v.toFixed(2);
+    }
+    for (const b of this.container.querySelectorAll('button[data-weight-key]')) {
+      const state = this.cb.weightKeyed(Number(b.dataset.weightKey));
+      b.classList.toggle('on', state === 'here');
+      b.classList.toggle('animated', state === 'animated');
+      if (b.nextElementSibling) b.nextElementSibling.hidden = state === 'none';
+    }
   }
 }

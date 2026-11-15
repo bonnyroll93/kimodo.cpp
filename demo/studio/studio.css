@@ -373,3 +373,19 @@ body {
 .channel-box input { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 4px; background: #070b0f; color: var(--text); font-family: var(--mono); font-size: .72rem; padding: 2px 5px; text-align: right; font-variant-numeric: tabular-nums; }
 .channel-box .cb-row.ro input { color: var(--muted); background: transparent; }
 .channel-box input:focus { outline: 1px solid var(--accent); }
+.channel-box .cb-resets { display: flex; gap: 4px; margin-top: 6px; }
+.channel-box .cb-resets .icon-button { flex: 1; font-size: .66rem; padding: 2px 4px; }
+.layer-members { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 4px; font-size: .68rem; }
+.layer-members .members-label { color: var(--muted); margin-right: 2px; }
+.layer-members .member { display: inline-flex; align-items: center; gap: 2px; border: 1px solid var(--line); border-radius: 10px; padding: 0 2px 0 7px; cursor: pointer; font-family: var(--mono); }
+.layer-members .member:hover { border-color: var(--accent); }
+.layer-members .member-x { border: 0; background: transparent; color: var(--muted); cursor: pointer; font: inherit; padding: 0 4px; }
+.layer-members .member-x:hover { color: #f87171; }
+.layer-members .icon-button { font-size: .66rem; padding: 0 6px; }
+.layer .weight-key.animated { color: #ffb547; }
+.layer .weight-key.on { color: #111; background: #ffb547; }
+.layer.base-layer { border-style: dashed; cursor: pointer; }
+.layer.base-layer .base-name { font-weight: 600; font-size: .8rem; }
+.layer.base-layer .note { margin: 0 0 0 6px; }
+.feet-row label { display: inline-flex; align-items: center; gap: 3px; font-size: .7rem; color: var(--muted); }
+.feet-row input { width: 3.4em; border: 1px solid var(--line); border-radius: 5px; background: #0b1015; color: var(--text); font: inherit; font-size: .72rem; padding: 1px 3px; }
