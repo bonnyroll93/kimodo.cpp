@@ -477,6 +477,7 @@ func main() {
 	generator := flag.String("generator", "build/debug/kmd-generate", "native text-to-motion command")
 	output := flag.String("output", "demo-output", "persistent gallery directory")
 	comparisons := flag.String("comparisons", "quantization-comparisons", "viewer-ready quantization comparison directories")
+	sampleRigs := flag.String("sample-rigs", "tests/data/rigs", "sample rigged GLB characters offered by /studio")
 	flag.Parse()
 	if err := os.MkdirAll(*output, 0755); err != nil {
 		log.Fatal(err)
@@ -783,5 +784,6 @@ func main() {
 		http.ServeFile(w, r, filepath.Join(g.output, a.ID, name))
 	})
 	log.Printf("Kimodo text-to-motion demo listening at http://%s", *addr)
+	registerStudio(mux, *sampleRigs)
 	log.Fatal(http.ListenAndServe(*addr, mux))
 }

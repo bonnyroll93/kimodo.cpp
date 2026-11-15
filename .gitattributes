@@ -1,0 +1,5 @@
+# Binary test data and models must never be touched by line-ending conversion.
+*.f32 binary
+*.glb binary
+*.gguf binary
+*.png binary

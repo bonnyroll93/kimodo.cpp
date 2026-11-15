@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kimodo Studio</title>
+<link rel="stylesheet" href="studio.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<header class="toolbar">
+  <div class="brand"><span class="mark">K</span><div><div class="eyebrow">Kimodo Extended</div><strong>Studio</strong></div></div>
+  <div class="tools">
+    <label class="button primary" title="Open a rigged .glb / .gltf (or drop it on the viewport)">
+      Open GLB<input id="file" type="file" accept=".glb,.gltf,model/gltf-binary" hidden>
+    </label>
+    <select id="samples" title="Sample rigs served by the demo"><option value="">Sample rigs…</option></select>
+    <span class="sep"></span>
+    <label class="toggle"><input type="checkbox" id="show-mesh" checked> Mesh</label>
+    <label class="toggle"><input type="checkbox" id="show-skeleton" checked> Skeleton</label>
+    <label class="toggle"><input type="checkbox" id="show-joints" checked> Joints</label>
+    <label class="toggle"><input type="checkbox" id="show-grid" checked> Grid</label>
+    <label class="toggle"><input type="checkbox" id="show-axes" checked> Axes</label>
+    <span class="sep"></span>
+    <button id="frame" class="button" title="Frame the character (F)">Frame</button>
+    <a class="button ghost" href="/">Text to motion ↗</a>
+  </div>
+</header>
+<main class="layout">
+  <aside class="panel" aria-label="Scene hierarchy">
+    <div class="panel-head"><h2>Skeleton</h2><span id="joint-count" class="muted"></span></div>
+    <input id="filter" class="filter" type="search" placeholder="Filter joints" autocomplete="off">
+    <div id="hierarchy" class="tree" role="tree"><p class="muted pad">No character loaded.</p></div>
+  </aside>
+  <section class="stage">
+    <div id="viewport" class="viewport"></div>
+    <div id="empty" class="empty">
+      <p><strong>Drop a rigged .glb here</strong></p>
+      <p class="muted">or use <em>Open GLB</em> / <em>Sample rigs</em>. Orbit: left-drag · Pan: right-drag · Zoom: wheel · Select: click a joint</p>
+    </div>
+    <div id="drop" class="drop" hidden>Drop to load</div>
+  </section>
+  <aside class="panel" aria-label="Inspector">
+    <div class="panel-head"><h2>Inspector</h2></div>
+    <div id="inspector" class="inspector"><p class="muted pad">Select a joint in the hierarchy or the viewport.</p></div>
+    <div class="panel-head"><h2>Character</h2></div>
+    <dl id="stats" class="stats"></dl>
+  </aside>
+</main>
+<footer id="status" class="status" role="status">Ready</footer>
+<script type="module" src="studio.js"></script>
+</body>
+</html>

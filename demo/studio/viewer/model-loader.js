@@ -1,0 +1,96 @@
+// Loads a glTF/GLB character and extracts its bone hierarchy.
+// Mirrors kimodo::anim::load_gltf_character: the skeleton is the joint set of one skin,
+// parents come from the nearest ancestor that is also a joint.
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const loader = new GLTFLoader();
+
+export async function loadCharacter(source, name) {
+  const gltf = source instanceof ArrayBuffer
+    ? await loader.parseAsync(source, '')
+    : await loader.loadAsync(source);
+  const root = gltf.scene;
+  root.name ||= name;
+
+  const skinned = [];
+  root.traverse((o) => { if (o.isSkinnedMesh) skinned.push(o); });
+  const meshes = [];
+  root.traverse((o) => { if (o.isMesh) meshes.push(o); });
+
+  // Bones: joints of every skeleton bound in the scene (normally one skin).
+  const boneSet = new Set();
+  for (const mesh of skinned) for (const bone of mesh.skeleton.bones) boneSet.add(bone);
+  const boneParent = (bone) => {
+    for (let p = bone.parent; p; p = p.parent) if (boneSet.has(p)) return p;
+    return null;
+  };
+
+  // Deforming joints: referenced by a vertex with non-zero weight.
+  const deforming = new Set();
+  for (const mesh of skinned) {
+    const idx = mesh.geometry.getAttribute('skinIndex');
+    const w = mesh.geometry.getAttribute('skinWeight');
+    if (!idx || !w) continue;
+    for (let v = 0; v < idx.count; v++)
+      for (let k = 0; k < idx.itemSize; k++)
+        if (w.getComponent(v, k) > 0) deforming.add(mesh.skeleton.bones[idx.getComponent(v, k)]);
+  }
+
+  // Depth-first order with parents first, like the C++ importer.
+  const children = new Map([...boneSet].map((b) => [b, []]));
+  const roots = [];
+  for (const bone of boneSet) {
+    const p = boneParent(bone);
+    if (p) children.get(p).push(bone); else roots.push(bone);
+  }
+  const joints = [];
+  const walk = (bone, parentIndex) => {
+    const index = joints.length;
+    joints.push({ bone, index, parent: parentIndex, name: bone.name || `joint_${index}`,
+                  deforming: deforming.has(bone), children: [] });
+    if (parentIndex >= 0) joints[parentIndex].children.push(index);
+    for (const c of children.get(bone)) walk(c, index);
+  };
+  for (const r of roots) walk(r, -1);
+
+  let triangles = 0;
+  for (const m of meshes) {
+    const g = m.geometry;
+    triangles += (g.index ? g.index.count : g.getAttribute('position').count) / 3;
+  }
+  const materials = new Set();
+  for (const m of meshes) for (const mat of [].concat(m.material)) materials.add(mat);
+
+  const warnings = [];
+  if (skinned.length === 0) warnings.push('No skinned mesh: Kimodo Extended needs a rigged character.');
+  if (roots.length > 1) warnings.push(`Skeleton has ${roots.length} root joints; retargeting needs exactly one.`);
+  const names = new Set();
+  for (const j of joints) {
+    if (names.has(j.name)) { warnings.push(`Duplicate joint name "${j.name}".`); break; }
+    names.add(j.name);
+  }
+
+  return {
+    name, gltf, root, joints, roots: roots.map((r) => joints.findIndex((j) => j.bone === r)),
+    warnings,
+    stats: {
+      meshes: meshes.length,
+      skinnedMeshes: skinned.length,
+      joints: joints.length,
+      deforming: deforming.size,
+      materials: materials.size,
+      triangles: Math.round(triangles),
+      animations: gltf.animations.map((a) => a.name || 'unnamed'),
+    },
+  };
+}
+
+export function disposeCharacter(character) {
+  character.root.traverse((o) => {
+    if (o.geometry) o.geometry.dispose();
+    for (const m of [].concat(o.material || [])) {
+      for (const v of Object.values(m)) if (v && v.isTexture) v.dispose();
+      m.dispose();
+    }
+  });
+}
