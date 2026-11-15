@@ -11,6 +11,12 @@
 //     rotation keys the end joint keeps its animated global orientation;
 //   * the pole (tx, ty, tz in the same follow space) is where the middle joint (elbow,
 //     knee) points; without keys the animation's bend plane is kept.
+// Body controls (applied first, so IK limbs keyed in Root space stay planted):
+//   * root: an offset of the whole character in skeleton space (tx, ty, tz; rx, ry, rz
+//     about the hips' ground point of that frame): the ActionForge ground circle;
+//   * hips: an offset of the hips joint (translation in skeleton space, rotation about the
+//     hips, skeleton-space axes): lower the hips and the IK feet stay on the ground.
+// Unkeyed channels are 0 (no offset).
 // Curves use the keyframe rules of keyframes.hpp, frames at the rig's fps. weight blends
 // the solved chain with the animation (0: untouched); a keyed blend curve (IK/FK blend,
 // 1 = IK, 0 = FK, ActionForge's "complex" workflow) replaces weight frame by frame.
@@ -45,17 +51,20 @@ struct ControlRig {
     float fps = 30.F;
     std::string hips; // joint used by ControlSpace::Hips (empty: the skeleton root)
     std::vector<IkLimb> limbs;
+    std::array<Curve, ChannelCount> root_control; // offset of the whole character
+    std::array<Curve, ChannelCount> hips_control; // offset of the hips joint
 };
 
 // JSON: {"version":1,"fps":30,"hips":"Hips","limbs":[{"name":"left_arm",
 //   "chain":["LeftArm","LeftForeArm","LeftHand"],"ik":true,"follow":"root"|"hips","weight":1,"blend":[keys],
-//   "target":{"tx":[keys],...,"rz":[keys]},"pole":{"tx":[keys],"ty":[keys],"tz":[keys]}}]}
+//   "target":{"tx":[keys],...,"rz":[keys]},"pole":{"tx":[keys],"ty":[keys],"tz":[keys]}}],
+//   "root_control":{"tx":[keys],...},"hips_control":{"tx":[keys],...}}
 // (keys as in keyframes.hpp: {"f","v","i","a","l","r"})
 [[nodiscard]] std::expected<ControlRig, std::string> control_rig_from_json(std::string_view json);
 [[nodiscard]] std::expected<ControlRig, std::string> load_control_rig(const std::filesystem::path &path);
 
 struct ControlRigReport {
-    std::vector<std::string> solved;   // limbs with IK on that were applied
+    std::vector<std::string> solved;   // limbs with IK on that were applied ("root" / "hips": body controls)
     std::vector<std::string> warnings; // missing joints, broken chains
     std::size_t unreachable_frames = 0;
 };

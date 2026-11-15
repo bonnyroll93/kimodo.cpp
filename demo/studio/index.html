@@ -153,6 +153,17 @@
         <button id="rig-match-ik" class="button small-button" type="button" title="Key the picked limb's IK control and pole on the FK (animated) hand / foot at this frame">Match IK → FK</button>
         <button id="rig-match-fk" class="button small-button" type="button" title="Key the picked limb's bones on the selected anim layer so the FK pose is the IK pose at this frame">Match FK → IK</button>
       </div>
+      <div class="pose-row">
+        <span class="pose-label">Pose</span>
+        <select id="pose-scope" title="Joints copied / pasted">
+          <option value="all">All joints</option>
+          <option value="branch">Selected branch</option>
+        </select>
+        <button id="pose-copy" class="button small-button" type="button" title="Copy the pose shown (all joints, or the selected joint and its children)">Copy</button>
+        <button id="pose-paste" class="button small-button" type="button" disabled title="Key the copied pose on the selected anim layer at this frame">Paste</button>
+        <button id="pose-paste-mirror" class="button small-button" type="button" disabled title="Key the copied pose mirrored (left ↔ right) on the selected anim layer at this frame">Paste mirrored</button>
+        <button id="pose-mirror" class="button small-button" type="button" title="Mirror the pose shown (left ↔ right) and key it on the selected anim layer">Mirror</button>
+      </div>
       <p class="note">IK on: the hand / foot follows its box control (keyed), the elbow / knee points at its pole (diamond). Without keys a control follows the animation. Moving a control or typing a Transform value keys it. IK/FK blend: 1 = IK, 0 = FK; key it (◆) to switch over time, and use Match to snap one onto the other first.</p>
     </div>
     <div class="panel-head"><h2>Anim layers</h2><span class="button-row"><button id="add-key-layer" class="button small-button" type="button" title="Add an anim layer on top: pose bones with the gizmo and key them">+ Keys</button></span></div>

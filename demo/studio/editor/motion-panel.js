@@ -172,6 +172,7 @@ export class MotionPanel {
       remove: (i) => this.remove(i),
       moveKeys: (i, frames, delta) => this.moveKeys(i, frames, delta),
       deleteKeys: (i, frames) => this.moveKeys(i, frames, null),
+      moveRigKey: (f, delta) => this.moveRigKey?.(f, delta),
       graphOpen: () => this.graphOpen?.() ?? false,
     });
     this.installTimingForm();

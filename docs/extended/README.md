@@ -422,14 +422,30 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     hand / foot at this frame; **Match FK → IK** keys the limb's three bones on the
     selected anim layer so the FK pose is the IK pose shown. Snap first, then key the blend,
     and the limb does not jump when switching.
-  - The picked control's keys appear in the timeline (◆ row; click one to go there).
+  - **Body controls** (the *Body* row, always available): the **Hips** box offsets the
+    hips (translation in skeleton space, rotation about the hips) — lower them and the IK
+    feet keyed in Root space stay on the ground; the **Root** circle on the ground (arrow:
+    where the character faces) offsets the whole character, turning about the hips' ground
+    point. Their Transform values are offsets (0 = the animation); dragging or typing keys
+    them (`root_control` / `hips_control` in the rig JSON, applied before the limbs).
+  - The picked control's keys appear in the timeline (◆ row; click one to go there, drag
+    it to move the key, replacing a key where it lands).
+  - **Pose** (Copy / Paste / Paste mirrored / Mirror, scope *All joints* or *Selected
+    branch*): copies the pose shown and keys it on the selected anim layer at the current
+    frame (Override: the pose; Additive: the offsets that give it). Mirrored pastes pair
+    left / right joints by name (Left/Right, L/R, l/r prefixes or suffixes) and reflect the
+    rotations from the rest pose across the character's YZ plane, so the rest pose must be
+    symmetric; copy a left arm (branch) and paste it mirrored onto the right one. The
+    skeleton root keeps its place: only its height is pasted.
   - The rig is applied after all the layers and before foot locking (`control_rig` in
     `/api/layers` and `/api/export`; `kmd-anim layers --control-rig RIG.json`;
     `include/kimodo/anim/control_rig.hpp`), so the export matches. It is saved in
     scenes and undoable. FK posing stays on the anim layers' gizmo.
 - **Picker** (left column): a picture of the body. A circle picks that joint (FK), a box
   a hand's / foot's IK control, a diamond a pole (dashed: IK off; clicking turns it on).
-  The figure faces you: the character's left is on the right.
+  The figure faces you: the character's left is on the right. The bar under the hips picks
+  the Hips control, the ellipse at the feet the Root control. *R hand* / *L hand* show the
+  hand's finger joints (one column per child chain of the hand joint, thumb on its side).
 - **Story mode: anim clips, anim layers and the attribute editor.** The scene is made of
   *anim clips* on tracks (the Story timeline under the viewport) and *anim layers*
   (keyframes, in the right panel), similar to MotionBuilder's Story mode.

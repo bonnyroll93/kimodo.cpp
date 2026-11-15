@@ -12,6 +12,26 @@ namespace kimodo::anim {
 namespace {
 
 bool keyed(const Curve &c) { return !c.keys.empty(); }
+bool any_keyed(const std::array<Curve, ChannelCount> &c) {
+    for (const Curve &x : c) if (keyed(x)) return true;
+    return false;
+}
+float at(const Curve &c, float f) { return keyed(c) ? c.evaluate(f) : 0.F; }
+Vec3 offset_translation(const std::array<Curve, ChannelCount> &c, float f) { return {at(c[PosX], f), at(c[PosY], f), at(c[PosZ], f)}; }
+Quat offset_rotation(const std::array<Curve, ChannelCount> &c, float f) {
+    return normalize(euler_xyz_degrees(at(c[RotX], f), at(c[RotY], f), at(c[RotZ], f)));
+}
+
+// Sets joint j's global transform (rotation, translation) through its parent.
+void set_global(const Skeleton &s, std::span<Transform> local, const std::vector<Transform> &g, std::size_t j, Vec3 pos, Quat rot) {
+    const int p = s.joints[j].parent;
+    Transform want = g[j];
+    want.translation = pos;
+    want.rotation = normalize(rot);
+    const Transform l = p < 0 ? want : inverse(g[static_cast<std::size_t>(p)]) * want;
+    local[j].translation = l.translation;
+    local[j].rotation = normalize(l.rotation);
+}
 
 // Curves of one control ({"tx":[...],...}) through the keyframe-tracks parser.
 std::expected<std::array<Curve, ChannelCount>, std::string> curves(const nlohmann::json &j) {
@@ -32,6 +52,11 @@ std::expected<ControlRig, std::string> control_rig_from_json(std::string_view te
         rig.fps = j.value("fps", 30.F);
         if (!(rig.fps > 0.F)) return std::unexpected("control rig: fps must be positive");
         rig.hips = j.value("hips", std::string{});
+        for (const auto &[key, dst] : {std::pair{"root_control", &rig.root_control}, std::pair{"hips_control", &rig.hips_control}}) {
+            auto c = curves(j.value(key, nlohmann::json()));
+            if (!c) return std::unexpected(std::string("control rig: ") + key + ": " + c.error());
+            *dst = *c;
+        }
         for (const auto &l : j.value("limbs", nlohmann::json::array())) {
             IkLimb limb;
             limb.name = l.value("name", std::string{"limb"});
@@ -81,6 +106,9 @@ std::expected<ControlRigReport, std::string> apply_control_rig(AnimationClip &cl
         hips = 0;
     }
     struct Chain { const IkLimb *limb; int a, b, c; };
+    const bool root_on = any_keyed(rig.root_control), hips_on = any_keyed(rig.hips_control);
+    if (root_on) report.solved.emplace_back("root");
+    if (hips_on) report.solved.emplace_back("hips");
     std::vector<Chain> chains;
     for (const IkLimb &l : rig.limbs) {
         if (!l.ik || (l.weight <= 0.F && !keyed(l.blend))) continue;
@@ -93,11 +121,28 @@ std::expected<ControlRigReport, std::string> apply_control_rig(AnimationClip &cl
         chains.push_back({&l, a, b, c});
         report.solved.push_back(l.name);
     }
-    if (chains.empty()) return report;
+    if (chains.empty() && !root_on && !hips_on) return report;
     const float scale = rig.fps / (clip.fps > 0.F ? clip.fps : 30.F); // clip frame -> rig frame
+    const auto h = static_cast<std::size_t>(hips);
     for (std::size_t f = 0; f < clip.frames(); ++f) {
         std::span<Transform> local(&clip.at(f, 0), s.size());
         const float kf = static_cast<float>(f) * scale;
+        if (root_on) { // every skeleton root, about the hips' ground point
+            const auto g = forward_kinematics(s, local);
+            const Vec3 pivot{g[h].translation.x, 0.F, g[h].translation.z};
+            const Vec3 t = offset_translation(rig.root_control, kf);
+            const Quat r = offset_rotation(rig.root_control, kf);
+            for (std::size_t j = 0; j < s.size(); ++j) {
+                if (s.joints[j].parent >= 0) continue;
+                local[j].translation = pivot + t + rotate(r, local[j].translation - pivot);
+                local[j].rotation = normalize(r * local[j].rotation);
+            }
+        }
+        if (hips_on) {
+            const auto g = forward_kinematics(s, local);
+            set_global(s, local, g, h, g[h].translation + offset_translation(rig.hips_control, kf),
+                       offset_rotation(rig.hips_control, kf) * g[h].rotation);
+        }
         for (const Chain &ch : chains) {
             const IkLimb &l = *ch.limb;
             const float w = keyed(l.blend) ? std::clamp(l.blend.evaluate(kf), 0.F, 1.F) : l.weight;

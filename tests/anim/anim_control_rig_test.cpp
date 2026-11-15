@@ -116,6 +116,52 @@ void tests(const Skeleton &soma, const AnimationClip &walk) {
     CHECK(angle_between(mixed.at(10, static_cast<std::size_t>(la)).rotation, walk.at(10, static_cast<std::size_t>(la)).rotation) > 1.e-5F);
     CHECK(!control_rig_from_json(R"({"limbs":[{"chain":["A","B","C"],"blend":{"f":0}}]})").has_value());
 
+    // Body controls: hips lowered 10 cm, root moved 1 m along x and turned 90° about y.
+    {
+        const int hips = soma.find("Hips");
+        CHECK(hips >= 0);
+        const auto hj = static_cast<std::size_t>(hips);
+        ControlRig body{.fps = 30.F, .hips = "Hips"};
+        body.hips_control[PosY] = flat(-.1F);
+        AnimationClip low = walk;
+        auto lr = apply_control_rig(low, soma, body);
+        CHECK(lr && lr->solved.size() == 1 && lr->solved[0] == "hips");
+        for (const std::size_t f : {std::size_t{0}, std::size_t{30}}) {
+            const auto gl = forward_kinematics(soma, low.frame(f)), gw = forward_kinematics(soma, walk.frame(f));
+            CHECK(std::abs(gl[hj].translation.y - (gw[hj].translation.y - .1F)) < 1.e-4F);
+            CHECK(length(gl[hj].translation - gw[hj].translation) < .1001F);
+        }
+        // Lowered hips with the left leg planted by IK in root space: the foot stays put.
+        const int ll = soma.find("LeftLeg"), ls = soma.find("LeftShin"), lfoot = soma.find("LeftFoot");
+        if (ll >= 0 && ls >= 0 && lfoot >= 0) {
+            const Vec3 foot0 = forward_kinematics(soma, walk.frame(0))[static_cast<std::size_t>(lfoot)].translation;
+            IkLimb leg{.name = "left_leg", .chain = {"LeftLeg", "LeftShin", "LeftFoot"}, .ik = true};
+            leg.target[PosX] = flat(foot0.x);
+            leg.target[PosY] = flat(foot0.y);
+            leg.target[PosZ] = flat(foot0.z);
+            ControlRig planted_leg = body;
+            planted_leg.limbs = {leg};
+            AnimationClip crouch = walk;
+            CHECK(apply_control_rig(crouch, soma, planted_leg).has_value());
+            CHECK(length(forward_kinematics(soma, crouch.frame(0))[static_cast<std::size_t>(lfoot)].translation - foot0) < 2.e-3F);
+        }
+        ControlRig moved_rig{.fps = 30.F, .hips = "Hips"};
+        moved_rig.root_control[PosX] = flat(1.F);
+        moved_rig.root_control[RotY] = flat(90.F);
+        AnimationClip turned_all = walk;
+        auto rr = apply_control_rig(turned_all, soma, moved_rig);
+        CHECK(rr && rr->solved.size() == 1 && rr->solved[0] == "root");
+        const auto g1 = forward_kinematics(soma, turned_all.frame(10)), w1 = forward_kinematics(soma, walk.frame(10));
+        // The hips move by exactly the offset (they sit over the pivot), the hand turns about them.
+        CHECK(std::abs(g1[hj].translation.x - (w1[hj].translation.x + 1.F)) < 1.e-4F);
+        CHECK(std::abs(g1[hj].translation.z - w1[hj].translation.z) < 1.e-4F);
+        const Vec3 rel_w = w1[static_cast<std::size_t>(lh)].translation - w1[hj].translation;
+        const Vec3 rel_g = g1[static_cast<std::size_t>(lh)].translation - g1[hj].translation;
+        CHECK(length(rel_g - rotate(euler_xyz_degrees(0.F, 90.F, 0.F), rel_w)) < 1.e-3F);
+        auto pj = control_rig_from_json(R"({"hips":"Hips","root_control":{"tx":[{"f":0,"v":1}]},"hips_control":{"ty":[{"f":0,"v":-0.1}]}})");
+        CHECK(pj && pj->root_control[PosX].keys.size() == 1 && pj->hips_control[PosY].keys.size() == 1);
+    }
+
     // JSON.
     auto parsed = control_rig_from_json(R"({"version":1,"fps":30,"hips":"Hips","limbs":[{"name":"left_arm",
         "chain":["LeftArm","LeftForeArm","LeftHand"],"ik":true,"follow":"hips","target":{"tx":[{"f":0,"v":0.1}]},

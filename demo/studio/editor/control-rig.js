@@ -5,6 +5,9 @@
 //     knee) points at its pole (diamond). Controls are keyed in their follow space (Root or
 //     Hips) at the current frame; without keys a control follows the animation.
 //   * FK: bones are posed with the anim layers' gizmo (Animate › Anim layers, + Keys).
+//   * Body controls: the hips box (offset of the hips: lower them and the IK feet stay on the
+//     ground) and the root circle on the ground (offset of the whole character). Their
+//     values are offsets (0 = the animation), keyed like the limb controls.
 //   * Transform: the picked control's values in its follow space; typing one keys it.
 //   * Changing a limb's follow space converts its keys (the control stays where it was on
 //     every keyed frame).
@@ -25,6 +28,8 @@ export const LIMBS = [
 const POS = ['tx', 'ty', 'tz'], ROT = ['rx', 'ry', 'rz'];
 export const emptyRig = () => ({ limbs: Object.fromEntries(LIMBS.map((l) => [l.id, { ik: false, follow: 'root', weight: 1, target: {}, pole: {} }])) });
 const hasKeys = (ch, names) => names.some((c) => ch?.[c]?.length);
+const ALL = [...POS, ...ROT];
+const isBody = (p) => p?.limb === 'body';
 const keyedFrames = (curves, names) => [...new Set(names.flatMap((c) => (curves?.[c] ?? []).map((k) => Math.round(k.f))))].sort((a, b) => a - b);
 
 async function f32(url) {
@@ -48,7 +53,7 @@ export class ControlRig {
     this.gizmo.addEventListener('dragging-changed', (e) => {
       viewport.controls.enabled = !e.value;
       viewport.gizmoDragging = e.value;
-      if (e.value) { player.play(false); this.dragging = true; } else { this.dragging = false; this.dragEnd(); }
+      if (e.value) { player.play(false); this.dragging = true; this.dragStart(); } else { this.dragging = false; this.dragEnd(); }
     });
     this.gizmo.addEventListener('objectChange', () => this.preview());
     viewport.onFrame.push(() => this.update());
@@ -66,7 +71,7 @@ export class ControlRig {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
       const k = e.key.toLowerCase();
       if (k === 'w') { this.setMode('translate'); e.stopImmediatePropagation(); }
-      if (k === 'e' && this.picked.kind === 'ik') { this.setMode('rotate'); e.stopImmediatePropagation(); }
+      if (k === 'e' && this.picked.kind !== 'pole') { this.setMode('rotate'); e.stopImmediatePropagation(); }
       if (k === 'k') { this.keyPicked(); e.stopImmediatePropagation(); }
       if (k === 'escape') this.pick(null);
     }, true);
@@ -76,6 +81,18 @@ export class ControlRig {
 
   get data() { return (this.motionPanel.controlRig ??= emptyRig()); }
   limb(id) { return (this.data.limbs[id] ??= { ik: false, follow: 'root', weight: 1, target: {}, pole: {} }); }
+  body() { return (this.data.body ??= { hips: {}, root: {} }); }
+  // Key curves of a control ({limb, kind}).
+  curvesOf(p) {
+    if (isBody(p)) return (this.body()[p.kind] ??= {});
+    const l = this.limb(p.limb);
+    return p.kind === 'ik' ? l.target : l.pole;
+  }
+  // Body control offsets on a frame ({tx..rz}, 0 where not keyed).
+  offsetsAt(kind, f = this.player.frame) {
+    const c = this.body()[kind] ?? {};
+    return Object.fromEntries(ALL.map((k) => [k, c[k]?.length ? evaluate(c[k], f) : 0]));
+  }
 
   // Character joints of each limb (via the retarget mapping: source joint -> character joint).
   chains() {
@@ -103,12 +120,17 @@ export class ControlRig {
       limbs.push({ name: L.id, chain: ch[L.id].map((j) => j.name), ik: true, follow: l.follow, weight: l.weight, target: l.target, pole: l.pole,
         ...(l.blend?.length ? { blend: l.blend } : {}) });
     }
-    return limbs.length ? { version: 1, fps: 30, hips: ch.hips.name, limbs } : null;
+    const body = this.body(), rootOn = hasKeys(body.root, ALL), hipsOn = hasKeys(body.hips, ALL);
+    return limbs.length || rootOn || hipsOn ? { version: 1, fps: 30, hips: ch.hips.name, limbs,
+      ...(rootOn ? { root_control: body.root } : {}), ...(hipsOn ? { hips_control: body.hips } : {}) } : null;
   }
   active() { return !!this.request(); }
   // IK/FK blend of a limb on a frame (the keyed curve, else its weight).
   blendAt(l, f = this.player.frame) { return l.blend?.length ? THREE.MathUtils.clamp(evaluate(l.blend, f), 0, 1) : l.weight ?? 1; }
-  label(id, kind) { return `${LIMBS.find((L) => L.id === id).label}${kind ? ` ${kind === 'ik' ? 'IK control' : 'pole'}` : ''}`; }
+  label(id, kind) {
+    if (id === 'body') return kind === 'hips' ? 'Hips control' : 'Root control';
+    return `${LIMBS.find((L) => L.id === id).label}${kind ? ` ${kind === 'ik' ? 'IK control' : 'pole'}` : ''}`;
+  }
 
   // ---- spaces ----------------------------------------------------------------------------
   // Follow space -> world matrix on the frame shown (Root: the character's skeleton space,
@@ -170,6 +192,30 @@ export class ControlRig {
       this.controls.set(`${L.id}:line`, line);
       this.group.add(box, pole, line);
     }
+    const hips = new THREE.Mesh(new THREE.BoxGeometry(size * 3.2, size * 1.2, size * 2.2),
+      new THREE.MeshBasicMaterial({ color: 0x5eead4, wireframe: true, depthTest: false, transparent: true, opacity: 0.9 }));
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(size * 4, size * 0.1, 6, 64).rotateX(Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0x5eead4, depthTest: false, transparent: true, opacity: 0.9 }));
+    const arrow = new THREE.Mesh(new THREE.ConeGeometry(size * 0.5, size * 1.2, 4).rotateX(Math.PI / 2).translate(0, 0, size * 4.6),
+      ring.material);
+    ring.add(arrow); // points where the character faces (+Z)
+    for (const [m, kind] of [[hips, 'hips'], [ring, 'root']]) {
+      m.renderOrder = 999;
+      m.userData = { limb: 'body', kind };
+      this.controls.set(`body:${kind}`, m);
+      this.group.add(m);
+    }
+  }
+
+  // Ground point under the hips (skeleton space y = 0), in world space.
+  groundUnderHips(ch) {
+    const character = this.getCharacter(), M = character.root.matrixWorld;
+    const p = ch.hips.bone.getWorldPosition(new THREE.Vector3()).applyMatrix4(M.clone().invert());
+    p.y = 0;
+    return p.applyMatrix4(M);
+  }
+  rootRotation() {
+    return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().extractRotation(this.getCharacter().root.matrixWorld));
   }
 
   update() {
@@ -178,8 +224,12 @@ export class ControlRig {
     this.group.visible = show;
     if (!show) { if (this.picked && !ch) this.pick(null); return; }
     const character = this.getCharacter();
-    const box = new THREE.Box3().setFromObject(character.root);
-    this.ensureMeshes(Math.max(0.02, (box.max.y - box.min.y) * 0.06));
+    if (this.sizedFor !== character) { // control size from the character's height (once: not every frame)
+      const box = new THREE.Box3().setFromObject(character.root);
+      this.sizedFor = character;
+      this.controlSize = Math.max(0.02, (box.max.y - box.min.y) * 0.06);
+    }
+    this.ensureMeshes(this.controlSize);
     for (const L of LIMBS) {
       const on = !!ch[L.id] && this.limb(L.id).ik;
       for (const kind of ['ik', 'pole', 'line']) this.controls.get(`${L.id}:${kind}`).visible = on;
@@ -195,6 +245,20 @@ export class ControlRig {
       line.geometry.setFromPoints([B, pole.position.clone()]);
       line.computeLineDistances();
     }
+    const hips = this.controls.get('body:hips'), ring = this.controls.get('body:root');
+    hips.visible = ring.visible = true;
+    const draggedBody = this.dragging && isBody(this.picked);
+    if (!(draggedBody && this.picked.kind === 'hips')) {
+      ch.hips.bone.getWorldPosition(hips.position);
+      ch.hips.bone.getWorldQuaternion(hips.quaternion);
+    }
+    if (!(draggedBody && this.picked.kind === 'root')) {
+      ring.position.copy(this.groundUnderHips(ch));
+      const o = this.offsetsAt('root');
+      ring.quaternion.copy(this.rootRotation().multiply(eulerQuat(o.rx, o.ry, o.rz)));
+    }
+    hips.material.color.set(this.picked?.limb === 'body' && this.picked.kind === 'hips' ? 0xffffff : 0x5eead4);
+    ring.material.color.set(this.picked?.limb === 'body' && this.picked.kind === 'root' ? 0xffffff : 0x5eead4);
   }
 
   hit(raycaster) {
@@ -228,8 +292,33 @@ export class ControlRig {
   }
 
   // Live feedback while dragging: solve the chain here on the character's bones.
+  dragStart() {
+    const p = this.picked, ch = this.chains();
+    if (!isBody(p) || !ch) { this.start = null; return; }
+    const m = this.controls.get(`body:${p.kind}`), character = this.getCharacter();
+    const bones = p.kind === 'hips' ? [ch.hips.bone] : character.joints.filter((j) => j.parent < 0).map((j) => j.bone);
+    this.start = { pos: m.position.clone(), quat: m.quaternion.clone(),
+      bones: bones.map((b) => ({ b, p: b.getWorldPosition(new THREE.Vector3()), q: b.getWorldQuaternion(new THREE.Quaternion()) })) };
+  }
+
+  // World change of the dragged body control since the drag started.
+  bodyDelta() {
+    const m = this.controls.get(`body:${this.picked.kind}`), s = this.start;
+    return { dp: m.position.clone().sub(s.pos), dq: m.quaternion.clone().multiply(s.quat.clone().invert()) };
+  }
+
   preview() {
     if (!this.dragging || !this.picked) return;
+    if (isBody(this.picked)) {
+      if (!this.start) return;
+      const { dp, dq } = this.bodyDelta(), pivot = this.start.pos;
+      for (const { b, p, q } of this.start.bones) {
+        const pos = this.picked.kind === 'hips' ? p.clone().add(dp) : p.clone().sub(pivot).applyQuaternion(dq).add(pivot).add(dp);
+        setBoneWorld(b, pos, dq.clone().multiply(q));
+      }
+      this.syncValues(this.bodyValues());
+      return;
+    }
     const ch = this.chains();
     if (!ch?.[this.picked.limb]) return;
     const ik = this.controls.get(`${this.picked.limb}:ik`), pole = this.controls.get(`${this.picked.limb}:pole`);
@@ -245,7 +334,43 @@ export class ControlRig {
 
   dragEnd() {
     if (!this.picked) return;
+    if (isBody(this.picked)) { if (this.start) this.keyBody(this.picked.kind, this.bodyValues()); this.start = null; return; }
     this.key(this.picked.limb, this.picked.kind);
+  }
+
+  // Offsets after the drag: the change (world) brought to skeleton space, on top of the keyed offset.
+  bodyValues() {
+    const o = this.offsetsAt(this.picked.kind);
+    if (!this.start) return o;
+    const { dp, dq } = this.bodyDelta();
+    const inv = this.getCharacter().root.matrixWorld.clone().invert();
+    const t = this.start.pos.clone().add(dp).applyMatrix4(inv).sub(this.start.pos.clone().applyMatrix4(inv));
+    const mq = this.rootRotation();
+    const dqs = mq.clone().invert().multiply(dq).multiply(mq);
+    const e = quatEuler(dqs.multiply(eulerQuat(o.rx, o.ry, o.rz)), [o.rx, o.ry, o.rz]);
+    return { tx: o.tx + t.x, ty: o.ty + t.y, tz: o.tz + t.z, rx: e[0], ry: e[1], rz: e[2] };
+  }
+
+  keyBody(kind, v, quiet = false) {
+    const c = this.curvesOf({ limb: 'body', kind }), f = this.player.frame;
+    for (const k of ALL) setKey((c[k] ??= []), f, v[k]);
+    if (!quiet) this.status(`Keyed ${this.label('body', kind)} at frame ${f}`);
+    this.changed();
+  }
+
+  // Timeline: move the picked control's key at frame f by delta frames (replacing a key there).
+  moveKey(f, delta) {
+    if (!this.picked || !delta) return;
+    const curves = this.curvesOf(this.picked), to = Math.max(0, f + delta);
+    for (const k of Object.keys(curves)) {
+      const keys = curves[k].filter((x) => Math.round(x.f) !== to || to === f);
+      for (const x of keys) if (Math.round(x.f) === f) x.f = to;
+      keys.sort((a, b) => a.f - b.f);
+      curves[k] = keys;
+    }
+    this.player.setFrame(to);
+    this.status(`Moved the ${this.label(this.picked.limb, this.picked.kind)} key from frame ${f} to ${to}`);
+    this.changed();
   }
 
   // Key a control where it is now, in its follow space, at the current frame.
@@ -348,8 +473,8 @@ export class ControlRig {
 
   pickedLimb() {
     const id = this.picked?.limb;
-    if (!id) this.status('Pick a control first (viewport or Picker)', true);
-    return id ?? null;
+    if (!id || id === 'body') this.status('Pick an arm or leg control first (viewport or Picker)', true);
+    return id && id !== 'body' ? id : null;
   }
 
   // Match IK to FK: key the IK control and the pole where the FK (animated) hand / foot and
@@ -409,12 +534,15 @@ export class ControlRig {
     } catch (err) { this.status(`Match FK to IK failed: ${err.message || err}`, true); }
   }
 
-  keyPicked() { if (this.picked) this.key(this.picked.limb, this.picked.kind); }
+  keyPicked() {
+    if (!this.picked) return;
+    if (isBody(this.picked)) this.keyBody(this.picked.kind, this.offsetsAt(this.picked.kind));
+    else this.key(this.picked.limb, this.picked.kind);
+  }
 
   deleteKeyAtFrame() {
     if (!this.picked) return;
-    const l = this.limb(this.picked.limb), f = this.player.frame;
-    const curves = this.picked.kind === 'ik' ? l.target : l.pole;
+    const f = this.player.frame, curves = this.curvesOf(this.picked);
     for (const k of Object.keys(curves)) curves[k] = curves[k].filter((x) => Math.round(x.f) !== f);
     this.changed();
   }
@@ -422,6 +550,12 @@ export class ControlRig {
   resetLimb() {
     const id = this.picked?.limb;
     if (!id) { this.status('Pick a control first (viewport or Picker)', true); return; }
+    if (id === 'body') {
+      this.body()[this.picked.kind] = {};
+      this.status(`${this.label('body', this.picked.kind)}: no offset (back to the animation)`);
+      this.changed();
+      return;
+    }
     const l = this.limb(id);
     l.target = {};
     l.pole = {};
@@ -445,11 +579,10 @@ export class ControlRig {
   // Frames keyed on the picked control (timeline row).
   pickedKeyFrames() {
     if (!this.picked) return null;
-    const l = this.limb(this.picked.limb);
-    const curves = this.picked.kind === 'ik' ? l.target : l.pole;
+    const curves = this.curvesOf(this.picked);
     const set = new Set();
     for (const keys of Object.values(curves)) for (const k of keys) set.add(Math.round(k.f));
-    return { label: `${LIMBS.find((L) => L.id === this.picked.limb).label} ${this.picked.kind === 'ik' ? 'IK' : 'pole'}`, frames: [...set].sort((a, b) => a - b) };
+    return { label: this.label(this.picked.limb, this.picked.kind), frames: [...set].sort((a, b) => a - b) };
   }
 
   // ---- Animate › Rig panel ---------------------------------------------------------------
@@ -517,7 +650,27 @@ export class ControlRig {
       row.append(name, seg, follow, blend, keys);
       host.append(row);
     }
-    this.$('rig-selected').textContent = this.picked ? `Picked: ${this.label(this.picked.limb, this.picked.kind)} (follows ${this.limb(this.picked.limb).follow})` : '';
+    const body = document.createElement('div');
+    body.className = `rig-limb rig-body${isBody(this.picked) ? ' picked' : ''}`;
+    const bname = document.createElement('span');
+    bname.textContent = 'Body';
+    const bseg = document.createElement('span');
+    bseg.className = 'seg';
+    for (const [kind, text, tip] of [['hips', 'Hips', 'Hips box: offset of the hips (IK feet stay planted)'], ['root', 'Root', 'Ground circle: offset of the whole character']]) {
+      const b = document.createElement('button');
+      Object.assign(b, { type: 'button', textContent: text, title: tip, className: isBody(this.picked) && this.picked.kind === kind ? 'on' : '' });
+      b.addEventListener('click', () => this.pick({ limb: 'body', kind }));
+      bseg.append(b);
+    }
+    const bkeys = document.createElement('span');
+    bkeys.className = 'keys';
+    const nk = (c) => new Set(Object.values(c ?? {}).flat().map((k) => Math.round(k.f))).size;
+    bkeys.textContent = `hips: ${nk(this.body().hips) ? `${nk(this.body().hips)} key(s)` : 'no offset'} · root: ${nk(this.body().root) ? `${nk(this.body().root)} key(s)` : 'no offset'}`;
+    body.append(bname, bseg, document.createElement('span'), bkeys);
+    host.prepend(body);
+    this.$('rig-selected').textContent = !this.picked ? ''
+      : isBody(this.picked) ? `Picked: ${this.label('body', this.picked.kind)} (offset from the animation)`
+      : `Picked: ${this.label(this.picked.limb, this.picked.kind)} (follows ${this.limb(this.picked.limb).follow})`;
     this.renderTransform();
   }
 
@@ -525,9 +678,9 @@ export class ControlRig {
   renderTransform() {
     const host = this.$('rig-xform'), p = this.picked, ch = this.chains();
     host.replaceChildren();
-    host.hidden = !p || !ch?.[p.limb];
+    host.hidden = !p || !(isBody(p) ? ch : ch?.[p.limb]);
     if (host.hidden) return;
-    const names = p.kind === 'ik' ? [...POS, ...ROT] : POS;
+    const names = p.kind === 'pole' ? POS : ALL;
     for (const k of names) {
       const lab = document.createElement('label');
       lab.textContent = k.startsWith('t') ? `Move ${k[1].toUpperCase()}` : `Rot ${k[1].toUpperCase()}°`;
@@ -538,6 +691,7 @@ export class ControlRig {
         const v = this.currentValues();
         if (!v || !Number.isFinite(Number(input.value))) return;
         v[k] = Number(input.value);
+        if (isBody(p)) { this.keyBody(p.kind, v); return; }
         this.placeControl(p.limb, p.kind, v, ch);
         this.key(p.limb, p.kind);
       });
@@ -550,13 +704,14 @@ export class ControlRig {
   // Values of the picked control on the frame shown, in its follow space.
   currentValues() {
     const p = this.picked, ch = this.chains();
+    if (isBody(p)) return ch ? this.offsetsAt(p.kind) : null;
     if (!p || !ch?.[p.limb]) return null;
     const l = this.limb(p.limb), w = this.controlWorld(p.limb, p.kind, ch);
     return this.spaceValues(l, p.kind, w.pos, w.rot, ch, this.player.frame);
   }
 
   // Refresh the frame-dependent widgets (blend sliders, Transform) when the frame changes.
-  syncValues() {
+  syncValues(values = null) {
     for (const s of this.$('rig-limbs').querySelectorAll('input[data-blend]')) {
       if (document.activeElement === s) continue;
       const v = this.blendAt(this.limb(s.dataset.blend));
@@ -564,8 +719,8 @@ export class ControlRig {
       s.nextElementSibling.nextElementSibling.textContent = v.toFixed(2);
     }
     const host = this.$('rig-xform');
-    if (host.hidden || this.dragging) return;
-    const v = this.currentValues();
+    if (host.hidden || (this.dragging && !values)) return;
+    const v = values ?? this.currentValues();
     if (!v) return;
     for (const input of host.querySelectorAll('input[data-c]')) {
       if (document.activeElement === input) continue;
@@ -573,6 +728,17 @@ export class ControlRig {
       input.value = (k.startsWith('t') ? v[k].toFixed(3) : v[k].toFixed(1));
     }
   }
+}
+
+// Sets a bone's world position / rotation (keeping its scale).
+function setBoneWorld(bone, pos, quat) {
+  bone.parent.updateWorldMatrix(true, false);
+  const inv = bone.parent.matrixWorld.clone().invert();
+  const m = new THREE.Matrix4().compose(pos, quat, new THREE.Vector3(1, 1, 1)).premultiply(inv);
+  const s = bone.scale.clone();
+  m.decompose(bone.position, bone.quaternion, new THREE.Vector3());
+  bone.scale.copy(s);
+  bone.updateMatrixWorld(true);
 }
 
 // Two-bone IK on three.js bones (world space): c reaches target, b points at pole, c takes endRot.

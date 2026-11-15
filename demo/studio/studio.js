@@ -21,6 +21,7 @@ import { restoreBindPose } from './editor/bind-pose.js';
 import { TPoseEditor } from './editor/tpose-editor.js';
 import { ControlRig } from './editor/control-rig.js';
 import { Picker } from './editor/picker.js';
+import { PoseTools } from './editor/pose-tools.js';
 
 const $ = (id) => document.getElementById(id);
 const status = (text, error = false) => {
@@ -302,6 +303,9 @@ const controlRig = new ControlRig({ $, viewport, player, motionPanel, retarget: 
 const picker = new Picker({ host: $('picker'), retarget: retargetPanel, rig: controlRig, getCharacter: () => character, selectJoint: (i) => select(i) });
 motionPanel.controlRigRequest = () => controlRig.request();
 motionPanel.rigRow = () => controlRig.pickedKeyFrames();
+motionPanel.moveRigKey = (f, delta) => controlRig.moveKey(f, delta);
+const poseTools = new PoseTools({ $, player, motionPanel, status, getCharacter: () => character, selectedJoint: () => selected });
+poseTools.onKeyed = () => keyPanel.updateInfo();
 controlRig.onPick = (p) => { if (p) select(-1, true); picker.render(); motionPanel.renderTimeline(); };
 const shownBeforeRig = motionPanel.onShown;
 motionPanel.onShown = () => { shownBeforeRig?.(); controlRig.renderPanel(); picker.render(); };
@@ -516,4 +520,4 @@ if (params.get('load')) {
 }
 
 // Debug hook for automated checks: /studio/?debug=1 exposes the main objects.
-if (new URLSearchParams(location.search).get('debug') === '1') window.__studio = { THREE, player, motionPanel, keyPanel, retargetPanel, tposeEditor, controlRig, getCharacter: () => character, select };
+if (new URLSearchParams(location.search).get('debug') === '1') window.__studio = { THREE, player, motionPanel, keyPanel, retargetPanel, tposeEditor, controlRig, poseTools, picker, getCharacter: () => character, select };

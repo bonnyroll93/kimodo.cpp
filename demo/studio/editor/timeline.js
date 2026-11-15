@@ -148,7 +148,7 @@ export class Timeline {
         tick.className = 'tl-key rig';
         tick.dataset.rigFrame = f;
         tick.style.left = this.pct(f / this.fps);
-        tick.title = `rig key at frame ${f} (click: go there)`;
+        tick.title = `rig key at frame ${f} (click: go there · drag: move it)`;
         track.append(tick);
       }
       labels.append(label);
@@ -285,7 +285,14 @@ export class Timeline {
     if (!this.tracksEl || !e.target.closest('.tl-track')) return;
     if (e.target.closest('.tl-ruler')) this.container.classList.add('scrubbing');
     const rigTick = e.target.closest('.tl-key.rig');
-    if (rigTick) { this.cb.seek(Number(rigTick.dataset.rigFrame) / this.fps); return; }
+    if (rigTick) { // click: go there; drag: move the rig key (whole frames)
+      const f = Number(rigTick.dataset.rigFrame);
+      this.container.setPointerCapture(e.pointerId);
+      this.cb.seek(f / this.fps);
+      this.drag = { rig: true, f, t0: this.timeAt(e), delta: 0, tick: rigTick };
+      rigTick.classList.add('selected');
+      return;
+    }
     const tick = e.target.closest('.tl-key');
     if (tick) {
       this.container.setPointerCapture(e.pointerId);
@@ -343,6 +350,11 @@ export class Timeline {
     }
     const d = this.drag;
     if (d.seek) { this.cb.seek(this.timeAt(e)); return; }
+    if (d.rig) {
+      d.delta = Math.max(-d.f, Math.round((this.timeAt(e) - d.t0) * this.fps));
+      d.tick.style.left = this.pct((d.f + d.delta) / this.fps);
+      return;
+    }
     if (d.keys) { // live preview: shift the selected ticks by whole frames of the layer's time
       d.delta = Math.round((this.timeAt(e) - d.t0) * this.fps * this.timingOf(d.i).speed);
       for (const tick of this.tracksEl.querySelectorAll('.tl-key.selected'))
@@ -380,6 +392,11 @@ export class Timeline {
     const d = this.drag;
     this.drag = null;
     this.container.classList.remove('scrubbing');
+    if (d?.rig) {
+      if (d.delta) this.cb.moveRigKey?.(d.f, d.delta);
+      else d.tick.classList.remove('selected');
+      return;
+    }
     if (d?.keys) {
       if (d.delta) {
         const frames = [...this.keySel.frames];
