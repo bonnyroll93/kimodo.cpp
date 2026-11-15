@@ -192,6 +192,18 @@ func registerRetarget(mux *http.ServeMux, c studioConfig) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"id": "upload:" + hash})
 	})
 
+	// Uploaded characters, so a saved scene can reload them: /api/characters/<hash>.glb
+	mux.HandleFunc("/api/characters/", func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/api/characters/")
+		path, ok := c.characterPath("upload:" + strings.TrimSuffix(name, ".glb"))
+		if !ok || !strings.HasSuffix(name, ".glb") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "model/gltf-binary")
+		http.ServeFile(w, r, path)
+	})
+
 	mux.HandleFunc("/api/retarget/map", func(w http.ResponseWriter, r *http.Request) {
 		path, ok := c.characterPath(r.URL.Query().Get("character"))
 		key := r.URL.Query().Get("skeleton")

@@ -96,6 +96,19 @@ func TestLayersEndpoint(t *testing.T) {
 		t.Fatalf("foot lock: %d %s", rec.Code, rec.Body.String())
 	}
 
+	// Preset masks match the C++ definitions (legs out of the upper body).
+	maskRec := httptest.NewRecorder()
+	mux.ServeHTTP(maskRec, httptest.NewRequest(http.MethodGet, "/api/masks?character=sample:test_rig.glb", nil))
+	var presets struct {
+		Upper struct {
+			Weights map[string]float64 `json:"weights"`
+		} `json:"upper"`
+	}
+	if maskRec.Code != http.StatusOK || json.Unmarshal(maskRec.Body.Bytes(), &presets) != nil ||
+		presets.Upper.Weights["LeftUpLeg"] != 0 || presets.Upper.Weights["LeftHand"] != 1 {
+		t.Fatalf("masks: %d %s", maskRec.Code, maskRec.Body.String())
+	}
+
 	for _, bad := range []string{
 		`{"foot_lock":{"enabled":true,"height":-1},"layers":[{"root_motion":` + walk + `}]}`,
 		`{"layers":[]}`,

@@ -33,7 +33,7 @@ export class SkeletonView {
     this.markers = new THREE.InstancedMesh(sphere, material, this.joints.length);
     this.markers.renderOrder = 20;
     this.markers.frustumCulled = false;
-    for (const j of this.joints) this.markers.setColorAt(j.index, j.deforming ? this.color : COLOR_MUTED);
+    for (const j of this.joints) this.markers.setColorAt(j.index, this.baseColor(j));
     this.group.add(this.markers);
 
     const segments = this.joints.filter((j) => j.parent >= 0).length;
@@ -64,11 +64,24 @@ export class SkeletonView {
     if (this.lines) this.lines.visible = skeleton;
   }
 
+  baseColor(j) {
+    if (this.colorOf) return this.colorOf(j) ?? COLOR_MUTED;
+    return j.deforming ? this.color : COLOR_MUTED;
+  }
+
+  // Optional per-joint colouring (e.g. a mask preview): fn(joint) -> THREE.Color, or null to reset.
+  setJointColors(fn) {
+    this.colorOf = fn;
+    if (!this.markers) return;
+    for (const j of this.joints) this.markers.setColorAt(j.index, j.index === this.selected ? COLOR_SELECTED : this.baseColor(j));
+    this.markers.instanceColor.needsUpdate = true;
+  }
+
   select(index) {
     if (!this.markers) return;
     if (this.selected >= 0) {
       const j = this.joints[this.selected];
-      this.markers.setColorAt(j.index, j.deforming ? this.color : COLOR_MUTED);
+      this.markers.setColorAt(j.index, this.baseColor(j));
     }
     this.selected = index;
     if (index >= 0) this.markers.setColorAt(index, COLOR_SELECTED);

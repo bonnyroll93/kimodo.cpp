@@ -61,6 +61,12 @@ func TestRetargetEndpoints(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &uploaded); err != nil || !strings.HasPrefix(uploaded["id"], "upload:") {
 		t.Fatalf("upload: %d %s", rec.Code, rec.Body.String())
 	}
+	if got := do(http.MethodGet, "/api/characters/"+strings.TrimPrefix(uploaded["id"], "upload:")+".glb", nil); got.Code != http.StatusOK || !bytes.Equal(got.Body.Bytes(), glb) {
+		t.Fatalf("uploaded character not served back: %d", got.Code)
+	}
+	if got := do(http.MethodGet, "/api/characters/nope.glb", nil); got.Code != http.StatusNotFound {
+		t.Fatalf("unknown upload: %d", got.Code)
+	}
 	if rec := do(http.MethodPost, "/api/characters", []byte("not a glb file")); rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad upload accepted: %d", rec.Code)
 	}

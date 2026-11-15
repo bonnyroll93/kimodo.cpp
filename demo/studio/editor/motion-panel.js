@@ -88,6 +88,8 @@ export class MotionPanel {
     this.layerPanel = new LayerPanel($('layers-list'), $('add-layer'), {
       select: (i) => this.select(i),
       change: (i, patch) => {
+        // Switching to a custom mask starts from the preset the layer had.
+        if (patch.mask === 'custom' && !this.layers[i].customMask) this.layers[i].customMaskFrom = this.layers[i].mask;
         Object.assign(this.layers[i], patch);
         if ('mask' in patch || 'blend' in patch) this.select(i, false);
         this.renderLayers();
@@ -121,6 +123,8 @@ export class MotionPanel {
     this.maskEditor = new MaskEditor({
       $, status,
       onChange: (mask) => { this.layers[this.active].customMask = mask; this.schedule(); },
+      onVisual: (weightOf) => this.onMaskVisual?.(weightOf),
+      presets: () => this.maskPresets(),
     });
     this.timeline = new Timeline($('timeline'), { select: (i) => this.select(i), seek: (t) => onSeek?.(t) });
     this.writeForm(this.layers[0].config);
@@ -185,9 +189,7 @@ export class MotionPanel {
     this.active = i;
     this.writeForm(this.activeLayer.config);
     this.$('motion-layer-name').textContent = `${i + 1}. ${this.activeLayer.name}`;
-    const l = this.activeLayer;
-    if (l.mask === 'custom') l.customMask = this.maskEditor.show(l.customMask, this.maskJoints());
-    else this.maskEditor.hide();
+    this.showMaskEditor();
     if (rerender) this.renderLayers();
     else if (this.timelineData) this.timeline.set({ ...this.timelineData, active: i });
     this.onShown?.(); // the path editor follows the active layer
@@ -201,15 +203,47 @@ export class MotionPanel {
 
   // Joints a custom mask is edited for: the character when retargeting, else the source skeleton.
   maskJoints() {
-    const depthOf = (joints, j) => { let d = 0; for (let p = j.parent; p >= 0; p = joints[p].parent) d++; return d; };
+    const depth = (parents, i) => { let d = 0; for (let p = parents[i]; p >= 0; p = parents[p]) d++; return d; };
     if (this.retarget?.enabled) {
       const js = this.retarget.character.joints;
-      return js.map((j) => ({ name: j.name, depth: depthOf(js, j) }));
+      const parents = js.map((j) => j.parent);
+      return js.map((j, i) => ({ name: j.name, parent: j.parent, depth: depth(parents, i) }));
     }
     const key = this.sources?.get(this.layers[0].config.source)?.skeleton_key;
     const def = key && this.skeletons.get(key);
     if (!def) return [];
-    return def.names.map((name, i) => ({ name, depth: (() => { let d = 0; for (let p = def.parents[i]; p >= 0; p = def.parents[p]) d++; return d; })() }));
+    return def.names.map((name, i) => ({ name, parent: def.parents[i], depth: depth(def.parents, i) }));
+  }
+
+  // Preset masks from kmd-anim for the skeleton the stack is evaluated on (cached).
+  async maskPresets() {
+    let url;
+    if (this.retarget?.enabled) url = `/api/masks?character=${encodeURIComponent(await this.retarget.ensureCharacterId())}`;
+    else url = `/api/masks?skeleton=${encodeURIComponent(this.sources?.get(this.layers[0].config.source)?.skeleton_key ?? '')}`;
+    this.presetCache ??= new Map();
+    if (!this.presetCache.has(url)) {
+      const r = await fetch(url);
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+      this.presetCache.set(url, body);
+    }
+    return this.presetCache.get(url);
+  }
+
+  async showMaskEditor() {
+    const l = this.activeLayer;
+    if (l.mask !== 'custom') { this.maskEditor.hide(); return; }
+    const joints = this.maskJoints();
+    if (!l.customMask && joints.length && (l.customMaskFrom === 'upper' || l.customMaskFrom === 'lower')) {
+      try {
+        const preset = (await this.maskPresets())[l.customMaskFrom];
+        l.customMask = { version: 1, name: `custom (${l.customMaskFrom})`, default: 0,
+          weights: Object.fromEntries(joints.map((j) => [j.name, preset.weights[j.name] ?? preset.default ?? 0])) };
+        this.schedule();
+      } catch { /* fall back to "all included" */ }
+    }
+    if (joints.length) l.customMaskFrom = undefined;
+    if (this.activeLayer === l && l.mask === 'custom') l.customMask = this.maskEditor.show(l.customMask, joints);
   }
 
   // Foot locking applies to the whole result (after the layers are baked).
@@ -415,7 +449,7 @@ export class MotionPanel {
     const fl = r.footLock;
     this.pathView.showContacts(fl?.contacts, fl?.ground ?? 0);
     // The joint list for a custom mask is known now (character or source skeleton).
-    if (this.activeLayer.mask === 'custom') this.activeLayer.customMask = this.maskEditor.show(this.activeLayer.customMask, this.maskJoints());
+    if (this.activeLayer.mask === 'custom') this.showMaskEditor();
     const fps = r.fps || this.player.fps;
     this.timelineData = {
       layers: r.layers, duration: this.player.duration,

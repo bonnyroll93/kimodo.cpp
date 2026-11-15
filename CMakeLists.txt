@@ -178,6 +178,8 @@ if(BUILD_TESTING AND KIMODO_BUILD_TESTS AND KIMODO_BUILD_ANIM)
   add_test(NAME kimodo-anim-footlock-cli
     COMMAND kmd-anim footlock "${KIMODO_TEST_WALK}" "${CMAKE_CURRENT_BINARY_DIR}/anim-test-out/footlock")
   set_tests_properties(kimodo-anim-footlock-cli PROPERTIES PASS_REGULAR_EXPRESSION "\"unreachable_frames\":0,")
+  add_test(NAME kimodo-anim-masks-cli COMMAND kmd-anim masks --character "${KIMODO_TEST_RIGS}/test_rig.glb")
+  set_tests_properties(kimodo-anim-masks-cli PROPERTIES PASS_REGULAR_EXPRESSION "\"name\": \"upper\"")
   add_test(NAME kimodo-anim-map-cli COMMAND kmd-anim map soma30 "${KIMODO_TEST_RIGS}/test_rig.glb")
   set_tests_properties(kimodo-anim-map-cli PROPERTIES PASS_REGULAR_EXPRESSION "\"target\": \"LeftLeg\",[ \r\n]*\"source\": \"LeftShin\"")
 endif()

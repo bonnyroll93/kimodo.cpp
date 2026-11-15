@@ -12,6 +12,7 @@ import { MotionPanel } from './editor/motion-panel.js';
 import { RetargetPanel } from './editor/retarget-panel.js';
 import { ExportPanel } from './editor/export-panel.js';
 import { PathEditor } from './viewer/path-editor.js';
+import { SceneFile } from './editor/scene-file.js';
 
 const $ = (id) => document.getElementById(id);
 const status = (text, error = false) => {
@@ -24,7 +25,17 @@ const skeletonView = new SkeletonView(viewport.scene);
 let character = null;
 let selected = -1;
 
+// Shift state, for "toggle the whole subtree" while picking mask joints.
+let shiftDown = false;
+window.addEventListener('keydown', (e) => { if (e.key === 'Shift') shiftDown = true; });
+window.addEventListener('keyup', (e) => { if (e.key === 'Shift') shiftDown = false; });
+window.addEventListener('blur', () => { shiftDown = false; });
+
 function select(index) {
+  // Mask picking: a click on a joint includes/excludes it in the active layer's mask.
+  const mask = motionPanel?.maskEditor;
+  if (mask?.picking && mask.visible && character && index >= 0 && retargetPanel.enabled)
+    mask.toggleJoint(character.joints[index].name, shiftDown);
   selected = character && index >= 0 && index < character.joints.length ? index : -1;
   skeletonView.select(selected);
   hierarchy.select(selected);
@@ -69,6 +80,24 @@ const motionPanel = new MotionPanel({
     }
   },
 });
+
+// Mask preview: joints coloured by their weight in the active layer's custom mask.
+const MASK_OFF = new THREE.Color(0x4a5560), MASK_ON = new THREE.Color(0xffb547);
+motionPanel.onMaskVisual = (weightOf) => {
+  const target = retargetPanel.enabled ? skeletonView : player.view;
+  for (const v of [skeletonView, player.view]) if (v !== target || !weightOf) v.setJointColors(null);
+  if (weightOf) target.setJointColors((j) => MASK_OFF.clone().lerp(MASK_ON, weightOf(j.name)));
+};
+
+// Motion sources: new generations (made in the Text to motion tab) appear on refresh or
+// when this tab gets the focus back.
+async function refreshSources() {
+  const before = motionPanel.sources?.size ?? 0;
+  const list = await motionPanel.loadSources();
+  if (list.length > before && before > 0) status(`${list.length - before} new motion(s) available in Source`);
+}
+$('refresh-sources').addEventListener('click', () => refreshSources().catch(() => {}));
+window.addEventListener('focus', () => refreshSources().catch(() => {}));
 
 function applyVisibility() {
   if (character) character.root.traverse((o) => { if (o.isMesh) o.visible = $('show-mesh').checked; });
@@ -147,6 +176,22 @@ motionPanel.onShown = () => pathEditor.refresh();
 for (const r of document.querySelectorAll('input[name="root-mode"]'))
   r.addEventListener('change', () => { if (r.checked && r.value !== 'path' && pathEditor.active) pathEditor.toggle(false); });
 
+// Remove the loaded character (opening a scene saved without one).
+function clearCharacter() {
+  if (!character) return;
+  player.setTarget(null);
+  viewport.scene.remove(character.root);
+  disposeCharacter(character);
+  character = null;
+  skeletonView.setCharacter(null, 1);
+  hierarchy.setCharacter(null);
+  inspector.showStats(null);
+  select(-1);
+  retargetPanel.setCharacter(null);
+  $('embedded-row').hidden = true;
+  $('joint-count').textContent = '';
+}
+
 const exportPanel = new ExportPanel({
   $, status, motionPanel, retarget: retargetPanel,
   // Reopen an exported GLB: it replaces the character and plays its embedded animation.
@@ -157,6 +202,12 @@ const exportPanel = new ExportPanel({
     await open(url, file);
     selectEmbedded(animation);
   },
+});
+
+const sceneFile = new SceneFile({
+  $, status, viewport, player, motionPanel, retargetPanel, exportPanel, applyVisibility, clearCharacter,
+  getCharacter: () => character,
+  openCharacter: (url, name, id) => open(url, name, id),
 });
 
 // Animations stored in the loaded GLB (exported files, or any animated character).
@@ -251,6 +302,14 @@ $('samples').addEventListener('change', async (e) => {
 });
 
 applyVisibility();
+
+// Deep link: /studio/?scene=<url of a saved scene JSON> opens that scene.
+if (new URLSearchParams(location.search).get('scene')) {
+  fetch(new URLSearchParams(location.search).get('scene'))
+    .then((r) => r.json())
+    .then((scene) => sceneFile.restore(scene, 'linked scene'))
+    .catch((err) => status(`Cannot open the linked scene: ${err.message || err}`, true));
+}
 
 // Deep links: /studio/?load=samples/test_rig.glb&joint=LeftArm
 //             /studio/?motion=sample:soma30-walk-s42&mode=path&preset=scurve&frame=45

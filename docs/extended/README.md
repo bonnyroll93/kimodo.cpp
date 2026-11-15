@@ -299,6 +299,7 @@ kmd-anim export character.glb CLIP_DIR out.glb [--name Walk] [--replace-animatio
 ```
 
 ```sh
+kmd-anim masks (--native soma30 | --character character.glb)   # preset masks as JSON
 kmd-anim footlock IN_DIR OUT_DIR [--character character.glb] [--foot-height M] [--foot-speed M_PER_S] \
     [--foot-blend FRAMES] [--no-hip-adjust]
 kmd-anim layers … --foot-lock [--foot-height M] [--foot-speed M_PER_S] [--foot-blend N] [--no-hip-adjust]
@@ -380,7 +381,17 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
   - Each layer chooses whether to hold its end or loop, and can be moved or removed.
   - *+ Layer* adds an additive upper-body layer on top.
   - The *Motion* form edits the active layer's source and root motion.
-  - *Custom…* opens a per-joint weight editor with Save and Load for mask JSON files.
+  - *Custom…* opens the **joint mask editor**, where you choose which joints the layer
+    affects:
+    - each joint has an include checkbox and a weight from 0 to 1; ⤵ applies the choice to
+      the joint and everything below it;
+    - *All*, *None*, *Upper*, *Lower* and *Invert* give starting points. Upper and Lower
+      come from `kmd-anim masks`, so they are exactly the presets;
+    - with *Pick joints* on, clicking a joint in the viewport or the hierarchy includes or
+      excludes it; Shift applies it to the whole subtree;
+    - included joints are coloured in the viewport and excluded ones are grey;
+    - switching a layer from Upper or Lower to Custom starts from that preset;
+    - Save and Load exchange mask JSON files.
   - A single default layer behaves exactly as before. A real stack is baked on the
     server, on the character's skeleton when retargeting, otherwise on the native
     skeleton.
@@ -390,6 +401,22 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     from the file, so you can compare it with the preview.
   - Any loaded GLB that contains animations shows an *Embedded animation* selector. These
     animations play through three.js' `AnimationMixer`, on the same play bar.
+- **Scenes.** *Save scene* downloads the whole studio state as JSON:
+  - the character reference;
+  - every layer (source, root motion, path waypoints, blend, weight, mask or custom mask,
+    enabled, muted, reference, wrap) and the active layer;
+  - the retarget options and mapping, foot locking, the export name, the view toggles,
+    the playback frame and the camera.
+
+  *Open scene* restores it, and `/studio/?scene=<url>` opens one from a link.
+  - Characters are referenced, not embedded: sample rigs by name, and opened `.glb` files
+    by the content hash of their upload. The demo keeps uploads in
+    `<output>/characters/` and serves them back at `/api/characters/<hash>.glb`.
+  - Motions are referenced by their sample or gallery id. Anything missing on the server
+    is reported when the scene opens.
+- **Text to motion** opens the generator in a new tab, so the scene in the studio is
+  untouched. New generations appear in *Source* when you come back to the studio tab,
+  or when you press ↻.
 - **Timeline.** It shows one bar per layer (clip length on the stack's time axis), the
   active layer, disabled and muted states, and a playhead.
   - Click a row label to make that layer active; click or drag on the bars to seek.
@@ -415,6 +442,8 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
 | `GET /api/retarget/<id>/{retarget.json,rotations.f32,translations.f32}` | result, cached by request hash |
 | `POST /api/layers` | `{character?, mapping?, align_rest?, foot_lock?:{enabled, height?, speed?, blend?, adjust_hips?}, layers:[{name, root_motion, mode, weight, mask, enabled, muted, reference, wrap}]}` (1–16 layers) |
 | `GET /api/layers/<id>/{clip.json,rotations.f32,translations.f32,root.f32}` | baked stack, cached by request hash |
+| `GET /api/masks?character=…` or `?skeleton=…` | preset masks (full / upper / lower) from `kmd-anim masks` |
+| `GET /api/characters/<hash>.glb` | an uploaded character (used to reopen saved scenes) |
 | `POST /api/export` | `{name?, character, mapping?, align_rest?, layers:[…]}` → `{url, download, bytes, meta}` |
 | `GET /api/export/<id>/<name>.glb[?download=1]` | the exported GLB (inline for the viewer, or as an attachment) |
 

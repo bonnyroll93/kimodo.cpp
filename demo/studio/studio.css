@@ -194,6 +194,17 @@ body {
 .tl-track.foot.right .tl-contact { background: #ffb547cc; }
 .tl-label.foot { cursor: default; }
 #edit-path.on { background: #ffb54733; border-color: #ffb547; color: #ffb547; }
+.mask-head, .mask-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) 26px 58px; gap: 4px; align-items: center; padding: 2px 8px; }
+.mask-head { font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); background: var(--panel-2); padding: 5px 8px; }
+.mask-row:nth-child(odd) { background: #0b101544; }
+.mask-row .map-target { cursor: pointer; }
+.mask-row.excluded .map-target { color: var(--muted); text-decoration: line-through; }
+.mask-row.highlight { outline: 1px solid #ffb547; }
+.mask-row input[type="checkbox"] { accent-color: var(--accent); margin: 0; }
+.mask-row .icon-button { padding: 0 4px; }
+#mask-pick.on { background: #ffb54733; border-color: #ffb547; color: #ffb547; }
+.source-row { align-items: end; }
+.source-row .field { flex: 1; min-width: 0; }
 .status {
   padding: 6px 16px; border-top: 1px solid var(--line); background: var(--panel);
   color: var(--muted); font-size: .8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

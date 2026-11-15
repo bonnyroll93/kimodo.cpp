@@ -229,6 +229,35 @@ func (c studioConfig) layers(ctx context.Context, req layersRequest) (layersResu
 }
 
 func registerLayers(mux *http.ServeMux, c studioConfig) {
+	// Preset masks (full / upper / lower) for a character or a native skeleton.
+	mux.HandleFunc("/api/masks", func(w http.ResponseWriter, r *http.Request) {
+		var args []string
+		if id := r.URL.Query().Get("character"); id != "" {
+			path, ok := c.characterPath(id)
+			if !ok {
+				writeError(w, http.StatusNotFound, "unknown character")
+				return
+			}
+			args = []string{"masks", "--character", path}
+		} else if key := r.URL.Query().Get("skeleton"); key != "" {
+			if _, ok := skeletonDefinitions[key]; !ok {
+				writeError(w, http.StatusNotFound, "unknown skeleton")
+				return
+			}
+			args = []string{"masks", "--native", key}
+		} else {
+			writeError(w, http.StatusBadRequest, "character or skeleton is required")
+			return
+		}
+		out, herr := c.runJSON(r.Context(), args...)
+		if herr != nil {
+			writeError(w, herr.status, herr.message)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(out)
+	})
+
 	mux.HandleFunc("/api/layers", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)

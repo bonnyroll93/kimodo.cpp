@@ -110,6 +110,7 @@ int usage() {
                  "           [--export-scale] [--skin N]\n"
                  "       CLIP_DIR is a retarget or layers output for that character; the character's meshes,\n"
                  "       materials, skins and existing animations are kept and the clip is added.\n"
+                 "       kmd-anim masks (--native KEY | --character FILE.glb)   preset masks (full/upper/lower) as JSON\n"
                  "       kmd-anim footlock IN_DIR OUT_DIR [--character FILE.glb] [--foot-height M] [--foot-speed M_PER_S]\n"
                  "           [--foot-blend FRAMES] [--no-hip-adjust]\n"
                  "       (layers also accepts --foot-lock plus the same --foot-* options, applied after baking)\n";
@@ -516,6 +517,32 @@ int layers_command(int argc, char **argv) {
     std::cout << meta.rdbuf();
     return 0;
 }
+// Preset masks for a skeleton, so editors start from exactly what --mask upper/lower mean.
+int masks_command(int argc, char **argv) {
+    if (argc != 4) return usage();
+    const std::string_view kind = argv[2];
+    std::optional<Skeleton> skeleton;
+    if (kind == "--native") {
+        auto s = native_skeleton(argv[3]);
+        if (!s) throw std::runtime_error(s.error());
+        skeleton = std::move(*s);
+    } else if (kind == "--character") {
+        auto c = load_gltf_character(argv[3]);
+        if (!c) throw std::runtime_error(c.error());
+        skeleton = std::move(c->skeleton);
+    } else {
+        return usage();
+    }
+    auto compact = [](std::string s) {
+        while (!s.empty() && (s.back() == '\n' || s.back() == ' ')) s.pop_back();
+        return s;
+    };
+    std::cout << "{\"skeleton\":" << quote(skeleton->source) << ",\"full\":" << compact(mask_to_json(full_body_mask()))
+              << ",\"upper\":" << compact(mask_to_json(upper_body_mask(*skeleton)))
+              << ",\"lower\":" << compact(mask_to_json(lower_body_mask(*skeleton))) << "}\n";
+    return 0;
+}
+
 int footlock_command(int argc, char **argv) {
     if (argc < 4) return usage();
     const std::filesystem::path in = argv[2], out = argv[3];
@@ -588,6 +615,7 @@ int main(int argc, char **argv) try {
     if (argc >= 2 && std::string_view(argv[1]) == "layers") return layers_command(argc, argv);
     if (argc >= 2 && std::string_view(argv[1]) == "export") return export_command(argc, argv);
     if (argc >= 2 && std::string_view(argv[1]) == "footlock") return footlock_command(argc, argv);
+    if (argc >= 2 && std::string_view(argv[1]) == "masks") return masks_command(argc, argv);
     if (argc < 3 || std::string_view(argv[1]) != "inspect") return usage();
     if (std::string_view(argv[2]) == "--native") {
         if (argc != 4) return usage();
