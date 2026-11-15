@@ -436,6 +436,24 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
 - **Text to motion** opens the generator in a new tab, so the scene in the studio is
   untouched. New generations appear in *Source* when you come back to the studio tab,
   or when you press ↻.
+- **Clip timeline (retiming).** Every layer is a clip on the timeline.
+  - **Editing with the mouse:** drag a clip to move it; drag its left edge to trim the
+    start, its right edge to trim the end, or Alt + right edge to stretch it (change the
+    speed). Times snap to frames; Shift moves freely.
+  - **Toolbar for the active clip:**
+    - *Split* cuts it at the playhead into two clips that reproduce the original motion;
+    - *Duplicate* places a copy right after it, with *Align root* so the root continues;
+    - *Start*, *Speed*, *Repeat*, *Fade in* and *Fade out* set the clip's timing; repeated
+      cycles continue the root;
+    - *Hold ends* / *Empty outside* chooses what the clip does outside its range;
+    - *Align root* moves and turns the clip so it starts where the layers below put the
+      root.
+  - Clip timing is part of the layer (`ClipTiming` in `layers.hpp`; `--start`,
+    `--trim-in`, `--trim-out`, `--speed`, `--repeat`, `--extend`, `--fade-in`,
+    `--fade-out` and `--align-root` in `kmd-anim layers`; `timing` in `/api/layers`). It
+    is therefore baked, foot-locked and exported like everything else, and saved in scenes.
+  - Not yet: root yaw continuation across repeats (only travel), crossfade presets, and
+    retiming curves (time warping).
 - **Timeline.** It shows one bar per layer (clip length on the stack's time axis), the
   active layer, disabled and muted states, and a playhead.
   - Click a row label to make that layer active; click or drag on the bars to seek.

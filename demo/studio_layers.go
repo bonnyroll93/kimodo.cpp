@@ -29,6 +29,63 @@ type layerRequest struct {
 	Reference  string            `json:"reference,omitempty"` // first (default) | rest | frame index
 	Wrap       string            `json:"wrap,omitempty"`      // clamp (default) | loop
 	Keys       json.RawMessage   `json:"keys,omitempty"`      // keyframe layer: offset curves instead of a motion
+	Timing     *clipTiming       `json:"timing,omitempty"`    // where/how the clip plays on the timeline
+}
+
+type clipTiming struct {
+	Start     float64 `json:"start"`
+	TrimIn    float64 `json:"trim_in"`
+	TrimOut   float64 `json:"trim_out"`
+	Speed     float64 `json:"speed"`
+	Repeat    int     `json:"repeat"`
+	Extend    string  `json:"extend"` // hold (default) | none
+	FadeIn    float64 `json:"fade_in"`
+	FadeOut   float64 `json:"fade_out"`
+	AlignRoot bool    `json:"align_root"`
+}
+
+func timingArgs(t *clipTiming) ([]string, string) {
+	if t == nil {
+		return nil, ""
+	}
+	if !finite(t.Start, t.TrimIn, t.TrimOut, t.Speed, t.FadeIn, t.FadeOut) || t.Start < -3600 || t.Start > 3600 ||
+		t.TrimIn < 0 || t.TrimOut < 0 || t.FadeIn < 0 || t.FadeOut < 0 || t.FadeIn > 3600 || t.FadeOut > 3600 {
+		return nil, "timing values out of range"
+	}
+	var args []string
+	add := func(flag string, v float64, def float64) {
+		if v != def {
+			args = append(args, flag, num(v))
+		}
+	}
+	add("--start", t.Start, 0)
+	add("--trim-in", t.TrimIn, 0)
+	add("--trim-out", t.TrimOut, 0)
+	if t.Speed != 0 {
+		if t.Speed < 0.05 || t.Speed > 20 {
+			return nil, "speed must be 0.05..20"
+		}
+		add("--speed", t.Speed, 1)
+	}
+	if t.Repeat != 0 {
+		if t.Repeat < 1 || t.Repeat > 100 {
+			return nil, "repeat must be 1..100"
+		}
+		add("--repeat", float64(t.Repeat), 1)
+	}
+	switch t.Extend {
+	case "", "hold":
+	case "none":
+		args = append(args, "--extend", "none")
+	default:
+		return nil, "extend must be hold or none"
+	}
+	add("--fade-in", t.FadeIn, 0)
+	add("--fade-out", t.FadeOut, 0)
+	if t.AlignRoot {
+		args = append(args, "--align-root")
+	}
+	return args, ""
 }
 
 type footLockRequest struct {
@@ -142,6 +199,11 @@ func (c studioConfig) layerArgs(l layerRequest, index int) ([]string, *httpError
 	default:
 		return nil, bad("wrap must be clamp or loop")
 	}
+	timing, msg := timingArgs(l.Timing)
+	if msg != "" {
+		return nil, bad(msg)
+	}
+	args = append(args, timing...)
 	return args, nil
 }
 

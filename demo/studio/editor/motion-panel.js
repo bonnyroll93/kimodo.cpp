@@ -54,9 +54,14 @@ const defaultConfig = () => ({
   source: '', mode: 'full', lock: 'both', preset: 'scurve', points: presetText(PATH_PRESETS.scurve),
   interp: 'catmull', loop: false, timing: 'distance', timingValue: 0, orient: true,
 });
+// Where/how a layer's clip plays on the timeline (see ClipTiming in include/kimodo/anim/layers.hpp).
+export const DEFAULT_TIMING = { start: 0, trim_in: 0, trim_out: 0, speed: 1, repeat: 1, extend: 'hold', fade_in: 0, fade_out: 0, align_root: false };
+const timingOf = (l) => ({ ...DEFAULT_TIMING, ...(l.timing ?? {}) });
+const isDefaultTiming = (l) => Object.entries(DEFAULT_TIMING).every(([k, v]) => timingOf(l)[k] === v);
+
 const newLayer = (i, config = defaultConfig()) => ({
   name: i === 0 ? 'Base' : `Layer ${i + 1}`, config, blend: 'override', weight: 1, mask: 'full',
-  customMask: null, enabled: true, muted: false, reference: 'first', wrap: 'clamp',
+  customMask: null, enabled: true, muted: false, reference: 'first', wrap: 'clamp', timing: { ...DEFAULT_TIMING },
 });
 
 export class MotionPanel {
@@ -133,7 +138,19 @@ export class MotionPanel {
       this.select(this.layers.length - 1);
       this.schedule();
     });
-    this.timeline = new Timeline($('timeline'), { select: (i) => this.select(i), seek: (t) => onSeek?.(t) });
+    this.timeline = new Timeline($('timeline'), {
+      select: (i) => this.select(i),
+      seek: (t) => onSeek?.(t),
+      timing: (i, patch, final) => {
+        const l = this.layers[i];
+        l.timing = { ...timingOf(l), ...patch };
+        if (this.timelineData?.layers[i]) this.timelineData.layers[i].timing = l.timing;
+        if (final) this.schedule();
+        else this.timeline.render(); // live preview of the bar while dragging
+      },
+      split: () => this.splitActive(),
+      duplicate: () => this.duplicateActive(),
+    });
     this.writeForm(this.layers[0].config);
     this.renderLayers();
   }
@@ -279,9 +296,45 @@ export class MotionPanel {
     return i >= 0 ? i : Math.max(0, this.layers.findIndex((l) => l.kind !== 'keys'));
   }
 
+  // Split the active clip at the playhead: the first part ends there (empty afterwards), the
+  // second starts there with the rest of the clip (same content, so the motion is unchanged).
+  splitActive() {
+    const i = this.active, l = this.layers[i], t = timingOf(l);
+    const full = this.timelineData?.layers[i]?.duration ?? 0;
+    const tout = t.trim_out > t.trim_in ? t.trim_out : full;
+    const now = this.player.time;
+    const cut = t.trim_in + (now - t.start) * t.speed;
+    if (t.repeat !== 1 || cut <= t.trim_in + 1e-3 || cut >= tout - 1e-3) {
+      this.status('Move the playhead inside the active clip (single cycle) to split it', true);
+      return;
+    }
+    const second = structuredClone(l);
+    second.name = `${l.name} (2)`;
+    second.timing = { ...t, trim_in: cut, start: now, fade_in: 0 };
+    l.timing = { ...t, trim_out: cut, extend: 'none', fade_out: 0 };
+    this.layers.splice(i + 1, 0, second);
+    this.select(i + 1);
+    this.schedule();
+  }
+
+  // Duplicate the active clip right after itself, continuing the root from where it ends.
+  duplicateActive() {
+    const i = this.active, l = this.layers[i], t = timingOf(l);
+    const full = this.timelineData?.layers[i]?.duration ?? 0;
+    const tout = t.trim_out > t.trim_in ? t.trim_out : full;
+    const end = t.start + ((tout - t.trim_in) / t.speed) * t.repeat;
+    const copy = structuredClone(l);
+    copy.name = `${l.name} copy`;
+    copy.timing = { ...t, start: end, align_root: l.kind !== 'keys', extend: 'hold' };
+    l.timing = { ...t, extend: 'none' };
+    this.layers.splice(i + 1, 0, copy);
+    this.select(i + 1);
+    this.schedule();
+  }
+
   isSimple() {
     const l = this.layers[0];
-    return !this.$('foot-lock').checked && this.layers.length === 1 && l.kind !== 'keys' && l.blend === 'override' && l.weight === 1 && l.mask === 'full' && l.enabled && !l.muted;
+    return !this.$('foot-lock').checked && this.layers.length === 1 && l.kind !== 'keys' && isDefaultTiming(l) && l.blend === 'override' && l.weight === 1 && l.mask === 'full' && l.enabled && !l.muted;
   }
 
   // ----- sources / requests -----------------------------------------------------------
@@ -337,12 +390,12 @@ export class MotionPanel {
   layerRequest(l, i) {
     if (l.kind === 'keys') {
       const mask = l.mask === 'custom' ? (l.customMask || { version: 1, name: 'custom', default: 1, weights: {} }) : l.mask;
-      return { name: l.name || `Keys ${i + 1}`, keys: l.keys, weight: l.weight, mask, enabled: l.enabled, muted: l.muted, wrap: l.wrap };
+      return { name: l.name || `Keys ${i + 1}`, keys: l.keys, weight: l.weight, mask, enabled: l.enabled, muted: l.muted, wrap: l.wrap, timing: timingOf(l) };
     }
     const mask = l.mask === 'custom' ? (l.customMask || { version: 1, name: 'custom', default: 1, weights: {} }) : l.mask;
     return {
       name: l.name || `Layer ${i + 1}`, root_motion: this.rootMotionRequest(l.config), mode: l.blend, weight: l.weight,
-      mask, enabled: l.enabled, muted: l.muted, reference: l.reference, wrap: l.wrap,
+      mask, enabled: l.enabled, muted: l.muted, reference: l.reference, wrap: l.wrap, timing: timingOf(l),
     };
   }
 
@@ -418,7 +471,7 @@ export class MotionPanel {
     return {
       motion: { root, rotations }, target: rt ? { meta: body.meta, rotations: tRot, translations: tTrans } : null,
       overlay: { samples, waypoints: req.path?.points ?? [], sourceRoot, resultRoot: root, meta: rt ? body.meta : null },
-      layers: [{ name: l.name, duration: (root.length / 3 - 1) / 30, enabled: true, muted: false }],
+      layers: [{ name: l.name, duration: (root.length / 3 - 1) / 30, enabled: true, muted: false, timing: timingOf(l) }],
       summary: `root ${req.mode}`,
     };
   }
@@ -448,7 +501,7 @@ export class MotionPanel {
         meta: body.native ? null : JSON.parse(JSON.stringify(body.layers[base].retarget)),
       },
       layers: meta.layers.map((l, i) => ({ name: l.name, duration: l.duration, enabled: l.enabled, muted: l.muted, index: i,
-        keys: this.layers[i]?.kind === 'keys' ? this.layers[i].keys : null })),
+        keys: this.layers[i]?.kind === 'keys' ? this.layers[i].keys : null, kind: this.layers[i]?.kind, timing: timingOf(this.layers[i] ?? {}) })),
       footLock: meta.foot_lock ?? null,
       fps: meta.fps,
       summary: `${this.layers.length} layer${this.layers.length === 1 ? '' : 's'}, ${meta.frames} frames${meta.foot_lock ? ', feet locked' : ''}`,
@@ -484,7 +537,7 @@ export class MotionPanel {
     const joint = this.keyJoint?.();
     for (const l of r.layers) l.keyTimes = l.keys && joint ? keyFrames(l.keys, joint).map((f) => f / fps) : [];
     this.timelineData = {
-      layers: r.layers, duration: this.player.duration,
+      layers: r.layers, duration: this.player.duration, fps,
       contacts: fl ? fl.contacts.map((c) => ({ foot: c.foot, start: c.start / fps, end: c.end / fps })) : null,
     };
     this.timeline.set({ ...this.timelineData, active: this.active });

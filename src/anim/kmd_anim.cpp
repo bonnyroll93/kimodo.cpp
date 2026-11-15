@@ -105,6 +105,8 @@ int usage() {
                  "                       [--mask full|upper|lower|MASK.json] [--disabled] [--muted]\n"
                  "                       [--reference first|rest|FRAME] [--wrap clamp|loop]  (repeat per layer)\n"
                  "           --key-layer KEYS.json [same layer options]   keyframe offset layer (additive)\n"
+                 "           clip timing per layer: [--start S] [--trim-in S] [--trim-out S] [--speed X] [--repeat N]\n"
+                 "                       [--extend hold|none] [--fade-in S] [--fade-out S] [--align-root]\n"
                  "       DIR is a clip directory (clip.json/retarget.json) or a native motion directory;\n"
                  "       layers are applied bottom to top in command-line order. OUT_DIR gets clip.json,\n"
                  "       local_rotations_xyzw.f32, local_translations.f32 (+ root_positions.f32 if --native).\n"
@@ -459,6 +461,27 @@ int layers_command(int argc, char **argv) {
             if (w == "clamp") current().layer.wrap = TimeWrap::Clamp;
             else if (w == "loop") current().layer.wrap = TimeWrap::Loop;
             else throw std::runtime_error("unknown wrap '" + w + "'");
+        } else if (arg == "--start") {
+            current().layer.timing.start = std::stof(value());
+        } else if (arg == "--trim-in") {
+            current().layer.timing.trim_in = std::stof(value());
+        } else if (arg == "--trim-out") {
+            current().layer.timing.trim_out = std::stof(value());
+        } else if (arg == "--speed") {
+            current().layer.timing.speed = std::stof(value());
+        } else if (arg == "--repeat") {
+            current().layer.timing.repeat = std::stoi(value());
+        } else if (arg == "--extend") {
+            const std::string x = value();
+            if (x == "hold") current().layer.timing.extend = Extend::Hold;
+            else if (x == "none") current().layer.timing.extend = Extend::None;
+            else throw std::runtime_error("unknown extend '" + x + "'");
+        } else if (arg == "--fade-in") {
+            current().layer.timing.fade_in = std::stof(value());
+        } else if (arg == "--fade-out") {
+            current().layer.timing.fade_out = std::stof(value());
+        } else if (arg == "--align-root") {
+            current().layer.timing.align_root = true;
         } else {
             throw std::runtime_error("unknown option '" + std::string(arg) + "'");
         }
@@ -514,6 +537,8 @@ int layers_command(int argc, char **argv) {
                 << (l.mode == BlendMode::Override ? "override" : "additive") << "\",\"weight\":" << num(l.weight)
                 << ",\"enabled\":" << (l.enabled ? "true" : "false") << ",\"muted\":" << (l.muted ? "true" : "false")
                 << ",\"mask\":" << quote(l.mask.name) << ",\"keys\":" << (p.keys.empty() ? "false" : "true")
+                << ",\"start\":" << num(l.timing.start) << ",\"speed\":" << num(l.timing.speed)
+                << ",\"repeat\":" << l.timing.repeat
                 << (layer_warnings.empty() ? "" : ",\"warnings\":" + layer_warnings) << "}";
         if (auto ok = stack.add_layer(std::move(p.layer)); !ok) throw std::runtime_error(ok.error());
     }

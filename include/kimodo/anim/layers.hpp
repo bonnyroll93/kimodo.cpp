@@ -35,6 +35,24 @@ namespace kimodo::anim {
 enum class BlendMode { Override, Additive };
 enum class AdditiveReference { FirstFrame, RestPose, Frame };
 enum class TimeWrap { Clamp, Loop }; // outside a clip's duration: hold the last frame, or loop
+enum class Extend { Hold, None };    // outside the layer's time range: hold the end poses, or contribute nothing
+
+// Where and how a layer's clip plays on the stack timeline (non-linear editing). The clip
+// segment [trim_in, trim_out) plays from `start`, `speed` times faster, `repeat` times.
+// Repeats continue the root: each cycle adds the segment's horizontal root travel (along
+// the skeleton root, joint 0). With align_root, the clip is moved and turned about up so
+// its first frame starts where the layers below put the root at `start` (sequencing two
+// generated walks). fade_in / fade_out ramp the layer weight at the ends of the range.
+struct ClipTiming {
+    float start = 0.F;     // seconds on the stack timeline
+    float trim_in = 0.F;   // seconds into the clip
+    float trim_out = 0.F;  // seconds into the clip; <= trim_in means "to the end of the clip"
+    float speed = 1.F;     // playback rate (2 = twice as fast, 0.5 = stretched to twice as long)
+    int repeat = 1;        // cycles of the trimmed segment (with TimeWrap::Loop: unbounded)
+    Extend extend = Extend::Hold;
+    float fade_in = 0.F, fade_out = 0.F; // seconds
+    bool align_root = false;
+};
 
 // Per-joint weights by joint name; joints not listed get default_weight.
 struct AnimationMask {
@@ -67,6 +85,7 @@ struct AnimationLayer {
     AdditiveReference reference = AdditiveReference::FirstFrame;
     std::size_t reference_frame = 0; // used with AdditiveReference::Frame
     TimeWrap wrap = TimeWrap::Clamp;
+    ClipTiming timing{};
 };
 
 // Samples a clip at time t (seconds): linear/slerp interpolation between frames.
@@ -90,7 +109,8 @@ public:
     void move_layer(std::size_t from, std::size_t to);
     void remove_layer(std::size_t i);
 
-    // Longest clip duration among enabled layers (muted ones included).
+    // End of the latest enabled layer on the timeline (start + trimmed, retimed and repeated
+    // length; muted layers included).
     [[nodiscard]] float duration() const;
     // Local pose at time t, skeleton joint order.
     [[nodiscard]] std::vector<Transform> evaluate(float t) const;
@@ -103,7 +123,17 @@ private:
         std::vector<int> track;       // stack joint -> clip track (-1: not driven)
         std::vector<float> mask;      // stack joint -> mask weight
         std::vector<Transform> reference; // stack joint order (additive reference pose)
+        float segment = 0.F;          // trimmed segment length in clip seconds
+        float trim_in = 0.F;          // effective trim in (clip seconds)
+        Vec3 cycle_travel{};          // horizontal root travel of one segment (root continuation)
     };
+    // Layer-local sample at stack time t: false when the layer does not contribute (Extend::None).
+    bool sample_layer(std::size_t index, float t, std::vector<Transform> &out, float &weight) const;
+    [[nodiscard]] float layer_end(const Resolved &r) const;
+    // Root alignment (align_root) per layer: rotation about up and translation, computed lazily.
+    struct Alignment { bool ready = false; Quat yaw{}; Vec3 from{}, to{}; };
+    mutable std::vector<Alignment> alignment_;
+    [[nodiscard]] std::vector<Transform> evaluate_below(std::size_t index, float t) const;
     [[nodiscard]] std::expected<Resolved, std::string> resolve(AnimationLayer layer) const;
     Skeleton skeleton_;
     std::vector<Resolved> layers_;

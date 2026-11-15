@@ -170,14 +170,87 @@ std::expected<AnimationStack::Resolved, std::string> AnimationStack::resolve(Ani
         r.reference[j] = layer.reference == AdditiveReference::RestPose || r.track[j] < 0
                              ? skeleton_.joints[j].rest_local
                              : ref_tracks[static_cast<std::size_t>(r.track[j])];
+    // Clip timing.
+    const ClipTiming &tm = layer.timing;
+    if (!std::isfinite(tm.start) || !std::isfinite(tm.trim_in) || !std::isfinite(tm.trim_out) || !std::isfinite(tm.speed) ||
+        !std::isfinite(tm.fade_in) || !std::isfinite(tm.fade_out))
+        return std::unexpected(label + "timing values must be finite");
+    if (!(tm.speed > 0.F)) return std::unexpected(label + "speed must be positive");
+    if (tm.repeat < 1) return std::unexpected(label + "repeat must be at least 1");
+    if (tm.trim_in < 0.F || tm.fade_in < 0.F || tm.fade_out < 0.F) return std::unexpected(label + "trim and fades must be >= 0");
+    const float length = c.duration();
+    r.trim_in = std::min(tm.trim_in, length);
+    const float out = tm.trim_out > r.trim_in ? std::min(tm.trim_out, length) : length;
+    r.segment = std::max(out - r.trim_in, 0.F);
+    if (const int root_track = r.track.empty() ? -1 : r.track[0]; root_track >= 0 && r.segment > 0.F) {
+        const Vec3 a = sample_clip(c, r.trim_in)[static_cast<std::size_t>(root_track)].translation;
+        const Vec3 b = sample_clip(c, r.trim_in + r.segment)[static_cast<std::size_t>(root_track)].translation;
+        r.cycle_travel = {b.x - a.x, 0.F, b.z - a.z}; // horizontal (Y up)
+    }
     r.layer = std::move(layer);
     return r;
+}
+
+float AnimationStack::layer_end(const Resolved &r) const {
+    const ClipTiming &tm = r.layer.timing;
+    return tm.start + r.segment / tm.speed * static_cast<float>(tm.repeat);
+}
+
+bool AnimationStack::sample_layer(std::size_t index, float t, std::vector<Transform> &out, float &weight) const {
+    const Resolved &r = layers_[index];
+    const AnimationLayer &l = r.layer;
+    const ClipTiming &tm = l.timing;
+    const float local = (t - tm.start) * tm.speed;      // clip seconds since the layer started
+    const float span = r.segment * static_cast<float>(tm.repeat);
+    const bool loop = l.wrap == TimeWrap::Loop && r.segment > 0.F;
+    weight = 1.F;
+    float u;          // clip seconds within the segment
+    float cycle = 0.F; // completed cycles (root continuation)
+    if (local < 0.F) {
+        if (tm.extend == Extend::None) return false;
+        u = 0.F;
+    } else if (!loop && local > span) {
+        if (tm.extend == Extend::None) return false;
+        u = r.segment;
+        cycle = static_cast<float>(tm.repeat - 1);
+    } else if (r.segment > 0.F) {
+        cycle = std::floor(local / r.segment);
+        if (!loop) cycle = std::min(cycle, static_cast<float>(tm.repeat - 1));
+        u = local - cycle * r.segment;
+    } else {
+        u = 0.F;
+    }
+    // Fades on the timeline range [start, end].
+    const float tl = t - tm.start, end = span / tm.speed;
+    if (tm.fade_in > 0.F && tl < tm.fade_in) weight *= std::clamp(tl / tm.fade_in, 0.F, 1.F);
+    if (tm.fade_out > 0.F && !loop && tl > end - tm.fade_out) weight *= std::clamp((end - tl) / tm.fade_out, 0.F, 1.F);
+    out = sample_clip(l.clip, r.trim_in + u, TimeWrap::Clamp);
+    if (r.track.empty() || r.track[0] < 0) return true;
+    Transform &root = out[static_cast<std::size_t>(r.track[0])];
+    if (cycle > 0.F) root.translation = root.translation + r.cycle_travel * cycle;
+    if (tm.align_root) {
+        Alignment &al = alignment_[index];
+        if (!al.ready) {
+            const auto below = evaluate_below(index, tm.start);
+            const Transform first = sample_clip(l.clip, r.trim_in)[static_cast<std::size_t>(r.track[0])];
+            const AxisConvention axes;
+            const float yaw = axes.heading(rotate(below[0].rotation, axes.forward)) -
+                              axes.heading(rotate(first.rotation, axes.forward));
+            al = {true, Quat::from_axis_angle(axes.up, yaw), axes.horizontal(first.translation), axes.horizontal(below[0].translation)};
+        }
+        const Vec3 h{root.translation.x - al.from.x, 0.F, root.translation.z - al.from.z};
+        const Vec3 moved = rotate(al.yaw, h) + al.to;
+        root.translation = {moved.x, root.translation.y, moved.z};
+        root.rotation = normalize(al.yaw * root.rotation);
+    }
+    return true;
 }
 
 std::expected<void, std::string> AnimationStack::add_layer(AnimationLayer layer) {
     auto r = resolve(std::move(layer));
     if (!r) return std::unexpected(r.error());
     layers_.push_back(std::move(*r));
+    alignment_.assign(layers_.size(), {});
     return {};
 }
 
@@ -186,6 +259,7 @@ std::expected<void, std::string> AnimationStack::replace_layer(std::size_t i, An
     auto r = resolve(std::move(layer));
     if (!r) return std::unexpected(r.error());
     layers_[i] = std::move(*r);
+    alignment_.assign(layers_.size(), {});
     return {};
 }
 
@@ -194,30 +268,38 @@ void AnimationStack::move_layer(std::size_t from, std::size_t to) {
     auto item = std::move(layers_[from]);
     layers_.erase(layers_.begin() + static_cast<std::ptrdiff_t>(from));
     layers_.insert(layers_.begin() + static_cast<std::ptrdiff_t>(to), std::move(item));
+    alignment_.assign(layers_.size(), {});
 }
 
 void AnimationStack::remove_layer(std::size_t i) {
     if (i < layers_.size()) layers_.erase(layers_.begin() + static_cast<std::ptrdiff_t>(i));
+    alignment_.assign(layers_.size(), {});
 }
 
 float AnimationStack::duration() const {
     float d = 0.F;
     for (const Resolved &r : layers_)
-        if (r.layer.enabled) d = std::max(d, r.layer.clip.duration());
+        if (r.layer.enabled) d = std::max(d, r.layer.wrap == TimeWrap::Loop ? r.layer.timing.start + r.segment / r.layer.timing.speed : layer_end(r));
     return d;
 }
 
-std::vector<Transform> AnimationStack::evaluate(float t) const {
+std::vector<Transform> AnimationStack::evaluate(float t) const { return evaluate_below(layers_.size(), t); }
+
+// Pose of layers [0, index) at time t.
+std::vector<Transform> AnimationStack::evaluate_below(std::size_t index, float t) const {
     std::vector<Transform> pose(skeleton_.size());
     for (std::size_t j = 0; j < skeleton_.size(); ++j) pose[j] = skeleton_.joints[j].rest_local;
-    for (const Resolved &r : layers_) {
+    std::vector<Transform> sample;
+    for (std::size_t li = 0; li < index && li < layers_.size(); ++li) {
+        const Resolved &r = layers_[li];
         const AnimationLayer &l = r.layer;
         if (!l.enabled || l.muted || l.weight <= 0.F) continue;
-        const auto sample = sample_clip(l.clip, t, l.wrap);
+        float fade = 1.F;
+        if (!sample_layer(li, t, sample, fade) || fade <= 0.F) continue;
         for (std::size_t j = 0; j < pose.size(); ++j) {
             const int track = r.track[j];
             if (track < 0) continue;
-            const float w = std::clamp(l.weight * r.mask[j], 0.F, 1.F);
+            const float w = std::clamp(l.weight * fade * r.mask[j], 0.F, 1.F);
             if (w <= 0.F) continue;
             const Transform &s = sample[static_cast<std::size_t>(track)];
             if (l.mode == BlendMode::Override) {

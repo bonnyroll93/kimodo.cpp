@@ -124,6 +124,21 @@ func TestLayersEndpoint(t *testing.T) {
 		!keyedRes.Meta.Layers[1].Keys || keyedRes.Meta.Layers[1].Mode != "additive" {
 		t.Fatalf("keyframe layer: %d %s", keyed.Code, keyed.Body.String())
 	}
+	// Clip timing: a walk sequenced after itself (2x speed, root aligned) doubles... the timeline length.
+	seq := post(`{"layers":[{"root_motion":` + walk + `,"timing":{"extend":"none"}},
+		{"root_motion":` + walk + `,"timing":{"start":2.9666667,"speed":2,"align_root":true}}]}`)
+	var seqRes struct {
+		Meta struct {
+			Frames   int     `json:"frames"`
+			Duration float64 `json:"duration"`
+		} `json:"meta"`
+	}
+	if seq.Code != http.StatusOK || json.Unmarshal(seq.Body.Bytes(), &seqRes) != nil || seqRes.Meta.Frames != 135 {
+		t.Fatalf("clip timing: %d %s", seq.Code, seq.Body.String())
+	}
+	if rec := post(`{"layers":[{"root_motion":` + walk + `,"timing":{"speed":-1}}]}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("negative speed accepted: %d", rec.Code)
+	}
 	if rec := post(`{"layers":[{"keys":{"version":1,"tracks":{}}}]}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("native stack of keys only: %d", rec.Code)
 	}
