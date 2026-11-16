@@ -293,7 +293,7 @@ body {
 .pb-field { display: inline-flex; gap: 3px; align-items: center; font-size: .74rem; color: var(--muted); }
 .pb-field input { width: 58px; border: 1px solid var(--line); border-radius: 5px; background: #0b1015; color: var(--text); font: inherit; font-size: .74rem; padding: 1px 3px; }
 .playbar { flex-wrap: wrap; row-gap: 6px; }
-.timeline { bottom: 104px; }
+.timeline { bottom: 136px; } /* above the play bar (two rows + the range slider) */
 .attr-timing input[type="checkbox"] { width: auto; }
 .attr-timing .toggle { justify-self: start; }
 /* Timeline keyframes: selectable and draggable */
@@ -413,3 +413,13 @@ body {
 .tl-warp-pt.fixed::before, .tl-warp-pt.fixed::after { background: #64748b; }
 .tl-retime-note { position: absolute; left: 6px; top: 50%; transform: translateY(-50%); font-size: .66rem; color: var(--muted); }
 .tl-toolbar .icon-button.on { color: #111; background: #38bdf8; }
+/* Range slider (animation range / playback range) */
+.range-slider { display: flex; align-items: center; gap: 8px; width: 100%; margin-top: 6px; }
+.rs-track { position: relative; flex: 1; height: 18px; border-radius: 5px; background: #0b1015; border: 1px solid var(--line); cursor: pointer; touch-action: none; }
+.rs-handle { position: absolute; top: 1px; bottom: 1px; min-width: 6px; border-radius: 4px; background: color-mix(in srgb, #9f7aea 45%, transparent);
+  border: 1px solid #b794f4; cursor: grab; display: flex; justify-content: space-between; align-items: center; padding: 0 5px;
+  font: 600 .62rem var(--mono); color: #e9d8fd; user-select: none; box-sizing: border-box; overflow: hidden; }
+.rs-handle::before, .rs-handle::after { content: ''; position: absolute; top: 0; bottom: 0; width: 6px; cursor: ew-resize; }
+.rs-handle::before { left: 0; } .rs-handle::after { right: 0; }
+#anim-end.auto { color: var(--muted); }
+.timeline .tl-track { overflow: hidden; }

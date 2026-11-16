@@ -132,7 +132,16 @@
         <button id="range-set-in" class="icon-button" type="button" title="Set In at the current frame (I)">[</button>
         <button id="range-set-out" class="icon-button" type="button" title="Set Out at the current frame (O)">]</button>
         <button id="range-reset" class="icon-button" type="button" title="Play the whole timeline">⟷</button>
-        <label class="pb-field" title="Scene length in seconds: shorter cuts the result, longer holds the clips' ends (0 = the end of the last clip). Exported too.">Length <input id="scene-length" type="number" min="0" step="0.1" value="0"> s</label>
+      </div>
+      <div class="range-slider" title="Range slider (as in Maya): the outer fields are the animation range, the handle the playback range the timeline shows">
+        <label class="pb-field" title="Animation start frame: playback and the timeline view begin here at the earliest">Start <input id="anim-start" type="number" min="0" step="1" value="0"></label>
+        <div id="rs-track" class="rs-track">
+          <div id="rs-handle" class="rs-handle" title="Playback range: drag to slide it, drag its ends to set In / Out, double-click: the whole animation range">
+            <span class="rs-in"></span><span class="rs-out"></span>
+          </div>
+        </div>
+        <label class="pb-field" title="Animation end frame: the scene's length. Past the last clip it adds working room (the clips' ends are held); shorter cuts the result. Exported too.">End <input id="anim-end" type="number" min="1" step="1" value="0"></label>
+        <button id="anim-auto" class="icon-button" type="button" title="End the animation at the last clip (automatic length)">Auto</button>
       </div>
     </div>
   </section>

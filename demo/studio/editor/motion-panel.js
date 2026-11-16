@@ -711,7 +711,8 @@ export class MotionPanel {
     const groups = this.groups.map((g) => ({ id: g.id, name: g.name, extent: this.groupExtent(g), focus: g.id === this.groupFocus,
       members: g.members.length, warped: !isIdentity(g.warp) }));
     this.timeline.set({ layers: items, duration: end, active: this.active, fps, tracks: this.trackCount, groups, retime: this.retimeView(),
-      rigRow: this.rigRow?.() ?? null, contacts: this.timelineData?.contacts ?? null, range: this.player.range ? this.player.rangeFrames.map((f) => f / fps) : null });
+      rigRow: this.rigRow?.() ?? null, contacts: this.timelineData?.contacts ?? null, range: null,
+      view: this.viewRange?.() ?? null });
   }
 
   canRemove(i) { return isKeys(this.layers[i]) || this.layers.filter((l) => !isKeys(l)).length > 1; }
@@ -1203,6 +1204,7 @@ export class MotionPanel {
             `, hips −${(fl.max_hip_drop * 100).toFixed(1)} cm${fl.unreachable_frames ? `, ${fl.unreachable_frames} frames out of reach` : ''}` : '');
     this.status(`Motion: ${r.summary}${rt ? ' · retargeted' : ''}`);
     this.onLoaded?.(first);
+    this.onResultShown?.();
     this.onShown?.();
   }
 }

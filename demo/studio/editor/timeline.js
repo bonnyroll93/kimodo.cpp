@@ -5,6 +5,8 @@
 //   row: select it (the attribute editor shows its settings) · click empty space: seek.
 // Overlapping clips on the same track cross-fade over the overlap (shown as a gradient).
 // Times snap to frames (Shift: free).
+// View: the timeline shows the playback range (the range slider under the play bar, as Maya's
+// time slider); outside it the tracks are clipped.
 // Scrubbing: drag in the frame ruler (top row) or grab the playhead's handle and drag.
 // Keyframes (◆ on anim-layer rows; the selected joint's keys, or every keyed frame when no
 // joint is selected): click selects (Shift: add / remove) and seeks, drag moves the
@@ -64,13 +66,17 @@ export class Timeline {
 
   // layers: per MotionPanel.layers index {name, kind, track, duration (clip s), enabled, muted,
   // timing, eff (effective timing incl. auto blends), keyTimes}; duration: stack seconds.
-  set({ layers, duration, active, contacts = null, fps = 30, tracks = 1, range = null, rigRow = null, groups = [], retime = null }) {
+  set({ layers, duration, active, contacts = null, fps = 30, tracks = 1, range = null, rigRow = null, groups = [], retime = null, view = null }) {
     this.range = range;
+    this.viewRange = view;
     this.groups = groups;
     this.retime = retime;
     this.rigRow = rigRow;
     this.layers = layers;
     this.duration = Math.max(duration, 1e-3);
+    const [v0, v1] = this.viewRange && this.viewRange[1] > this.viewRange[0] ? this.viewRange : [0, this.duration];
+    this.v0 = v0;
+    this.v1 = Math.max(v1, v0 + 1e-3);
     this.fps = fps;
     this.active = active;
     this.contacts = contacts;
@@ -93,7 +99,9 @@ export class Timeline {
     if (this.layers[i]?.kind === 'keys') return [t.start, Math.max(this.duration, t.start)]; // the whole scene
     return [t.start, t.start + unwarpTime(t.warp, (this.segment(i) / t.speed) * t.repeat)];
   }
-  pct(seconds) { return `${(seconds / this.duration) * 100}%`; }
+  // Position of a time / width of a duration in the view, as CSS percentages.
+  pct(seconds) { return `${((seconds - (this.v0 ?? 0)) / ((this.v1 ?? this.duration) - (this.v0 ?? 0))) * 100}%`; }
+  span(seconds) { return `${(seconds / ((this.v1 ?? this.duration) - (this.v0 ?? 0))) * 100}%`; }
   // Stack time of key frame f of anim layer i (its timing: start, speed).
   keyTime(i, f) { const t = this.timingOf(i); return t.start + unwarpTime(t.warp, f / this.fps / t.speed); }
 
@@ -115,9 +123,10 @@ export class Timeline {
     const ruler = document.createElement('div');
     ruler.className = 'tl-track tl-ruler';
     ruler.title = 'Drag to scrub';
-    const frames = this.duration * this.fps;
+    const f0 = Math.round(this.v0 * this.fps), f1 = this.v1 * this.fps;
+    const frames = f1 - f0;
     const step = [1, 2, 5, 10, 15, 30, 60, 150, 300, 600].find((s) => frames / s <= 16) ?? 1200;
-    for (let f = 0; f <= frames + 1e-6; f += step) {
+    for (let f = Math.ceil(f0 / step) * step; f <= f1 + 1e-6; f += step) {
       const tick = document.createElement('span');
       tick.className = 'tl-tick';
       tick.style.left = this.pct(f / this.fps);
@@ -140,7 +149,7 @@ export class Timeline {
       bar.className = `tl-group${g.focus ? ' selected' : ''}`;
       bar.dataset.group = g.id;
       bar.style.left = this.pct(s);
-      bar.style.width = this.pct(Math.max(e - s, 1 / this.fps));
+      bar.style.width = this.span(Math.max(e - s, 1 / this.fps));
       bar.title = `${g.name}: ${s.toFixed(2)}–${e.toFixed(2)} s · drag: move the group · edges / Ctrl + drag: stretch it`;
       bar.textContent = `${g.name}${g.warped ? ' · retimed' : ''}`;
       track.append(bar);
@@ -215,7 +224,7 @@ export class Timeline {
           const b = document.createElement('div');
           b.className = 'tl-contact';
           b.style.left = this.pct(ct.start);
-          b.style.width = this.pct(Math.max(ct.end - ct.start, 0.01));
+          b.style.width = this.span(Math.max(ct.end - ct.start, 0.01));
           track.append(b);
         }
         labels.append(label);
@@ -229,7 +238,7 @@ export class Timeline {
         const shade = document.createElement('div');
         shade.className = 'tl-out-range';
         shade.style.left = this.pct(l);
-        shade.style.width = this.pct(w);
+        shade.style.width = this.span(w);
         tracks.append(shade);
       }
     }
@@ -245,7 +254,7 @@ export class Timeline {
     bar.className = `tl-bar${l.kind === 'keys' ? ' keys' : ''}${i === this.active ? ' selected' : ''}${l.selected ? ' multi' : ''}${l.group ? ' grouped' : ''}${l.enabled ? '' : ' disabled'}${l.muted ? ' muted' : ''}`;
     bar.dataset.layer = i;
     bar.style.left = this.pct(s);
-    bar.style.width = this.pct(Math.max(e - s, 1 / this.fps));
+    bar.style.width = this.span(Math.max(e - s, 1 / this.fps));
     bar.title = `${l.name}: ${s.toFixed(2)}–${e.toFixed(2)} s · ${t.speed.toFixed(2)}× · ${t.repeat} cycle(s)` +
       ' · drag: move (also to another track) · edges: trim · Ctrl + drag / Ctrl + wheel: stretch · Shift + click: add to the selection';
     for (let k = 1; k < t.repeat; k++) {
@@ -312,7 +321,7 @@ export class Timeline {
   // ---- pointer interaction --------------------------------------------------------------
   timeAt(e) {
     const r = this.tracksEl.getBoundingClientRect();
-    return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * this.duration;
+    return this.v0 + Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * (this.v1 - this.v0);
   }
   snap(t, e) { return e.shiftKey ? t : Math.round(t * this.fps) / this.fps; }
   trackAt(e) {
@@ -418,7 +427,7 @@ export class Timeline {
         const rate = (i1 - i0) / Math.max(o1 - o0, 1e-6);
         seg.className = `tl-warp-seg${rate > 1.001 ? ' fast' : rate < 0.999 ? ' slow' : ''}`;
         seg.style.left = this.pct(r.base + o0);
-        seg.style.width = this.pct(o1 - o0);
+        seg.style.width = this.span(o1 - o0);
         seg.textContent = `${rate.toFixed(2)}×`;
         seg.title = `${o0.toFixed(2)}–${o1.toFixed(2)} s plays ${i0.toFixed(2)}–${i1.toFixed(2)} s: ${rate.toFixed(2)}× (${rate < 1 ? 'dilated' : rate > 1 ? 'contracted' : 'unchanged'})`;
         track.append(seg);
@@ -558,7 +567,8 @@ export class Timeline {
 
   update(time) {
     this.time = time;
-    const u = this.duration > 0 ? Math.min(1, Math.max(0, time / this.duration)) : 0;
+    const u = (time - this.v0) / (this.v1 - this.v0);
+    this.playhead.hidden = u < -1e-6 || u > 1 + 1e-6;
     this.playhead.style.left = `${u * 100}%`;
   }
 }

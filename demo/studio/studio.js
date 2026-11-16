@@ -85,24 +85,87 @@ player.onChange((p) => {
     if (document.activeElement !== $(id)) $(id).value = v;
   }
   $('range-reset').disabled = !p.range;
-  if (motionPanel && document.activeElement !== $('scene-length')) $('scene-length').value = motionPanel.sceneLength;
+  syncRangeSlider();
   motionPanel?.timeline.update(p.time);
 });
 $('play').addEventListener('click', () => player.play());
 $('scrub').addEventListener('input', (e) => { player.play(false); player.setFrame(Number(e.target.value)); });
 $('loop').addEventListener('change', (e) => { player.loop = e.target.checked; });
 
-// Main timeline frame controls: current frame, step, playback range (In / Out), scene length.
+// Main timeline frame controls: current frame, step, playback range (In / Out), and the
+// animation range (Start / End, as in Maya's range slider). End is the scene length
+// (motionPanel.sceneLength, 0 = automatic: the last clip); Start limits playback and the view.
 const goFrame = (f) => { player.play(false); player.setFrame(f); };
+const animStart = () => Math.min(Math.max(0, Math.round(motionPanel?.animStart ?? 0)), Math.max(player.frames - 1, 0));
 const setRange = (a, b) => {
-  const last = Math.max(player.frames - 1, 0);
-  a = Math.max(0, Math.min(last, Math.round(a)));
-  b = Math.max(0, Math.min(last, Math.round(b)));
+  const last = Math.max(player.frames - 1, 0), s = animStart();
+  a = Math.max(s, Math.min(last, Math.round(a)));
+  b = Math.max(s, Math.min(last, Math.round(b)));
   if (b < a) [a, b] = [b, a];
   player.setRange(a === 0 && b === last ? null : [a, b]);
   if (player.frame < a || player.frame > b) player.setFrame(a);
   motionPanel.renderTimeline();
 };
+// Range slider: the track spans the animation range, the handle is the playback range.
+function syncRangeSlider() {
+  if (!motionPanel) return;
+  const last = Math.max(player.frames - 1, 0), s = animStart(), [a, b] = player.rangeFrames;
+  const span = Math.max(last - s, 1);
+  const h = $('rs-handle');
+  h.style.left = `${((a - s) / span) * 100}%`;
+  h.style.width = `${(Math.max(b - a, 0) / span) * 100}%`;
+  h.querySelector('.rs-in').textContent = a;
+  h.querySelector('.rs-out').textContent = b;
+  if (document.activeElement !== $('anim-start')) $('anim-start').value = s;
+  if (document.activeElement !== $('anim-end')) $('anim-end').value = last;
+  $('anim-end').classList.toggle('auto', !(motionPanel.sceneLength > 0));
+  $('anim-auto').disabled = !(motionPanel.sceneLength > 0);
+}
+{
+  const track = $('rs-track'), handle = $('rs-handle');
+  let drag = null;
+  const frameAt = (e) => {
+    const r = track.getBoundingClientRect(), s = animStart(), last = Math.max(player.frames - 1, 0);
+    return s + Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * Math.max(last - s, 1);
+  };
+  track.addEventListener('pointerdown', (e) => {
+    const r = handle.getBoundingClientRect(), [a, b] = player.rangeFrames;
+    const zone = Math.abs(e.clientX - r.left) < 7 ? 'in' : Math.abs(e.clientX - r.right) < 7 ? 'out' : e.target.closest('.rs-handle') ? 'body' : 'jump';
+    track.setPointerCapture(e.pointerId);
+    drag = { zone, f0: frameAt(e), a, b };
+    if (zone === 'jump') { const w = b - a, c = frameAt(e); setRange(c - w / 2, c + w / 2); drag = { zone: 'body', f0: frameAt(e), ...Object.fromEntries([['a', player.rangeFrames[0]], ['b', player.rangeFrames[1]]]) }; }
+  });
+  track.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const d = frameAt(e) - drag.f0, s = animStart(), last = Math.max(player.frames - 1, 0);
+    if (drag.zone === 'in') setRange(Math.min(drag.a + d, drag.b - 1), drag.b);
+    else if (drag.zone === 'out') setRange(drag.a, Math.max(drag.b + d, drag.a + 1));
+    else { // slide, keeping the width
+      const w = drag.b - drag.a, a = Math.max(s, Math.min(last - w, drag.a + d));
+      setRange(a, a + w);
+    }
+  });
+  const end = () => { drag = null; };
+  track.addEventListener('pointerup', end);
+  track.addEventListener('pointercancel', end);
+  handle.addEventListener('dblclick', () => setRange(animStart(), player.frames - 1));
+}
+$('anim-start').addEventListener('change', (e) => {
+  motionPanel.animStart = Math.max(0, Math.round(Number(e.target.value) || 0));
+  const [a, b] = player.rangeFrames;
+  setRange(Math.max(a, animStart()), Math.max(b, animStart()));
+  syncRangeSlider();
+});
+// End frame -> scene length (seconds); the playback range follows when it covered everything.
+const setAnimEnd = (frames) => {
+  const [a, b] = player.rangeFrames, wasFull = b >= player.frames - 1;
+  motionPanel.sceneLength = frames > 0 ? Math.min(3600, Math.round(frames) / (player.fps || 30)) : 0;
+  motionPanel.followRangeEnd = wasFull; // after the new result: Out at the new end
+  motionPanel.keepRangeStart = a;
+  motionPanel.schedule();
+};
+$('anim-end').addEventListener('change', (e) => setAnimEnd(Math.max(1, Math.round(Number(e.target.value) || 0))));
+$('anim-auto').addEventListener('click', () => setAnimEnd(0));
 $('frame-input').addEventListener('change', (e) => goFrame(Number(e.target.value) || 0));
 $('frame-prev').addEventListener('click', () => goFrame(player.frame - 1));
 $('frame-next').addEventListener('click', () => goFrame(player.frame + 1));
@@ -113,12 +176,7 @@ $('range-out').addEventListener('change', (e) => setRange(player.rangeFrames[0],
 $('range-set-in').addEventListener('click', () => setRange(player.frame, Math.max(player.frame, player.rangeFrames[1])));
 $('range-set-out').addEventListener('click', () => setRange(Math.min(player.frame, player.rangeFrames[0]), player.frame));
 $('range-reset').addEventListener('click', () => setRange(0, player.frames - 1));
-$('scene-length').addEventListener('change', (e) => {
-  const v = Number(e.target.value);
-  motionPanel.sceneLength = Number.isFinite(v) && v > 0 ? Math.min(3600, Math.round(v * 30) / 30) : 0;
-  e.target.value = motionPanel.sceneLength;
-  motionPanel.schedule();
-});
+
 const retargetPanel = new RetargetPanel({ $, status, onChange: () => { exportPanel.sync(); motionPanel.schedule(); } });
 // T-pose preview: pause; leaving it restores the animated pose (or the bind pose without one).
 retargetPanel.onBeforePose = () => player.play(false);
@@ -141,6 +199,19 @@ const motionPanel = new MotionPanel({
     }
   },
 });
+
+// The timeline shows the playback range (from the animation start at the earliest).
+motionPanel.viewRange = () => {
+  const fps = player.fps || 30, [a, b] = player.rangeFrames;
+  return [Math.max(a, animStart()) / fps, Math.max(b, a + 1) / fps];
+};
+// A new length: Out follows the end when the range covered everything before.
+motionPanel.onResultShown = () => {
+  if (motionPanel.followRangeEnd === undefined) return;
+  const follow = motionPanel.followRangeEnd, a = motionPanel.keepRangeStart ?? 0;
+  motionPanel.followRangeEnd = undefined;
+  if (follow) setRange(a, player.frames - 1); else setRange(...player.rangeFrames);
+};
 
 // Mask preview: joints coloured by their weight in the active layer's custom mask.
 const MASK_OFF = new THREE.Color(0x4a5560), MASK_ON = new THREE.Color(0xffb547);

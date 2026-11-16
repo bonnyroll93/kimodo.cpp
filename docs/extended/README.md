@@ -685,15 +685,22 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     `--fade-out`, `--ease-fades`, `--empty-before`, `--end` and `--align-root` in `kmd-anim
     layers`; `timing` in `/api/layers`). It is therefore baked, foot-locked and exported
     like everything else, and saved in scenes.
-  - Not yet: root yaw continuation across repeats (only travel), and retiming curves
-    (time warping).
+  - Not yet: root yaw continuation across repeats (only travel). (Retiming: see *Retime*.)
 - **Main timeline frame controls** (play bar): |◀ ◀ ▶ ▶| and a *Frame* field (keys: ← / →,
   Shift: 10 frames, Home / End); a **playback range** *In* / *Out* (frames; `[` / `]` or
-  I / O set them at the current frame, ⟷ resets) inside which play and loop stay, shown
-  dimmed outside on the timeline; and the **scene Length** in seconds (0 = the end of the
-  last clip): shorter cuts the result, longer holds the clips' ends. The length is
-  baked and exported (`--length` in `kmd-anim layers`, `length` in `/api/layers` and
-  `/api/export`) and saved in scenes with the range.
+  I / O set them at the current frame, ⟷ resets) inside which play and loop stay.
+- **Range slider** (under the play bar, as in Maya): *Start* / *End* are the **animation
+  range**, the handle between them the **playback range**, and the Story timeline shows
+  the playback range (like Maya's time slider).
+  - *End* is the scene's length in frames: set it past the last clip to get empty working
+    room to move / stretch / retime clips into (the clips' ends are held there); shorter
+    cuts the result. *Auto* ends at the last clip again. It is baked and exported
+    (`--length` in `kmd-anim layers`, `length` in `/api/layers` and `/api/export`).
+  - *Start* limits playback and the view (the scene still starts at frame 0).
+  - Drag the handle to slide the range, drag its ends to set In / Out (the timeline zooms
+    in or out), click the track to centre it there, double-click it for the whole
+    animation range. When the range covered everything, extending *End* extends it too.
+  - Start, End (scene length) and the range are saved in scenes and undoable.
 - **Deep links:**
   - `/studio/?load=samples/test_rig.glb&joint=LeftArm`
   - `/studio/?motion=sample:soma30-walk-s42&mode=path&preset=scurve&frame=45`

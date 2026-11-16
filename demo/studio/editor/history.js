@@ -41,6 +41,7 @@ export class History {
       layers: mp.layers.map(({ customMaskFrom, ...l }) => l),
       active: mp.active,
       length: mp.sceneLength,
+      animStart: mp.animStart ?? 0,
       rig: mp.controlRig ?? null,
       rootScope: mp.rootScope,
       groups: mp.groups ?? [],
@@ -97,6 +98,7 @@ export class History {
     try {
       mp.layers = s.layers;
       mp.sceneLength = s.length ?? 0;
+      mp.animStart = s.animStart ?? 0;
       mp.controlRig = s.rig ?? null;
       mp.rootScope = s.rootScope ?? 'clip';
       mp.groups = structuredClone(s.groups ?? []);
