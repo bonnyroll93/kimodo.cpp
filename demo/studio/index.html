@@ -98,8 +98,8 @@
         <button id="tpose-space" class="button small-button" type="button" title="Rotate about the bone's own axes or the world axes">Gizmo: Local</button>
         <button id="tpose-auto" class="button small-button" type="button" title="Back to the automatic T-pose: every channel at 0">Reset T-pose (0)</button>
         <button id="tpose-bind" class="button small-button" type="button" title="Start from the character's bind pose (as modelled)">Bind pose</button>
-        <button id="tpose-download" class="button small-button" type="button" title="Download the pose as JSON">Download</button>
-        <label class="button small-button" title="Load a T-pose JSON">Load<input id="tpose-load" type="file" accept=".json,application/json" hidden></label>
+        <button id="tpose-download" class="button small-button" type="button" title="Export the T-pose being edited as a JSON file (kimodo-reference-pose: local rotations per joint; kmd-anim --reference-pose)">⤓ Export JSON</button>
+        <label class="button small-button" title="Import a T-pose JSON (exported before, or written by hand)">⤒ Import JSON<input id="tpose-load" type="file" accept=".json,application/json" hidden></label>
         <button id="tpose-cancel" class="button small-button" type="button" title="Leave without saving (Esc)">Cancel</button>
         <button id="tpose-save" class="button primary small-button" type="button" title="Use this T-pose for retargeting, layers and export">Save T-pose</button>
       </span>

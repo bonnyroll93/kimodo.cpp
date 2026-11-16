@@ -485,6 +485,7 @@ undoHistory.reset(); // the initial state is the first undo step
 const takes = new Takes({ motionPanel, player, status, history: undoHistory,
   onSwitch: () => { motionPanel.renderTimeline(); exportPanel.sync(); controlRig.renderPanel(); } });
 motionPanel.takesBar = () => takes.bar();
+motionPanel.openLibrary = () => motionLibrary.open();
 // Publish a take to the motion library: the take as shown (character, retarget, rig), baked.
 takes.onPublish = (name) => motionLibrary.open({ publishName: name });
 motionLibrary.publishBody = async () => {

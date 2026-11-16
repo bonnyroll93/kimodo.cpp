@@ -405,8 +405,8 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     *Symmetry* mirrors every bone edit onto its left / right twin (paired by name; the
     rotation from the bind pose, reflected across the character's mid plane, so the bind
     pose should be symmetric); *Gizmo: Local / World* rotates about the bone's axes or the
-    world axes. *Download* /
-    *Load* exchange the pose JSON, *Cancel* (Esc) leaves without saving. *Save T-pose*
+    world axes. *⤓ Export JSON* saves the T-pose being edited as `<character>.tpose.json`,
+    *⤒ Import JSON* loads one back, *Cancel* (Esc) leaves without saving. *Save T-pose*
     makes it the character's **reference pose**: retargeting, layer stacks and export use
     it instead of the automatic alignment (`kmd-anim retarget --reference-pose POSE.json`,
     `reference_pose` in `/api/retarget`, `/api/layers`, `/api/export`, `/api/retarget/tpose`;
@@ -532,7 +532,8 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     holds several takes, each with its own timeline and montage — clips and anim layers,
     groups and retiming, the control rig's animation, the animation range and the root
     motion scope, the playback range. The character, retargeting and foot locking are
-    shared. **+** adds an empty take (one clip without a motion: pick its source),
+    shared. **+** adds an empty take (one clip without a motion: the timeline then offers
+    *▦ Choose a motion…*, which opens the library; the motion you click fills the clip),
     **⧉** duplicates the current take, **✎** renames it, **✕** deletes it; the menu
     switches take (undo history restarts per switch). Scenes save every take (`takes`:
     `{current, takes:[{name, layers, …}]}`; the top-level fields are the current take's).

@@ -5,7 +5,7 @@
 // scaled to the character's hip height, turned to its facing). Select a bone (viewport or
 // hierarchy) and rotate it with the gizmo (E). Save stores the pose as the character's
 // reference pose (kimodo-reference-pose JSON, kmd-anim --reference-pose): every retarget,
-// layer stack and export then uses it. Download / Load exchange the JSON.
+// layer stack and export then uses it. Export JSON / Import JSON exchange the JSON.
 //   * Channel box: the selected bone's rotation from the automatic T-pose (all 0 = that pose);
 //     type or drag a value to pose the bone.
 //   * Reset T-pose (0): back to the automatic T-pose, every channel at 0. Bind pose: start
@@ -229,6 +229,7 @@ export class TPoseEditor {
     a.href = URL.createObjectURL(blob);
     a.download = `${this.getCharacter().name.replace(/\.[^.]+$/, '')}.tpose.json`;
     a.click();
+    this.status(`T-pose exported: ${a.download} (${Object.keys(this.pose().joints).length} joints)`);
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 

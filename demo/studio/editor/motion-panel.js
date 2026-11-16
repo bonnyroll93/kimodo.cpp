@@ -224,6 +224,7 @@ export class MotionPanel {
       moveRigKey: (f, delta) => this.moveRigKey?.(f, delta),
       graphOpen: () => this.graphOpen?.() ?? false,
       takesBar: () => this.takesBar?.(),
+      openLibrary: () => this.openLibrary?.(),
       // Groups and multi-selection.
       toggleSelect: (i) => this.toggleSelect(i),
       clearMulti: () => { if (this.multi.size || this.groupFocus) { this.multi.clear(); this.groupFocus = null; } },
@@ -702,7 +703,7 @@ export class MotionPanel {
     const eff = this.effective(), fps = this.timelineData?.fps ?? this.player.fps;
     const joint = this.keyJoint?.();
     const items = this.layers.map((l, i) => ({
-      name: l.name, kind: l.kind ?? 'clip', track: l.track ?? 0, duration: this.durationOf(i), enabled: l.enabled, muted: l.muted,
+      name: !isKeys(l) && !l.config?.source ? `${l.name} (no motion)` : l.name, kind: l.kind ?? 'clip', track: l.track ?? 0, duration: this.durationOf(i), enabled: l.enabled, muted: l.muted,
       timing: isKeys(l) ? eff.get(i) : { ...timingOf(l), warp: eff.get(i)?.warp ?? [] }, eff: eff.get(i), bound: isKeys(l) && this.boundClip(l) >= 0,
       selected: this.multi.has(l.id), group: this.groupOf(l)?.id ?? null, extent: this.extent(i),
       keyFrames: isKeys(l) ? (joint ? keyFrames(l.keys, joint) : this.allKeyFrames(l)) : [],
@@ -711,7 +712,9 @@ export class MotionPanel {
     for (const i of this.layers.keys()) if (this.layers[i].enabled) end = Math.max(end, this.extent(i)[1]);
     const groups = this.groups.map((g) => ({ id: g.id, name: g.name, extent: this.groupExtent(g), focus: g.id === this.groupFocus,
       members: g.members.length, warped: !isIdentity(g.warp) }));
-    this.timeline.set({ layers: items, duration: end, active: this.active, fps, tracks: this.trackCount, groups, retime: this.retimeView(),
+    const empty = this.layers.length === 1 && !isKeys(this.layers[0]) && !this.layers[0].config?.source;
+    this.timeline.set({ layers: items, duration: empty ? Math.max(end, 3) : end, active: this.active, fps, tracks: this.trackCount, groups, retime: this.retimeView(),
+      notice: empty ? 'Empty take — its clip has no motion yet.' : null,
       rigRow: this.rigRow?.() ?? null, contacts: this.timelineData?.contacts ?? null, range: null,
       view: this.viewRange?.() ?? null });
   }
@@ -1071,13 +1074,17 @@ export class MotionPanel {
       if (this.layers.length > 1) this.status(`Clip "${missing.name}" has no motion source`, true);
       else { // an empty take: nothing to play until its clip gets a motion
         this.player.clear();
+        this.pathView.clear?.();
         this.controlsData = null;
         this.timelineData = null;
-        this.$('motion-info').textContent = 'Empty take: pick a motion source for its clip (Motion › Source).';
+        this.emptyTake = true;
+        this.$('motion-info').textContent = 'Empty take: pick a motion source for its clip (Motion › Source or ▦ Library).';
+        this.status('Empty take: choose a motion for its clip (▦ Choose a motion in the timeline)');
         this.renderTimeline();
       }
       return;
     }
+    this.emptyTake = false;
     const keys = new Set(this.layers.filter((l) => !isKeys(l)).map((l) => this.sources?.get(l.config.source)?.skeleton_key));
     try {
       if (keys.size !== 1) throw new Error('all clips must use motions of the same skeleton');

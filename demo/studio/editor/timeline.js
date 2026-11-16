@@ -66,7 +66,8 @@ export class Timeline {
 
   // layers: per MotionPanel.layers index {name, kind, track, duration (clip s), enabled, muted,
   // timing, eff (effective timing incl. auto blends), keyTimes}; duration: stack seconds.
-  set({ layers, duration, active, contacts = null, fps = 30, tracks = 1, range = null, rigRow = null, groups = [], retime = null, view = null }) {
+  set({ layers, duration, active, contacts = null, fps = 30, tracks = 1, range = null, rigRow = null, groups = [], retime = null, view = null, notice = null }) {
+    this.notice = notice;
     this.range = range;
     this.viewRange = view;
     this.groups = groups;
@@ -111,6 +112,21 @@ export class Timeline {
     c.hidden = !this.layers.length;
     if (!this.layers.length) return;
     c.append(this.toolbar());
+    if (this.notice) { // e.g. an empty take: what to do next
+      const n = document.createElement('div');
+      n.className = 'tl-notice';
+      const text = document.createElement('span');
+      text.textContent = this.notice;
+      const pick = document.createElement('button');
+      Object.assign(pick, { type: 'button', className: 'button primary small-button', textContent: '▦ Choose a motion…',
+        title: 'Open the motion library: the motion you click becomes this clip\'s source' });
+      pick.addEventListener('click', () => this.cb.openLibrary?.());
+      const or = document.createElement('span');
+      or.className = 'muted small';
+      or.textContent = 'or pick it in Motion › Source';
+      n.append(text, pick, or);
+      c.append(n);
+    }
     const labels = document.createElement('div');
     labels.className = 'tl-labels';
     const tracks = document.createElement('div');

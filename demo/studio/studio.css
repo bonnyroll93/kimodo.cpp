@@ -444,3 +444,5 @@ body {
 .library-toolbar.publish-bar input { flex: 0 1 220px; }
 .library-actions { display: inline-flex; gap: 4px; align-items: center; }
 .library-actions select { border: 1px solid var(--line); border-radius: 5px; background: #0b1015; color: var(--muted); font: inherit; font-size: .68rem; padding: 1px 3px; max-width: 120px; }
+.tl-notice { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 6px 10px; margin: 2px 0 6px; border: 1px dashed #fbbf24;
+  border-radius: 8px; background: color-mix(in srgb, #fbbf24 10%, transparent); color: #fde68a; font-size: .78rem; }
