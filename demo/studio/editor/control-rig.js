@@ -25,6 +25,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { evaluate, setKey, quatEuler, eulerQuat, offsetAt, channelsOf, CHANNELS } from '../viewer/keyframes.js';
 import { skeletonLocal } from '../viewer/model-loader.js';
 import { LABELS } from './channel-box.js';
+import { sourceName } from './source-names.js';
 
 export const LIMBS = [
   { id: 'left_arm', label: 'Left arm', src: ['LeftArm', 'LeftForeArm', 'LeftHand'] },
@@ -146,7 +147,8 @@ export class ControlRig {
     const character = this.getCharacter();
     if (!character || !this.retarget.enabled || !this.retarget.mapping) return null;
     const bySource = new Map(this.retarget.mapping.joints.map((j) => [j.source, j.target]));
-    const joint = (src) => character.joints.find((j) => j.name === bySource.get(src));
+    const key = this.retarget.skeletonKey;
+    const joint = (src) => character.joints.find((j) => j.name === bySource.get(sourceName(key, src)));
     const out = {};
     for (const L of LIMBS) {
       const js = L.src.map(joint);

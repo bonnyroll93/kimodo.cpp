@@ -8,6 +8,8 @@
 // Left hand / Right hand: the hand's finger joints (the character's joints under the hand,
 // one column per finger, thumb on the side it is on), seen from the back of the hand.
 
+import { sourceName } from './source-names.js';
+
 const NS = 'http://www.w3.org/2000/svg';
 // Source joint -> [x, y] on a 200 x 380 figure.
 const SPOTS = {
@@ -50,7 +52,8 @@ export class Picker {
       return;
     }
     const bySource = new Map(mapping.joints.map((j) => [j.source, j.target]));
-    const index = (src) => character.joints.findIndex((j) => j.name === bySource.get(src));
+    const key = this.retarget.skeletonKey;
+    const index = (src) => character.joints.findIndex((j) => j.name === bySource.get(sourceName(key, src)));
     const bar = document.createElement('div');
     bar.className = 'picker-views';
     for (const [v, text] of [['body', 'Body'], ['RightHand', 'R hand'], ['LeftHand', 'L hand']]) {

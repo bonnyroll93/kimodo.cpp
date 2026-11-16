@@ -2,6 +2,7 @@
 // diagnostics. The mapping uses original glTF joint names, like the C++ importer.
 
 import { checkBindPose, poseCharacter, restoreBindPose } from './bind-pose.js';
+import { sourceName } from './source-names.js';
 
 const esc = (s) => String(s);
 
@@ -82,7 +83,23 @@ export class RetargetPanel {
     this.skeletonKey = skeletonKey;
     this.mapping = null;
     const r = await fetch(`/api/skeletons/${encodeURIComponent(skeletonKey)}`);
-    this.sourceNames = r.ok ? (await r.json()).names : [];
+    this.sourceDef = r.ok ? await r.json() : null;
+    this.sourceNames = this.sourceDef?.names ?? [];
+  }
+
+  // The source skeleton's rest: are its arms horizontal (a T-pose)? Native rests have identity
+  // rotations, so an upper arm points along its forearm joint's offset. G1 rests arms down.
+  sourceRestArms() {
+    const d = this.sourceDef;
+    if (!d?.names || !d.offsets) return null;
+    const out = [];
+    for (const side of ['Left', 'Right']) {
+      const i = d.names.indexOf(sourceName(this.skeletonKey, `${side}ForeArm`));
+      if (i < 0) continue;
+      const [x, y, z] = d.offsets[i], len = Math.hypot(x, y, z);
+      if (len > 1e-6) out.push({ side, degrees: (Math.asin(y / len) * 180) / Math.PI });
+    }
+    return out.length ? out : null;
   }
 
   sync() {
@@ -137,14 +154,20 @@ export class RetargetPanel {
 
   // Bind pose check: not a T-pose -> retarget from the T-pose (unless the user chose otherwise).
   checkPose() {
-    const info = this.character && checkBindPose(this.character, this.mapping);
+    const info = this.character && checkBindPose(this.character, this.mapping, this.skeletonKey);
     this.poseInfo = info;
     const $ = this.$;
     if (!info) { $('pose-status').textContent = ''; return; }
     const arms = info.arms.map((a) => `${a.side.toLowerCase()} arm ${a.degrees > 0 ? '+' : ''}${a.degrees.toFixed(0)}°`).join(', ');
-    if (!info.tpose && !this.alignTouched && !$('align-rest').checked) {
+    // The source skeleton at rest without horizontal arms (e.g. the Unitree G1: arms down):
+    // the character's rest must be aligned onto it too.
+    const src = this.sourceRestArms();
+    const srcNotT = !!src && src.some((a) => Math.abs(a.degrees) > 12);
+    if ((!info.tpose || srcNotT) && !this.alignTouched && !$('align-rest').checked) {
       $('align-rest').checked = true;
-      this.status(`${this.character.name}: bind pose is an ${info.label} (${arms}) — retargeting from its T-pose ("Retarget from T-pose" turned on)`);
+      this.status(srcNotT && info.tpose
+        ? `${this.skeletonKey} rests with its arms at ${src.map((a) => `${a.degrees.toFixed(0)}°`).join(' / ')} (not a T-pose): "Retarget from T-pose" turned on so the arms follow`
+        : `${this.character.name}: bind pose is an ${info.label} (${arms}) — retargeting from its T-pose ("Retarget from T-pose" turned on)`);
     }
     const tail = this.referencePose ? ' → retargeted from your edited T-pose'
       : info.tpose ? '' : $('align-rest').checked ? ' → retargeted from the T-pose' : ' — turn on "Retarget from T-pose"';

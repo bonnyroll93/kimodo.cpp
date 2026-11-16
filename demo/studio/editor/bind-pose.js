@@ -9,9 +9,11 @@ import * as THREE from 'three';
 
 const TPOSE_TOLERANCE = 12; // degrees from horizontal still counted as a T-pose
 
-export function checkBindPose(character, mapping) {
+import { sourceName } from './source-names.js';
+
+export function checkBindPose(character, mapping, skeletonKey = 'soma30') {
   const bySource = new Map((mapping?.joints ?? []).map((j) => [j.source, j.target]));
-  const joint = (source) => character.joints.find((j) => j.name === bySource.get(source));
+  const joint = (source) => character.joints.find((j) => j.name === bySource.get(sourceName(skeletonKey, source)));
   const arms = [];
   for (const side of ['Left', 'Right']) {
     const arm = joint(`${side}Arm`), fore = joint(`${side}ForeArm`);

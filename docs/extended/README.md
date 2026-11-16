@@ -684,6 +684,13 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     the same animation on that character. Joints the character does not have (e.g. extra
     spine or shoulder joints) stay at rest on the native skeleton. Published motions can be
     renamed (✎) and deleted; they live in `demo-output/library/<id>/`.
+- **Unitree G1 motions** (Kimodo G1 RP / SEED v1, 34 joints: `scripts/download_gguf_weights.sh
+  --model g1-rp-v1 --model g1-seed-v1`) retarget onto human characters too. The automatic
+  mapping takes the G1 waist joints as the spine (a skeleton without a head: the path from
+  the hips to the arms' common parent); G1 rests with its arms down, so "Retarget from
+  T-pose" is turned on automatically whenever the source skeleton's rest is not a T-pose.
+  The control rig and the picker find their chains on G1 and SMPL-X motions as well
+  (`editor/source-names.js`: SOMA-style role names per native skeleton).
 - **Text to motion** opens the generator in a new tab, so the scene in the studio is
   untouched. New generations appear in *Source* when you come back to the studio tab,
   or when you press ↻.

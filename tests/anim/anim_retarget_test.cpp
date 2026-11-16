@@ -404,6 +404,18 @@ void back_tests(const Skeleton &soma, const AnimationClip &walk, const Skeleton 
     CHECK(root < 1.e-3F);  // the root (height included) comes back
     CHECK(legs < 1.e-2F);  // the legs, mapped one to one, come back
 }
+// A skeleton without a head (the Unitree G1 robot): the spine is the path to the arms' common
+// parent, so the character's spine and chest are driven too.
+void g1_tests(const Skeleton &rig) {
+    const Skeleton g1 = native_skeleton("g1skel34").value();
+    const SkeletonRoles roles = detect_roles(g1);
+    CHECK(roles.spine.size() == 3 && g1.joints[static_cast<std::size_t>(roles.spine.back())].name == "waist_pitch_skel");
+    const RetargetMapping m = auto_map(g1, rig);
+    CHECK(check_mapping(m, g1, rig).ok());
+    CHECK(!mapped_source(m, "Spine").empty() && !mapped_source(m, "Chest").empty());
+    CHECK(mapped_source(m, "Chest") == "waist_pitch_skel");
+    CHECK(mapped_source(m, "LeftArm") == "left_shoulder_yaw_skel" && mapped_source(m, "RightLeg") == "right_knee_skel");
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -428,6 +440,7 @@ int main(int argc, char **argv) {
     CHECK(mixamo.has_value());
     if (mixamo) mixamo_apose_tests(soma, mixamo->skeleton);
     back_tests(soma, walk, character->skeleton, false);
+    g1_tests(character->skeleton);
     if (mixamo) back_tests(soma, walk, mixamo->skeleton, true);
     if (failures != 0) {
         std::cerr << failures << " check(s) failed\n";

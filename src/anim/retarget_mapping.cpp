@@ -176,6 +176,21 @@ SkeletonRoles detect_roles(const Skeleton &s) {
             if (toe != kids.end()) at(left ? Role::LeftToe : Role::RightToe) = *toe;
         }
     }
+    // No head (e.g. the Unitree G1 robot: waist joints, no neck or head): the spine is the
+    // path from the hips to the joint both arms hang from.
+    if (head < 0 && r.spine.empty()) {
+        auto arm_root = [&](Role clav, Role upper) { return at(clav) >= 0 ? at(clav) : at(upper); };
+        const int la = arm_root(Role::LeftClavicle, Role::LeftUpperArm), ra = arm_root(Role::RightClavicle, Role::RightUpperArm);
+        if (la >= 0 && ra >= 0) {
+            int top = parent(la);
+            while (top >= 0 && !is_ancestor(s, top, ra) && top != parent(ra)) top = parent(top);
+            if (top >= 0 && top != hips && is_ancestor(s, hips, top)) {
+                std::vector<int> path; // hips (exclusive) .. top (inclusive), top-down
+                for (int p = top; p >= 0 && p != hips; p = parent(p)) path.insert(path.begin(), p);
+                r.spine = std::move(path);
+            }
+        }
+    }
     return r;
 }
 
