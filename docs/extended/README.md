@@ -542,6 +542,16 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     animation per take in a GLB; in an FBX, one take / AnimStack each, named
     `Armature|<take>` by Blender) or *One take: all in sequence* (the takes baked one
     after the other on a single timeline, each as it was authored, no root continuation).
+  - **Copy / paste** (Ctrl+C, Ctrl+X cut, Ctrl+V at the playhead, Ctrl+Shift+V in place;
+    `editor/clipboard.js`) follows the context — the first that applies: keys selected in
+    the graph editor; keys selected on an anim layer's timeline row (every channel at those
+    frames, of the selected joint or of all joints); the picked rig control's pose on this
+    frame; the selected joint's key values on this frame (an anim layer selected); otherwise
+    the selected clip or anim layer itself. Keys paste onto the selected anim layer (onto
+    the selected joint when a single other joint was copied), a control pose keys the picked
+    control, a joint pose keys the selected joint, a clip is duplicated at the playhead on its
+    track (in place: on a new track above), an anim layer is duplicated with its keys moved to
+    the playhead (in place: unchanged). Ctrl+X also deletes the copied keys / removes the item.
   - **Groups.** Shift + click clips / anim layers on the timeline to select several, then
     *Group* (Ctrl + G). A group bar appears above the tracks: drag it to move the whole
     group, drag its edges (or Ctrl + drag) to stretch / compress it — every member's start,

@@ -25,6 +25,7 @@ import { PoseTools } from './editor/pose-tools.js';
 import { cleanFeet } from './editor/feet-cleanup.js';
 import { fbxToGlb } from './viewer/fbx-import.js';
 import { Takes } from './editor/takes.js';
+import { Clipboard } from './editor/clipboard.js';
 import { ChannelBox, channels } from './editor/channel-box.js';
 import { quatEuler } from './viewer/keyframes.js';
 
@@ -486,6 +487,8 @@ const takes = new Takes({ motionPanel, player, status, history: undoHistory,
   onSwitch: () => { motionPanel.renderTimeline(); exportPanel.sync(); controlRig.renderPanel(); } });
 motionPanel.takesBar = () => takes.bar();
 motionPanel.openLibrary = () => motionLibrary.open();
+// Copy / paste (Ctrl+C / Ctrl+X / Ctrl+V, Ctrl+Shift+V in place), following the context.
+const clipboard = new Clipboard({ motionPanel, player, status, keyPanel, controlRig });
 // Publish a take to the motion library: the take as shown (character, retarget, rig), baked.
 takes.onPublish = (name) => motionLibrary.open({ publishName: name });
 motionLibrary.publishBody = async () => {
@@ -672,4 +675,4 @@ if (params.get('load')) {
 }
 
 // Debug hook for automated checks: /studio/?debug=1 exposes the main objects.
-if (new URLSearchParams(location.search).get('debug') === '1') window.__studio = { THREE, viewport, player, motionPanel, keyPanel, retargetPanel, tposeEditor, controlRig, poseTools, picker, channelBox, takes, exportPanel, sceneFile, motionLibrary, getCharacter: () => character, select };
+if (new URLSearchParams(location.search).get('debug') === '1') window.__studio = { THREE, viewport, player, motionPanel, keyPanel, retargetPanel, tposeEditor, controlRig, poseTools, picker, channelBox, takes, exportPanel, sceneFile, motionLibrary, clipboard, getCharacter: () => character, select };
