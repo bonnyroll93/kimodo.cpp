@@ -90,7 +90,7 @@ func registerExport(mux *http.ServeMux, c studioConfig) {
 
 	mux.HandleFunc("/api/export/", func(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/export/"), "/")
-		if len(parts) != 2 || !safePathPart(parts[0]) || !safePathPart(parts[1]) || !(strings.HasSuffix(parts[1], ".glb") || strings.HasSuffix(parts[1], ".fbx")) {
+		if len(parts) != 2 || !safePathPart(parts[0]) || !safePathPart(parts[1]) || !(strings.HasSuffix(parts[1], ".glb") || strings.HasSuffix(parts[1], ".fbx") || strings.HasSuffix(parts[1], ".zip")) {
 			http.NotFound(w, r)
 			return
 		}
@@ -99,7 +99,9 @@ func registerExport(mux *http.ServeMux, c studioConfig) {
 			http.NotFound(w, r)
 			return
 		}
-		if strings.HasSuffix(parts[1], ".fbx") {
+		if strings.HasSuffix(parts[1], ".zip") {
+			w.Header().Set("Content-Type", "application/zip")
+		} else if strings.HasSuffix(parts[1], ".fbx") {
 			w.Header().Set("Content-Type", "application/octet-stream")
 		} else {
 			w.Header().Set("Content-Type", "model/gltf-binary")

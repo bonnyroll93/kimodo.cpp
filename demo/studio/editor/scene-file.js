@@ -9,6 +9,21 @@ import { normalizeLayers } from './motion-panel.js';
 const FORMAT = 'kimodo-studio-scene';
 const TOGGLES = ['show-mesh', 'show-skeleton', 'show-joints', 'show-grid', 'show-axes', 'show-path', 'show-source'];
 
+// A take's state <-> scene JSON (the same keys as the scene's top level).
+const takeToJSON = (t) => ({
+  layers: (t.layers ?? []).map(({ customMaskFrom, ...l }) => structuredClone(l)), active_layer: t.active ?? 0,
+  scene_length: t.sceneLength ?? 0, anim_start: t.animStart ?? 0, control_rig: t.controlRig ? structuredClone(t.controlRig) : null,
+  root_scope: t.rootScope ?? 'clip', groups: structuredClone(t.groups ?? []), scene_root: t.sceneRoot ? structuredClone(t.sceneRoot) : null,
+  range: t.range ?? null,
+});
+const takeFromJSON = (j) => ({
+  layers: normalizeLayers(structuredClone(j.layers ?? [])), active: Math.max(0, j.active_layer | 0),
+  sceneLength: Math.max(0, Number(j.scene_length) || 0), animStart: Math.max(0, Math.round(Number(j.anim_start) || 0)),
+  controlRig: j.control_rig ? structuredClone(j.control_rig) : null, rootScope: j.root_scope === 'scene' ? 'scene' : 'clip',
+  groups: Array.isArray(j.groups) ? structuredClone(j.groups) : [], ...(j.scene_root ? { sceneRoot: structuredClone(j.scene_root) } : {}),
+  range: Array.isArray(j.range) ? j.range : null,
+});
+
 export class SceneFile {
   constructor(ctx) {
     this.ctx = ctx;
@@ -61,6 +76,8 @@ export class SceneFile {
       groups: structuredClone(motionPanel.groups ?? []),
       scene_root: structuredClone(motionPanel.sceneRoot),
       playback: { frame: player.frame, loop: player.loop, range: player.range ?? null },
+      // Every take (the top-level fields above are the current one's, for older readers).
+      ...(this.ctx.takes ? { takes: this.ctx.takes.serialize(takeToJSON) } : {}),
       camera: { position: viewport.camera.position.toArray(), target: viewport.controls.target.toArray() },
     };
   }
@@ -123,6 +140,8 @@ export class SceneFile {
     motionPanel.groups = Array.isArray(scene.groups) ? structuredClone(scene.groups) : [];
     motionPanel.groupFocus = null;
     if (scene.scene_root) motionPanel.sceneRoot = structuredClone(scene.scene_root);
+    // Takes: the saved list (its current take replaces the fields above), else one take.
+    this.ctx.takes?.load(scene.takes, takeFromJSON);
     motionPanel.select(Math.min(Math.max(0, scene.active_layer | 0), motionPanel.layers.length - 1));
 
     // The saved mapping belongs to the base layer's skeleton.

@@ -361,7 +361,15 @@
           <label class="field">Format <select id="export-format" title="GLB, or FBX (converted by Blender on the server)"><option value="glb">GLB</option><option value="fbx">FBX</option></select></label>
           <button id="export-glb" class="button primary small-button" type="button" title="Character + final clip as one file">Export GLB</button>
         </div>
+        <div class="row">
+          <label class="field">Takes <select id="export-takes" title="Export the current take, or every take of the scene">
+            <option value="current">Current take</option><option value="all">All takes</option></select></label>
+          <label id="export-mode-row" class="field" hidden>As <select id="export-mode" title="How every take is written">
+            <option value="per_take">One file per take</option><option value="single">One file, one take each</option>
+            <option value="sequence">One take: all in sequence</option></select></label>
+        </div>
         <p id="export-hint" class="note"></p>
+        <div id="export-files" class="export-files" hidden></div>
         <div id="export-result" class="button-row" hidden>
           <a id="export-link" class="button small-button" href="#">Download</a>
           <button id="open-export" class="button small-button" type="button" title="Load the exported file and play its animation">Open exported</button>

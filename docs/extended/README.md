@@ -528,6 +528,19 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
     clip's time: they move and stretch with the clip, act only while it plays and blend
     in / out with it. Changing the scope keeps the keys where they are on the timeline;
     deleting the clip turns its layers back to the whole timeline.
+  - **Takes** (MotionBuilder-style; *Take* bar at the left of the Story toolbar): the scene
+    holds several takes, each with its own timeline and montage — clips and anim layers,
+    groups and retiming, the control rig's animation, the animation range and the root
+    motion scope, the playback range. The character, retargeting and foot locking are
+    shared. **+** adds an empty take (one clip without a motion: pick its source),
+    **⧉** duplicates the current take, **✎** renames it, **✕** deletes it; the menu
+    switches take (undo history restarts per switch). Scenes save every take (`takes`:
+    `{current, takes:[{name, layers, …}]}`; the top-level fields are the current take's).
+    **Export › Takes: All takes** writes every take (`POST /api/export/takes`, GLB or FBX):
+    *One file per take* (plus a `.zip` of them all), *One file, one take each* (one
+    animation per take in a GLB; in an FBX, one take / AnimStack each, named
+    `Armature|<take>` by Blender) or *One take: all in sequence* (the takes baked one
+    after the other on a single timeline, each as it was authored, no root continuation).
   - **Groups.** Shift + click clips / anim layers on the timeline to select several, then
     *Group* (Ctrl + G). A group bar appears above the tracks: drag it to move the whole
     group, drag its edges (or Ctrl + drag) to stretch / compress it — every member's start,

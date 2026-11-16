@@ -423,3 +423,9 @@ body {
 .rs-handle::before { left: 0; } .rs-handle::after { right: 0; }
 #anim-end.auto { color: var(--muted); }
 .timeline .tl-track { overflow: hidden; }
+/* Takes */
+.take-bar { display: inline-flex; align-items: center; gap: 3px; margin-right: 8px; padding-right: 8px; border-right: 1px solid var(--line); }
+.take-bar .take-label { font-size: .66rem; text-transform: uppercase; letter-spacing: .08em; color: #fbbf24; font-weight: 700; }
+.take-bar select, .take-bar .take-rename { border: 1px solid var(--line); border-radius: 5px; background: #0b1015; color: var(--text); font: inherit; font-size: .72rem; padding: 1px 4px; max-width: 160px; }
+.export-files { display: grid; gap: 3px; margin-top: 6px; font-size: .72rem; }
+.export-files a { color: var(--accent); }

@@ -298,6 +298,8 @@ export class Timeline {
     const strong = document.createElement('strong');
     strong.textContent = 'Story';
     const activeIsClip = this.layers[this.active]?.kind !== 'keys';
+    const takes = this.cb.takesBar?.();
+    if (takes) bar.append(takes);
     bar.append(strong,
       btn('+ Clip', 'Add a clip on the selected clip\'s track, after its last clip (same source)', () => this.cb.addClip()),
       btn('+ Track', 'Add a track above with a new clip at the playhead', () => this.cb.addTrack()),

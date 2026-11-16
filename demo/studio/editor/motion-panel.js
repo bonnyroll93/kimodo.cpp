@@ -223,6 +223,7 @@ export class MotionPanel {
       deleteKeys: (i, frames) => this.moveKeys(i, frames, null),
       moveRigKey: (f, delta) => this.moveRigKey?.(f, delta),
       graphOpen: () => this.graphOpen?.() ?? false,
+      takesBar: () => this.takesBar?.(),
       // Groups and multi-selection.
       toggleSelect: (i) => this.toggleSelect(i),
       clearMulti: () => { if (this.multi.size || this.groupFocus) { this.multi.clear(); this.groupFocus = null; } },
@@ -768,6 +769,12 @@ export class MotionPanel {
     this.schedule();
   }
 
+  // A new empty take: one clip without a motion source, default timing and root motion.
+  emptyTakeState() {
+    return { layers: [newLayer('Clip 1')], active: 0, groups: [], sceneLength: 0, animStart: 0, rootScope: 'clip',
+      sceneRoot: rootOnly(defaultConfig()), controlRig: null, range: null };
+  }
+
   addKeyLayer(name = null, blend = 'additive') {
     const base = this.layers[this.activeClip()];
     const n = this.layers.filter(isKeys).length;
@@ -1050,6 +1057,13 @@ export class MotionPanel {
     const missing = this.layers.find((l) => !isKeys(l) && !l.config.source);
     if (missing) {
       if (this.layers.length > 1) this.status(`Clip "${missing.name}" has no motion source`, true);
+      else { // an empty take: nothing to play until its clip gets a motion
+        this.player.clear();
+        this.controlsData = null;
+        this.timelineData = null;
+        this.$('motion-info').textContent = 'Empty take: pick a motion source for its clip (Motion › Source).';
+        this.renderTimeline();
+      }
       return;
     }
     const keys = new Set(this.layers.filter((l) => !isKeys(l)).map((l) => this.sources?.get(l.config.source)?.skeleton_key));

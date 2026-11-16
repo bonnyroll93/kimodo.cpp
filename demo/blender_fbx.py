@@ -3,7 +3,8 @@
 #   blender -b --factory-startup --python demo/blender_fbx.py -- glb2fbx IN.glb OUT.fbx [--fps 30]
 #   blender -b --factory-startup --python demo/blender_fbx.py -- fbx2glb IN.fbx OUT.glb
 #
-# glb2fbx: the studio's export (the character with its baked clip) as an FBX for Maya,
+# glb2fbx: the studio's export (the character with its baked clip(s): several animations
+#   become one FBX take each) as an FBX for Maya,
 #   MotionBuilder, Unreal, Unity: Y up, -Z forward, cm (Blender's FBX unit handling),
 #   the animation baked on every frame, no leaf bones, textures embedded.
 # fbx2glb: a rigged FBX character as a GLB the studio and kmd-anim read (skin and mesh; the
@@ -49,6 +50,8 @@ def glb2fbx(src, dst, fps):
         bpy.data.objects.remove(s, do_unlink=True)
     frames = 0
     actions = list(bpy.data.actions)
+    # Several animations (studio takes): each becomes its own FBX take.
+    all_actions = len(actions) > 1
     if actions:
         start, end = actions[0].frame_range
         scene.frame_start, scene.frame_end = int(round(start)), int(round(end))
@@ -56,7 +59,7 @@ def glb2fbx(src, dst, fps):
     bpy.ops.export_scene.fbx(
         filepath=dst, use_selection=False, object_types={"ARMATURE", "MESH", "EMPTY"},
         add_leaf_bones=False, bake_anim=True, bake_anim_use_all_bones=True,
-        bake_anim_use_nla_strips=False, bake_anim_use_all_actions=False,
+        bake_anim_use_nla_strips=False, bake_anim_use_all_actions=all_actions,
         bake_anim_force_startend_keying=True, bake_anim_step=1.0, bake_anim_simplify_factor=0.0,
         path_mode="COPY", embed_textures=True, axis_forward="-Z", axis_up="Y",
         primary_bone_axis="Y", secondary_bone_axis="X", armature_nodetype="NULL")

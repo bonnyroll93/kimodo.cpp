@@ -24,6 +24,7 @@ import { Picker } from './editor/picker.js';
 import { PoseTools } from './editor/pose-tools.js';
 import { cleanFeet } from './editor/feet-cleanup.js';
 import { fbxToGlb } from './viewer/fbx-import.js';
+import { Takes } from './editor/takes.js';
 import { ChannelBox, channels } from './editor/channel-box.js';
 import { quatEuler } from './viewer/keyframes.js';
 
@@ -480,8 +481,14 @@ const motionLibrary = new MotionLibrary({
 const undoHistory = new History({ $, status, motionPanel, retarget: retargetPanel, keyPanel });
 undoHistory.reset(); // the initial state is the first undo step
 
+// Takes (MotionBuilder-style): each with its own timeline; the take bar is in the Story toolbar.
+const takes = new Takes({ motionPanel, player, status, history: undoHistory,
+  onSwitch: () => { motionPanel.renderTimeline(); exportPanel.sync(); controlRig.renderPanel(); } });
+motionPanel.takesBar = () => takes.bar();
+exportPanel.takes = takes;
+
 const sceneFile = new SceneFile({
-  $, status, viewport, player, motionPanel, retargetPanel, exportPanel, applyVisibility, clearCharacter,
+  $, status, viewport, player, motionPanel, retargetPanel, exportPanel, applyVisibility, clearCharacter, takes,
   getCharacter: () => character,
   openCharacter: (url, name, id) => open(url, name, id, { transfer: false }),
   onOpened: () => undoHistory.reset(),
@@ -657,4 +664,4 @@ if (params.get('load')) {
 }
 
 // Debug hook for automated checks: /studio/?debug=1 exposes the main objects.
-if (new URLSearchParams(location.search).get('debug') === '1') window.__studio = { THREE, viewport, player, motionPanel, keyPanel, retargetPanel, tposeEditor, controlRig, poseTools, picker, channelBox, getCharacter: () => character, select };
+if (new URLSearchParams(location.search).get('debug') === '1') window.__studio = { THREE, viewport, player, motionPanel, keyPanel, retargetPanel, tposeEditor, controlRig, poseTools, picker, channelBox, takes, exportPanel, sceneFile, getCharacter: () => character, select };
