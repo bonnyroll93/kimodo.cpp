@@ -17,6 +17,10 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { height: 100%; }
+/* A tool, not a document: clicks and drags never select the interface's text. Only fields
+   you type in (and anything marked .selectable) keep text selection. */
+body { -webkit-user-select: none; user-select: none; }
+input, textarea, [contenteditable="true"], .selectable { -webkit-user-select: text; user-select: text; }
 body {
   margin: 0;
   background: var(--bg);
