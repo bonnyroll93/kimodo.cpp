@@ -9,8 +9,11 @@
 //     Root (the root control's offset on that frame: the ground circle carries it; World
 //     while the root control is not keyed) or Hips (the hips joint's global transform on
 //     that frame, without scale). Without position keys the
-//     control sits where the animation puts the end joint (IK changes nothing); without
-//     rotation keys the end joint keeps its animated global orientation;
+//     control sits where the animation puts the end joint (IK changes nothing) — the
+//     animation before the body controls, in the follow space: moving the hips or root
+//     controls leaves a World control where it is and carries a Hips / Root one, like an IK
+//     control in its parent space; without rotation keys the end joint keeps its animated
+//     orientation, in the same space;
 //   * the pole (tx, ty, tz in the same follow space) is where the middle joint (elbow,
 //     knee) points; without keys the animation's bend plane is kept.
 // Body controls (applied first, so IK limbs keyed in Root space stay planted):

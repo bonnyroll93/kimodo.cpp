@@ -435,6 +435,17 @@ export class ControlRig {
         const pos = this.picked.kind === 'hips' ? p.clone().add(dp) : p.clone().sub(pivot).applyQuaternion(dq).add(pivot).add(dp);
         setBoneWorld(b, pos, dq.clone().multiply(q));
       }
+      // IK limbs keep reaching their controls (World controls stay put, Hips / Root ones
+      // follow), as the bake will do.
+      const ch = this.chains();
+      if (ch) {
+        this.update();
+        for (const L of LIMBS) {
+          if (!ch[L.id] || !this.limb(L.id).ik) continue;
+          const ik = this.controls.get(`${L.id}:ik`), pole = this.controls.get(`${L.id}:pole`);
+          solveTwoBone(ch[L.id], ik.position, pole.position, ik.quaternion);
+        }
+      }
       return;
     }
     const ch = this.chains();

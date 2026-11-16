@@ -442,7 +442,9 @@ and open `http://localhost:8094/studio/`. It works without starting a generation
   - A control without keys follows the animation (IK changes nothing); keyed, the hand /
     foot reaches it (planted where it is constant) and takes its rotation, and the
     elbow / knee points at the pole. *follows World / Root / Hips* sets the space the
-    controls are keyed in: **World** (default) nothing moves them — a planted foot stays
+    controls live in (their parent space, as with a space switch; it holds keyed and
+    unkeyed controls alike — an unkeyed one takes the animation's pose from before the hips /
+    root controls): **World** (default) nothing moves them — a planted foot stays
     put whatever the hips, the root control or the layers below do; **Root** the root
     control (ground circle) carries them; **Hips** they move with the hips. Changing it
     converts the keys (base and layers): on every keyed frame the control stays where it was.

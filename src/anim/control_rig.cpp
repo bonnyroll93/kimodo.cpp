@@ -231,6 +231,11 @@ std::expected<ControlRigReport, std::string> apply_control_rig(AnimationClip &cl
         float *body_out = out + kControlLimbStride * rig.limbs.size();
         put_body(body_out, hb); put_body(body_out + 7, hb0);
         put_body(body_out + 14, rb); put_body(body_out + 21, rb0);
+        // The animation's pose before the body controls: a control without keys sits where this
+        // pose puts it in its follow space (World: fixed when the hips / root controls move;
+        // Hips / Root: carried by them), like an IK control in its parent / space-switch space.
+        const auto gref = forward_kinematics(s, local);
+        const bool body_moved = root_on || hips_on;
         Transform root_space; // the root control's offset (Root follow space)
         if (root_on) { // every skeleton root, about the hips' ground point
             const auto g = forward_kinematics(s, local);
@@ -261,8 +266,14 @@ std::expected<ControlRigReport, std::string> apply_control_rig(AnimationClip &cl
             } else if (l.follow == ControlSpace::Root) {
                 space = root_space;
             }
-            const Transform inv = inverse(space);
-            const auto ga = g[static_cast<std::size_t>(ch.a)], gb = g[static_cast<std::size_t>(ch.b)], gc = g[static_cast<std::size_t>(ch.c)];
+            // The same follow space on the reference pose (no body offsets).
+            Transform space_ref;
+            if (l.follow == ControlSpace::Hips) {
+                space_ref.translation = gref[h].translation;
+                space_ref.rotation = normalize(gref[h].rotation);
+            }
+            const Transform inv = inverse(space_ref);
+            const auto ga = gref[static_cast<std::size_t>(ch.a)], gb = gref[static_cast<std::size_t>(ch.b)], gc = gref[static_cast<std::size_t>(ch.c)];
             // The animation's values (follow space): end joint, and the pole of its bend plane.
             const Vec3 anim_pos = inv.apply(gc.translation);
             const Quat anim_rot = normalize(inv.rotation * gc.rotation);
@@ -297,7 +308,8 @@ std::expected<ControlRigReport, std::string> apply_control_rig(AnimationClip &cl
             blend = std::clamp(blend, 0.F, 1.F);
             put(o, pos, rot, pole, blend);
             if (blend <= 0.F) continue; // FK on this frame
-            if (!has_pos && !has_rot && !has_pole) continue; // follows the animation: nothing to do
+            // Follows the animation and nothing moved its space's parents: nothing to do.
+            if (!has_pos && !has_rot && !has_pole && !body_moved) continue;
             const Vec3 target = space.apply(pos);
             const Quat end = normalize(space.rotation * rot);
             std::vector<Transform> before(local.begin(), local.end());

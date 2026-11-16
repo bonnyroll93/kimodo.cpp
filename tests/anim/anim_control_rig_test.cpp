@@ -5,6 +5,7 @@
 #include <kimodo/anim/ik.hpp>
 #include <kimodo/anim/layers.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 
@@ -145,6 +146,31 @@ void tests(const Skeleton &soma, const AnimationClip &walk) {
             AnimationClip crouch = walk;
             CHECK(apply_control_rig(crouch, soma, planted_leg).has_value());
             CHECK(length(forward_kinematics(soma, crouch.frame(0))[static_cast<std::size_t>(lfoot)].translation - foot0) < 2.e-3F);
+            // Without keys, in World space: the foot stays where the animation puts it on
+            // every frame while the hips go down (an IK control in its parent space).
+            IkLimb free_leg{.name = "left_leg", .chain = {"LeftLeg", "LeftShin", "LeftFoot"}, .ik = true, .follow = ControlSpace::World};
+            ControlRig world_leg = body;
+            world_leg.limbs = {free_leg};
+            AnimationClip low_world = walk;
+            auto wr = apply_control_rig(low_world, soma, world_leg);
+            CHECK(wr.has_value());
+            float slide = 0.F;
+            for (const std::size_t f : {std::size_t{0}, std::size_t{15}, std::size_t{30}, std::size_t{45}}) {
+                const auto a = forward_kinematics(soma, walk.frame(f)), b = forward_kinematics(soma, low_world.frame(f));
+                slide = std::max(slide, length(a[static_cast<std::size_t>(lfoot)].translation - b[static_cast<std::size_t>(lfoot)].translation));
+                CHECK(b[hj].translation.y < a[hj].translation.y - .09F); // the hips did go down
+            }
+            CHECK(slide < 3.e-3F || (wr && wr->unreachable_frames > 0));
+            // In Hips space it is carried by the hips instead: 10 cm lower.
+            IkLimb hips_leg = free_leg;
+            hips_leg.follow = ControlSpace::Hips;
+            ControlRig carried = body;
+            carried.limbs = {hips_leg};
+            AnimationClip low_hips = walk;
+            CHECK(apply_control_rig(low_hips, soma, carried).has_value());
+            const float dy = forward_kinematics(soma, low_hips.frame(15))[static_cast<std::size_t>(lfoot)].translation.y -
+                             forward_kinematics(soma, walk.frame(15))[static_cast<std::size_t>(lfoot)].translation.y;
+            CHECK(std::abs(dy + .1F) < 3.e-3F);
         }
         ControlRig moved_rig{.fps = 30.F, .hips = "Hips"};
         moved_rig.root_control[PosX] = flat(1.F);
