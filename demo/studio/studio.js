@@ -485,6 +485,13 @@ undoHistory.reset(); // the initial state is the first undo step
 const takes = new Takes({ motionPanel, player, status, history: undoHistory,
   onSwitch: () => { motionPanel.renderTimeline(); exportPanel.sync(); controlRig.renderPanel(); } });
 motionPanel.takesBar = () => takes.bar();
+// Publish a take to the motion library: the take as shown (character, retarget, rig), baked.
+takes.onPublish = (name) => motionLibrary.open({ publishName: name });
+motionLibrary.publishBody = async () => {
+  const rt = await retargetPanel.request();
+  const foot_lock = motionPanel.footLockRequest();
+  return { take: takes.takes[takes.current].name, stack: { ...(rt || {}), ...motionPanel.stackBody(), ...(foot_lock ? { foot_lock } : {}) } };
+};
 exportPanel.takes = takes;
 
 const sceneFile = new SceneFile({
@@ -664,4 +671,4 @@ if (params.get('load')) {
 }
 
 // Debug hook for automated checks: /studio/?debug=1 exposes the main objects.
-if (new URLSearchParams(location.search).get('debug') === '1') window.__studio = { THREE, viewport, player, motionPanel, keyPanel, retargetPanel, tposeEditor, controlRig, poseTools, picker, channelBox, takes, exportPanel, sceneFile, getCharacter: () => character, select };
+if (new URLSearchParams(location.search).get('debug') === '1') window.__studio = { THREE, viewport, player, motionPanel, keyPanel, retargetPanel, tposeEditor, controlRig, poseTools, picker, channelBox, takes, exportPanel, sceneFile, motionLibrary, getCharacter: () => character, select };

@@ -948,7 +948,19 @@ export class MotionPanel {
     const select = this.$('motion-source');
     const current = select.value;
     select.replaceChildren(new Option(list.length ? 'Choose a motion…' : 'No motions available', ''));
-    for (const m of list) select.append(new Option(`${m.kind === 'sample' ? 'Sample' : 'Generated'} · ${m.label} · ${m.skeleton_key}, ${m.frames} f`, m.id));
+    // Grouped by library folder.
+    const byFolder = new Map();
+    for (const m of list) {
+      const f = m.folder || (m.kind === 'sample' ? 'Samples' : 'Kimodo');
+      if (!byFolder.has(f)) byFolder.set(f, []);
+      byFolder.get(f).push(m);
+    }
+    for (const f of [...byFolder.keys()].sort()) {
+      const group = document.createElement('optgroup');
+      group.label = f;
+      for (const m of byFolder.get(f)) group.append(new Option(`${m.label} · ${m.skeleton_key}, ${m.frames} f`, m.id));
+      select.append(group);
+    }
     if (list.some((m) => m.id === current)) select.value = current;
     this.sources = new Map(list.map((m) => [m.id, m]));
     return list;

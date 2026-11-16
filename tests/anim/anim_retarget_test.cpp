@@ -373,6 +373,37 @@ void mixamo_apose_tests(const Skeleton &soma, const Skeleton &rig) {
     CHECK(parsed && parsed->rotations.at("A").w == 1.F);
     CHECK(!reference_pose_from_json(R"({"joints":{"A":[0,0,0]}})").has_value());
 }
+// Back to the source: forward then back keeps the root and every joint the rig maps.
+void back_tests(const Skeleton &soma, const AnimationClip &walk, const Skeleton &rig, bool align) {
+    const RetargetMapping m = auto_map(soma, rig);
+    RetargetOptions o;
+    o.align_rest_directions = align;
+    auto fwd = retarget(walk, soma, rig, m, o);
+    CHECK(fwd.has_value());
+    if (!fwd) return;
+    auto back = retarget_back(fwd->clip, rig, soma, m, o);
+    CHECK(back.has_value());
+    if (!back) return;
+    CHECK(back->clip.frames() == walk.frames() && back->clip.joint_count == soma.size());
+    float root = 0.F, legs = 0.F;
+    for (const std::size_t f : {std::size_t{0}, std::size_t{30}, std::size_t{60}, walk.frames() - 1}) {
+        const auto a = forward_kinematics(soma, walk.frame(f)), b = forward_kinematics(soma, back->clip.frame(f));
+        root = std::max(root, length(a[0].translation - b[0].translation));
+        for (const char *n : {"LeftFoot", "RightFoot", "LeftShin", "RightToeBase"}) {
+            const auto j = static_cast<std::size_t>(soma.find(n));
+            legs = std::max(legs, length(a[j].translation - b[j].translation));
+        }
+    }
+    if (root >= 1.e-3F) {
+        const auto a = forward_kinematics(soma, walk.frame(0)), b = forward_kinematics(soma, back->clip.frame(0));
+        std::cerr << "frame0 root orig " << a[0].translation.x << "," << a[0].translation.y << "," << a[0].translation.z
+                  << " back " << b[0].translation.x << "," << b[0].translation.y << "," << b[0].translation.z << " scale " << back->root_scale
+                  << " fwd scale " << fwd->root_scale << " tj " << back->translation_joint << '\n';
+    }
+    if (root >= 1.e-3F || legs >= 1.e-2F) std::cerr << "back (align " << align << "): root " << root << " legs " << legs << '\n';
+    CHECK(root < 1.e-3F);  // the root (height included) comes back
+    CHECK(legs < 1.e-2F);  // the legs, mapped one to one, come back
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -396,6 +427,8 @@ int main(int argc, char **argv) {
     auto mixamo = load_gltf_character(std::filesystem::path(argv[2]) / "test_rig_mixamo_apose.glb");
     CHECK(mixamo.has_value());
     if (mixamo) mixamo_apose_tests(soma, mixamo->skeleton);
+    back_tests(soma, walk, character->skeleton, false);
+    if (mixamo) back_tests(soma, walk, mixamo->skeleton, true);
     if (failures != 0) {
         std::cerr << failures << " check(s) failed\n";
         return 1;

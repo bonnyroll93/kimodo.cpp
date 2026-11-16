@@ -1,7 +1,10 @@
-// Motion library: every motion source (samples and generated animations) as a grid of
-// animated previews or as a sortable list. Click an item to use it as the active layer's
-// source; generated animations can be deleted. The chosen view and sort are remembered in
-// this browser (localStorage, optional).
+// Motion library: every motion source (samples, Kimodo generations, published takes) as a grid
+// of animated previews or as a sortable list, organised in folders (left pane: Kimodo for
+// generated animations, Samples, Published for takes, and your own, nested with "/"). Click an
+// item to use it as the active layer's source; drag it onto a folder (or use its menu) to move
+// it; published takes can be renamed; generated and published motions can be deleted.
+// "Publish take" bakes the current take and adds it to the library (studio_library.go).
+// The chosen view, sort and folder are remembered in this browser (localStorage, optional).
 import * as THREE from 'three';
 
 const PREF = 'kimodo.library';
@@ -20,6 +23,9 @@ export class MotionLibrary {
     const pref = loadPref();
     this.view = pref.view === 'list' ? 'list' : 'grid';
     this.sort = pref.sort === 'newest' ? 'newest' : 'name';
+    this.folder = typeof pref.folder === 'string' ? pref.folder : ''; // '' = every motion
+    this.folders = [];
+    this.publishBody = null; // () => /api/library/publish body for the current take (studio.js)
     this.items = [];
     this.data = new Map();      // id -> {root, rotations, frames, joints} (loaded on demand)
     this.skeletons = new Map(); // key -> definition
@@ -40,16 +46,139 @@ export class MotionLibrary {
     $('library-sort').addEventListener('change', (e) => { this.sort = e.target.value; this.persist(); this.render(); });
     for (const v of ['grid', 'list'])
       $(`library-${v}`).addEventListener('click', () => { this.view = v; this.persist(); this.render(); });
-    window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !this.$('library').hidden) this.close(); });
+    window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !this.$('library').hidden && !(e.target instanceof HTMLInputElement)) this.close(); });
+    $('publish-take').addEventListener('click', () => this.publish());
+    $('publish-name').addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') this.publish(); });
   }
 
-  persist() { savePref({ view: this.view, sort: this.sort }); }
+  persist() { savePref({ view: this.view, sort: this.sort, folder: this.folder }); }
 
-  async open() {
+  async open({ publishName = null } = {}) {
     this.$('library').hidden = false;
-    this.items = await this.motionPanel.loadSources();
-    this.render();
+    await this.reload();
     this.loop();
+    if (publishName !== null) {
+      this.$('publish-name').value = publishName;
+      this.$('publish-name').focus();
+      this.$('publish-name').select();
+    }
+  }
+
+  async reload() {
+    this.items = await this.motionPanel.loadSources();
+    try { this.folders = (await (await fetch('/api/library', { cache: 'no-store' })).json()).folders ?? []; } catch { this.folders = []; }
+    if (this.folder && !this.folders.includes(this.folder)) this.folder = '';
+    const sel = this.$('publish-folder'), keep = sel.value;
+    sel.replaceChildren(...this.folders.map((f) => new Option(f, f)));
+    sel.value = keep && this.folders.includes(keep) ? keep : (this.folder || 'Published');
+    this.render();
+  }
+
+  async post(url, body) {
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const res = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(res.error || `HTTP ${r.status}`);
+    return res;
+  }
+
+  // Folder pane: every motion, then the folder tree (counts include subfolders).
+  renderFolders() {
+    const host = this.$('library-folders');
+    host.replaceChildren();
+    const inside = (m, f) => m.folder === f || m.folder?.startsWith(`${f}/`);
+    const row = (label, folder, depth, count, removable) => {
+      const el = document.createElement('div');
+      el.className = `library-folder${this.folder === folder ? ' on' : ''}`;
+      el.style.paddingLeft = `${8 + depth * 12}px`;
+      el.title = folder ? `${folder} — drop a motion here to move it` : 'Every motion';
+      const name = document.createElement('span');
+      name.textContent = label;
+      const n = document.createElement('span');
+      n.className = 'muted small';
+      n.textContent = count;
+      el.append(name, n);
+      if (removable) {
+        const x = document.createElement('button');
+        Object.assign(x, { type: 'button', className: 'icon-button folder-x', textContent: '✕', title: `Delete the folder "${folder}" (its motions go back to their default folder)` });
+        x.addEventListener('click', (e) => { e.stopPropagation(); this.removeFolder(folder); });
+        el.append(x);
+      }
+      el.addEventListener('click', () => { this.folder = folder; this.persist(); this.render(); });
+      if (folder) {
+        el.addEventListener('dragover', (e) => { e.preventDefault(); el.classList.add('drop'); });
+        el.addEventListener('dragleave', () => el.classList.remove('drop'));
+        el.addEventListener('drop', (e) => { e.preventDefault(); el.classList.remove('drop'); const id = e.dataTransfer.getData('text/x-kimodo-motion'); if (id) this.move(id, folder); });
+      }
+      host.append(el);
+    };
+    row('All motions', '', 0, this.items.length, false);
+    for (const f of this.folders) {
+      const depth = f.split('/').length - 1;
+      row(f.split('/').pop(), f, depth, this.items.filter((m) => inside(m, f)).length, !['Kimodo', 'Samples', 'Published'].includes(f));
+    }
+    const add = document.createElement('button');
+    Object.assign(add, { type: 'button', className: 'icon-button add-folder', textContent: '+ Folder', title: 'New folder (inside the selected one)' });
+    add.addEventListener('click', () => {
+      const input = document.createElement('input');
+      Object.assign(input, { placeholder: this.folder ? `in ${this.folder}…` : 'Folder name', maxLength: 40, className: 'folder-input' });
+      add.replaceWith(input);
+      input.focus();
+      input.addEventListener('keydown', async (e) => {
+        e.stopPropagation();
+        if (e.key === 'Escape') { this.renderFolders(); return; }
+        if (e.key !== 'Enter' || !input.value.trim()) return;
+        const name = this.folder ? `${this.folder}/${input.value.trim()}` : input.value.trim();
+        try { const res = await this.post('/api/library/folders', { name }); this.folder = res.folder; this.persist(); await this.reload(); }
+        catch (err) { this.status(`Cannot create the folder: ${err.message}`, true); }
+      });
+      input.addEventListener('blur', () => setTimeout(() => { if (input.isConnected) this.renderFolders(); }, 150));
+    });
+    host.append(add);
+  }
+
+  async move(id, folder) {
+    try {
+      await this.post('/api/library/move', { id, folder });
+      this.status(`Moved to ${folder}`);
+      await this.reload();
+    } catch (err) { this.status(`Cannot move: ${err.message}`, true); }
+  }
+
+  async removeFolder(folder) {
+    const r = await fetch(`/api/library/folders/${encodeURIComponent(folder)}`, { method: 'DELETE' });
+    if (!r.ok) { this.status(`Cannot delete the folder: HTTP ${r.status}`, true); return; }
+    if (this.folder === folder || this.folder.startsWith(`${folder}/`)) this.folder = '';
+    this.persist();
+    await this.reload();
+    this.status(`Folder "${folder}" deleted (its motions went back to their default folder)`);
+  }
+
+  async rename(m) {
+    const name = window.prompt('New name', m.label);
+    if (!name?.trim()) return;
+    try { await this.post('/api/library/rename', { id: m.id, name: name.trim() }); await this.reload(); }
+    catch (err) { this.status(`Cannot rename: ${err.message}`, true); }
+  }
+
+  // Bake the current take and add it to the library.
+  async publish() {
+    const $ = this.$, name = $('publish-name').value.trim();
+    if (!name) { this.status('Name the motion to publish', true); $('publish-name').focus(); return; }
+    if (!this.publishBody) return;
+    $('publish-take').disabled = true;
+    this.status(`Publishing "${name}"…`);
+    try {
+      const body = await this.publishBody();
+      const res = await this.post('/api/library/publish', { ...body, name, folder: $('publish-folder').value });
+      this.folder = res.folder;
+      this.persist();
+      await this.reload();
+      this.status(`Published "${res.name}" in ${res.folder} (${res.frames} frames, ${res.skeleton_key}): pick it as a clip source in any take`);
+    } catch (err) {
+      this.status(`Publish failed: ${err.message || err}`, true);
+    } finally {
+      $('publish-take').disabled = false;
+    }
   }
 
   close() {
@@ -60,7 +189,9 @@ export class MotionLibrary {
 
   sorted() {
     const q = this.$('library-search').value.trim().toLowerCase();
-    const list = this.items.filter((m) => !q || m.label.toLowerCase().includes(q) || m.id.toLowerCase().includes(q));
+    const f = this.folder;
+    const list = this.items.filter((m) => (!f || m.folder === f || m.folder?.startsWith(`${f}/`)) &&
+      (!q || m.label.toLowerCase().includes(q) || m.id.toLowerCase().includes(q)));
     return this.sort === 'newest'
       ? list.sort((a, b) => (b.created ?? '').localeCompare(a.created ?? ''))
       : list.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
@@ -68,6 +199,7 @@ export class MotionLibrary {
 
   render() {
     const $ = this.$;
+    this.renderFolders();
     $('library-grid').classList.toggle('on', this.view === 'grid');
     $('library-list').classList.toggle('on', this.view === 'list');
     const host = $('library-items');
@@ -77,12 +209,12 @@ export class MotionLibrary {
     host.replaceChildren();
     const current = this.motionPanel.activeLayer?.config?.source;
     const list = this.sorted();
-    $('library-count').textContent = `${list.length} motion${list.length === 1 ? '' : 's'}`;
+    $('library-count').textContent = `${list.length} motion${list.length === 1 ? '' : 's'}${this.folder ? ` in ${this.folder}` : ''}`;
     for (const m of list) host.append(this.view === 'grid' ? this.card(m, current) : this.row(m, current));
     if (!list.length) {
       const p = document.createElement('p');
       p.className = 'muted pad';
-      p.textContent = 'No motions. Generate one with "Text to motion" (it opens in a new tab).';
+      p.textContent = this.folder ? 'This folder is empty: drag motions onto it, or publish a take into it.' : 'No motions. Generate one with "Text to motion" (it opens in a new tab).';
       host.append(p);
     }
   }
@@ -90,7 +222,28 @@ export class MotionLibrary {
   meta(m) {
     const secs = ((m.frames - 1) / 30).toFixed(1);
     const date = m.created ? new Date(m.created).toLocaleString() : '';
-    return { kind: m.kind === 'sample' ? 'Sample' : 'Generated', info: `${m.skeleton_key} · ${m.frames} f · ${secs} s`, date };
+    return { kind: m.kind === 'sample' ? 'Sample' : m.kind === 'library' ? 'Published' : 'Kimodo', info: `${m.skeleton_key} · ${m.frames} f · ${secs} s`, date };
+  }
+
+  // Item actions: move to a folder, rename (published), delete (generated / published).
+  actions(m) {
+    const wrap = document.createElement('span');
+    wrap.className = 'library-actions';
+    wrap.addEventListener('click', (e) => e.stopPropagation());
+    const sel = document.createElement('select');
+    sel.title = 'Move to a folder';
+    sel.append(new Option(`📁 ${m.folder ?? ''}`, ''));
+    for (const f of this.folders) if (f !== m.folder) sel.append(new Option(`→ ${f}`, f));
+    sel.addEventListener('change', () => { if (sel.value) this.move(m.id, sel.value); });
+    wrap.append(sel);
+    if (m.kind === 'library') {
+      const b = document.createElement('button');
+      Object.assign(b, { type: 'button', className: 'icon-button', textContent: '✎', title: 'Rename' });
+      b.addEventListener('click', () => this.rename(m));
+      wrap.append(b);
+    }
+    if (m.deletable) wrap.append(this.deleteButton(m));
+    return wrap;
   }
 
   deleteButton(m) {
@@ -98,7 +251,7 @@ export class MotionLibrary {
     b.type = 'button';
     b.className = 'icon-button danger';
     b.textContent = 'Delete';
-    b.title = 'Delete this generated motion (its files are removed from demo-output)';
+    b.title = 'Delete this motion (its files are removed from demo-output)';
     b.addEventListener('click', (e) => { e.stopPropagation(); this.remove(m); });
     return b;
   }
@@ -122,9 +275,10 @@ export class MotionLibrary {
     const when = document.createElement('span');
     when.className = 'muted small';
     when.textContent = date;
-    foot.append(when);
-    if (m.deletable) foot.append(this.deleteButton(m));
+    foot.append(when, this.actions(m));
     el.append(canvas, name, sub, foot);
+    el.draggable = true;
+    el.addEventListener('dragstart', (e) => e.dataTransfer.setData('text/x-kimodo-motion', m.id));
     el.addEventListener('click', () => this.pick(m));
     el._preview = { canvas, id: m.id, key: m.skeleton_key };
     this.observer.observe(el);
@@ -148,7 +302,9 @@ export class MotionLibrary {
     d.className = 'muted small';
     d.textContent = date;
     el.append(name, k, i, d);
-    el.append(m.deletable ? this.deleteButton(m) : document.createElement('span'));
+    el.append(this.actions(m));
+    el.draggable = true;
+    el.addEventListener('dragstart', (e) => e.dataTransfer.setData('text/x-kimodo-motion', m.id));
     el.addEventListener('click', () => this.pick(m));
     return el;
   }
@@ -160,7 +316,7 @@ export class MotionLibrary {
 
   async remove(m) {
     const used = this.motionPanel.layers.some((l) => l.config?.source === m.id);
-    if (!window.confirm(`Delete "${m.label}"?\nThe generated motion files are removed from the demo output.${used ? '\nIt is used by a layer of this scene.' : ''}`)) return;
+    if (!window.confirm(`Delete "${m.label}"?\nIts motion files are removed from the demo output.${used ? '\nIt is used by a layer of this scene.' : ''}`)) return;
     const r = await fetch(`motions/${encodeURIComponent(m.id)}`, { method: 'DELETE' });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
@@ -168,8 +324,7 @@ export class MotionLibrary {
       return;
     }
     this.data.delete(m.id);
-    this.items = await this.motionPanel.loadSources();
-    this.render();
+    await this.reload();
     this.status(`Deleted "${m.label}"${used ? ' — a layer still refers to it' : ''}`, used);
   }
 

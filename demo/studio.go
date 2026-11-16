@@ -39,6 +39,7 @@ func registerStudio(mux *http.ServeMux, c studioConfig) {
 	registerExport(mux, c)
 	registerFBX(mux, c)
 	registerTakesExport(mux, c)
+	registerLibrary(mux, c)
 	sub, err := fs.Sub(studioFiles, "studio")
 	if err != nil {
 		panic(err)

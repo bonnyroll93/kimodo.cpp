@@ -30,6 +30,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <iostream>
@@ -122,6 +123,8 @@ int usage() {
                  "       local_rotations_xyzw.f32, local_translations.f32 (+ root_positions.f32 if --native).\n"
                  "       kmd-anim export CHARACTER.glb|.gltf CLIP_DIR OUT.glb [--name S] [--replace-animations]\n"
                  "           [--export-scale] [--skin N]\n"
+                 "       kmd-anim unretarget CLIP_DIR CHARACTER.glb OUT_MOTION_DIR [--native soma30] [--mapping MAP.json]\n"
+                 "           [--align-rest | --reference-pose POSE.json] [--skin N]   a character clip back on the native skeleton\n"
                  "       CLIP_DIR is a retarget or layers output for that character; the character's meshes,\n"
                  "       materials, skins and existing animations are kept and the clip is added.\n"
                  "       kmd-anim masks (--native KEY | --character FILE.glb)   preset masks (full/upper/lower) as JSON\n"
@@ -720,6 +723,62 @@ int footlock_command(int argc, char **argv) {
     return 0;
 }
 
+// Back to the source skeleton: a clip baked on the character (a studio take) retargeted onto
+// a native skeleton, so it can be used as a motion source again (the motion library).
+// The character's T-pose (the pose that matched the native T-pose when retargeting forward:
+// --reference-pose, or --align-rest, or its rest) becomes its rest, the mapping is reversed
+// (native <- character) and retarget() runs from the character to the native skeleton. The
+// root height inverts the forward retarget's height map (standing heights correspond).
+int unretarget_command(int argc, char **argv) {
+    if (argc < 5) return usage();
+    const std::filesystem::path clip_dir = argv[2], character_path = argv[3], out = argv[4];
+    std::string native_key = "soma30";
+    std::optional<std::filesystem::path> mapping_file;
+    std::optional<ReferencePose> reference_pose;
+    bool align_rest = false;
+    GltfImportOptions import;
+    for (int i = 5; i < argc; ++i) {
+        const std::string_view arg = argv[i];
+        auto value = [&]() -> std::string {
+            if (i + 1 >= argc) throw std::runtime_error(std::string(arg) + " needs a value");
+            return argv[++i];
+        };
+        if (arg == "--native") native_key = value();
+        else if (arg == "--mapping") mapping_file = value();
+        else if (arg == "--align-rest") align_rest = true;
+        else if (arg == "--reference-pose") {
+            auto pose = load_reference_pose(value());
+            if (!pose) throw std::runtime_error(pose.error());
+            reference_pose = std::move(*pose);
+        } else if (arg == "--skin") import.skin = std::stoi(value());
+        else throw std::runtime_error("unknown option '" + std::string(arg) + "'");
+    }
+    auto native = native_skeleton(native_key);
+    if (!native) throw std::runtime_error(native.error());
+    auto character = load_gltf_character(character_path, import);
+    if (!character) throw std::runtime_error(character.error());
+    auto clip = read_clip_dir(clip_dir);
+    if (!clip) throw std::runtime_error(clip.error());
+    RetargetMapping forward;
+    if (mapping_file) {
+        auto loaded = load_mapping(*mapping_file);
+        if (!loaded) throw std::runtime_error(loaded.error());
+        forward = std::move(*loaded);
+    } else {
+        forward = auto_map(*native, character->skeleton);
+    }
+    RetargetOptions forward_options;
+    forward_options.align_rest_directions = align_rest;
+    forward_options.reference_pose = reference_pose;
+    auto result = retarget_back(*clip, character->skeleton, *native, forward, forward_options);
+    if (!result) throw std::runtime_error(result.error());
+    const AnimationClip &nat = result->clip;
+    if (auto ok = write_motion_dir(out, clip_to_motion(nat)); !ok) throw std::runtime_error(ok.error());
+    std::cout << "{\"frames\":" << nat.frames() << ",\"joints\":" << nat.joint_count << ",\"skeleton\":" << quote(native->source)
+              << ",\"root_scale\":" << num(result->root_scale) << ",\"warnings\":" << string_list(result->diagnostics.warnings) << "}\n";
+    return 0;
+}
+
 int export_command(int argc, char **argv) {
     if (argc < 5) return usage();
     const std::filesystem::path character_path = argv[2], clip_dir = argv[3], out = argv[4];
@@ -759,6 +818,7 @@ int main(int argc, char **argv) try {
     if (argc >= 2 && std::string_view(argv[1]) == "retarget") return retarget_command(argc, argv);
     if (argc >= 2 && std::string_view(argv[1]) == "layers") return layers_command(argc, argv);
     if (argc >= 2 && std::string_view(argv[1]) == "export") return export_command(argc, argv);
+    if (argc >= 2 && std::string_view(argv[1]) == "unretarget") return unretarget_command(argc, argv);
     if (argc >= 2 && std::string_view(argv[1]) == "footlock") return footlock_command(argc, argv);
     if (argc >= 2 && std::string_view(argv[1]) == "masks") return masks_command(argc, argv);
     if (argc < 3 || std::string_view(argv[1]) != "inspect") return usage();

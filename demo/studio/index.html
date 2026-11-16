@@ -77,7 +77,17 @@
         </span>
         <button id="library-close" type="button" class="icon-button" title="Close (Esc)">✕</button>
       </div>
-      <div id="library-items" class="library-items grid"></div>
+      <div class="library-toolbar publish-bar">
+        <strong>Publish</strong>
+        <span class="muted small">the current take as a library motion (on its clips' skeleton):</span>
+        <input id="publish-name" type="text" maxlength="80" placeholder="Name" title="Name of the published motion">
+        <select id="publish-folder" title="Folder"></select>
+        <button id="publish-take" type="button" class="button primary small-button" title="Bake the current take and add it to the library">Publish take</button>
+      </div>
+      <div class="library-body">
+        <nav id="library-folders" class="library-folders" aria-label="Folders"></nav>
+        <div id="library-items" class="library-items grid"></div>
+      </div>
     </div>
     <div id="tpose-bar" class="tpose-bar" hidden>
       <strong>Edit T-pose</strong>

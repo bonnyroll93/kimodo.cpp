@@ -128,7 +128,8 @@ export class Takes {
         input.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') { input.value = ''; input.blur(); } });
         input.addEventListener('blur', done);
       }),
-      btn('✕', 'Delete this take', () => this.remove()));
+      btn('✕', 'Delete this take', () => this.remove()),
+      btn('⇪', 'Publish this take to the motion library (as a reusable motion)', () => this.onPublish?.(this.takes[this.current].name)));
     return wrap;
   }
 

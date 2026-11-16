@@ -163,4 +163,40 @@ std::expected<RetargetResult, std::string> retarget(const AnimationClip &source_
     return result;
 }
 
+std::expected<RetargetResult, std::string> retarget_back(const AnimationClip &target_clip, const Skeleton &target,
+                                                        const Skeleton &source, const RetargetMapping &forward_mapping,
+                                                        const RetargetOptions &forward_options) {
+    // The target's T-pose: the forward retarget of one source rest frame.
+    Skeleton tposed = target;
+    AnimationClip rest;
+    rest.fps = target_clip.fps;
+    rest.joint_count = source.size();
+    for (const Joint &j : source.joints) rest.locals.push_back(j.rest_local);
+    auto t = retarget(rest, source, target, forward_mapping, forward_options);
+    if (!t) return std::unexpected("target T-pose: " + t.error());
+    for (std::size_t j = 0; j < tposed.size(); ++j) tposed.joints[j].rest_local.rotation = t->clip.at(0, j).rotation;
+    RetargetMapping reverse;
+    reverse.source_skeleton = forward_mapping.target_skeleton;
+    reverse.target_skeleton = forward_mapping.source_skeleton;
+    for (const JointMapping &m : forward_mapping.joints) reverse.joints.push_back({.target = m.source, .source = m.target});
+    // The exact inverse of the forward travel scale and facing (estimating them again from
+    // the hip heights / facings of the swapped skeletons does not give the inverse).
+    RetargetOptions back;
+    back.up = forward_options.up;
+    back.root_scale = t->root_scale > 0.F ? 1.F / t->root_scale : 0.F;
+    back.auto_facing = false;
+    back.yaw_offset_degrees = -t->facing_yaw_degrees;
+    auto result = retarget(target_clip, tposed, source, reverse, back);
+    if (!result) return result;
+    // Height: target = target_reference + (source - source_reference) * root_scale in both
+    // directions; the target standing at the forward target reference must give the forward
+    // source reference.
+    const float mapped = result->target_reference.y + (t->target_reference.y - result->source_reference.y) * result->root_scale;
+    const float shift = t->source_reference.y - mapped;
+    AnimationClip &out = result->clip;
+    const int root = result->translation_joint >= 0 ? result->translation_joint : 0;
+    for (std::size_t f = 0; f < out.frames(); ++f) out.at(f, static_cast<std::size_t>(root)).translation.y += shift;
+    return result;
+}
+
 } // namespace kimodo::anim

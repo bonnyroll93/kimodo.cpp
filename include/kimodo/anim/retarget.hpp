@@ -132,4 +132,15 @@ struct RetargetResult {
                                                                   const RetargetMapping &mapping,
                                                                   const RetargetOptions &options = {});
 
+// Back to the source: a clip on the target (character) skeleton retargeted onto the source
+// (native) skeleton, inverting a forward retarget made with `forward_mapping` (source ->
+// target) and `forward_options` (its alignment / reference pose). The target's pose that
+// corresponds to the source rest (its T-pose) becomes its rest, the mapping is reversed and
+// retarget() runs target -> source; the root height inverts the forward height map, so a
+// forward-then-back round trip keeps the root and every joint the target maps.
+[[nodiscard]] std::expected<RetargetResult, std::string> retarget_back(const AnimationClip &target_clip,
+                                                                       const Skeleton &target, const Skeleton &source,
+                                                                       const RetargetMapping &forward_mapping,
+                                                                       const RetargetOptions &forward_options = {});
+
 } // namespace kimodo::anim

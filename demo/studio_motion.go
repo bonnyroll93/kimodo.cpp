@@ -31,6 +31,7 @@ type studioMotion struct {
 	Frames      int    `json:"frames"`
 	Created     string `json:"created,omitempty"` // RFC 3339
 	Deletable   bool   `json:"deletable"`         // generated animations can be deleted
+	Folder      string `json:"folder,omitempty"`  // library folder (studio_library.go)
 	dir         string
 }
 
@@ -115,6 +116,8 @@ func (c studioConfig) motions() []studioMotion {
 	if c.animations != nil {
 		list = append(list, c.animations()...)
 	}
+	list = append(list, c.libraryMotions()...)
+	list = c.withFolders(list)
 	return list
 }
 
@@ -277,6 +280,30 @@ func registerRootMotion(mux *http.ServeMux, c studioConfig) {
 	// /studio/motions/<id>/<file>; ids contain ':' so they are path-escaped by the client.
 	mux.HandleFunc("/studio/motions/", func(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/studio/motions/"), "/")
+		// DELETE /studio/motions/library:<id> removes a published take.
+		if r.Method == http.MethodDelete && len(parts) == 1 && strings.HasPrefix(parts[0], "library:") {
+			lid := strings.TrimPrefix(parts[0], "library:")
+			dir := filepath.Join(c.libraryDir(), lid)
+			if !safePathPart(lid) {
+				writeError(w, http.StatusBadRequest, "invalid id")
+				return
+			}
+			if _, err := os.Stat(filepath.Join(dir, "meta.json")); err != nil {
+				writeError(w, http.StatusNotFound, "unknown motion")
+				return
+			}
+			if err := os.RemoveAll(dir); err != nil {
+				writeError(w, http.StatusConflict, err.Error())
+				return
+			}
+			libraryMu.Lock()
+			idx := c.loadIndex()
+			delete(idx.Assign, parts[0])
+			_ = c.saveIndex(idx)
+			libraryMu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		// DELETE /studio/motions/animation:<id> removes a generated animation.
 		if r.Method == http.MethodDelete && len(parts) == 1 {
 			id, ok := strings.CutPrefix(parts[0], "animation:")
